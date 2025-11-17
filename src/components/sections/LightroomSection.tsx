@@ -4,6 +4,7 @@ import { SimpleMaskVisualization } from '../SimpleMaskVisualization';
 import { ColorGradingVisualization } from '../ColorWheel';
 import { CurveVisualizationLR } from '../CurveVisualizationLR';
 import { ImageComparisonModal } from '../ImageComparisonModal';
+import { Histogram } from '../Histogram';
 import {
   Tooltip,
   TooltipContent,
@@ -502,6 +503,11 @@ export function LightroomSection({ data, targetImageUrl, userImageUrl, reviewDat
           💡 以下是完整的 Lightroom 调整参数，可直接应用到你的照片
         </p>
       </div>
+
+      {/* 直方图分析 */}
+      {targetImageUrl && (
+        <Histogram imageUrl={targetImageUrl} type="target" />
+      )}
 
       {/* 常规调整面板 */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">

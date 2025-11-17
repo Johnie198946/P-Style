@@ -3,6 +3,7 @@ import { Layers, Image, Sliders, Sparkles, ChevronRight, Images, HelpCircle, Inf
 import { useState } from 'react';
 import { CurveChart } from '../CurveChart';
 import { ImageComparisonModal } from '../ImageComparisonModal';
+import { Histogram } from '../Histogram';
 import {
   Tooltip,
   TooltipContent,
@@ -169,6 +170,11 @@ export function PhotoshopSection({ data, targetImageUrl, userImageUrl }: any) {
         </p>
       </div>
 
+      {/* 直方图分析 */}
+      {targetImageUrl && (
+        <Histogram imageUrl={targetImageUrl} type="target" />
+      )}
+
       <div className="space-y-4">
         {data.map((step: any, index: number) => (
           <motion.div
@@ -332,7 +338,7 @@ export function PhotoshopSection({ data, targetImageUrl, userImageUrl }: any) {
                       </div>
                     )}
 
-                    {/* 详细说明 */}
+                    {/* 详细说��� */}
                     {step.details && (
                       <div className="p-4 bg-purple-50 rounded-lg">
                         <h5 className="text-sm text-purple-800 mb-2 flex items-center gap-2">

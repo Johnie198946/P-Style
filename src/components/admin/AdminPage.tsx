@@ -10,10 +10,16 @@ import { ContentManagement } from './ContentManagement';
 import { Analytics } from './Analytics';
 
 interface AdminPageProps {
-  onLogout: () => void;
+  onBack: () => void;
 }
 
-export function AdminPage({ onLogout }: AdminPageProps) {
+export function AdminPage({ onBack }: AdminPageProps) {
+  const handleLogout = () => {
+    localStorage.removeItem('isAdmin');
+    // 触发自定义事件通知其他组件管理员状态已改变
+    window.dispatchEvent(new CustomEvent('adminStatusChanged'));
+    onBack();
+  };
   const [currentPage, setCurrentPage] = useState('dashboard');
 
   const renderPage = () => {
@@ -43,7 +49,7 @@ export function AdminPage({ onLogout }: AdminPageProps) {
     <AdminLayout
       currentPage={currentPage}
       onNavigate={setCurrentPage}
-      onLogout={onLogout}
+      onLogout={handleLogout}
     >
       {renderPage()}
     </AdminLayout>

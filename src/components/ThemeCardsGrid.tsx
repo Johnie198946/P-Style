@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'motion/react';
 import {
   Camera,
@@ -11,17 +11,21 @@ import {
   Wand2,
   ArrowRight,
   ChevronLeft,
+  FileText,
 } from 'lucide-react';
 import { ThemeDetailModal } from './ThemeDetailModal';
 import { StyleSimulation } from './StyleSimulation';
 import { LoadingTransition } from './LoadingTransition';
 import { UserMenu } from './UserMenu';
+import { ColorCloningReport } from './ColorCloningReport';
+import { toast } from 'sonner';
 
 interface ThemeCardsGridProps {
   results: any;
   sourceImageUrl: string;
   targetImageUrl: string;
   onBack: () => void;
+  taskId?: string;
 }
 
 interface ThemeCard {
@@ -91,29 +95,137 @@ const themeCards: ThemeCard[] = [
   },
 ];
 
-export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack }: ThemeCardsGridProps) {
+/**
+ * 主题卡片网格组件
+ * 展示分析结果的主题卡片，支持两阶段加载（Stage1: 基础分析，Stage2: 完整方案）
+ * 根据开发方案第 14、16 节实现
+ * 
+ * @param results - Part1 分析结果（结构化数据）
+ * @param sourceImageUrl - 源图 URL
+ * @param targetImageUrl - 目标图 URL
+ * @param onBack - 返回回调
+ * @param taskId - 任务 ID（从 Part1 返回，用于 Part2 调用）
+ */
+export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack, taskId: propTaskId }: ThemeCardsGridProps) {
+  // 主题选择状态
   const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
+  // 卡片悬停状态
   const [hoveredCard, setHoveredCard] = useState<string | null>(null);
+  // 风格模拟显示状态
   const [showStyleSimulation, setShowStyleSimulation] = useState(false);
+  // 报告显示状态
+  const [showReport, setShowReport] = useState(false);
   
-  // Two-stage loading state
+  // 两阶段加载状态（Stage1: 基础分析，Loading: Part2 处理中，Stage2: 完整方案）
   const [showStage, setShowStage] = useState<'stage1' | 'loading' | 'stage2'>('stage1');
   
-  // Horizontal scroll navigation
+  // 水平滚动导航状态
   const [activeNavIndex, setActiveNavIndex] = useState(0);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(false);
 
+  // 获取 taskId：优先使用 props，其次从 results.meta.taskId 获取
+  const currentTaskId = propTaskId || results?.meta?.taskId || null;
+  
+  // Part2 分析结果状态
+  const [part2Results, setPart2Results] = useState<any>(null);
+
+  /**
+   * 处理卡片点击事件
+   * @param themeId - 主题 ID（review/composition/lighting/color/lightroom/photoshop）
+   */
   const handleCardClick = (themeId: string) => {
     setSelectedTheme(themeId);
   };
 
+  /**
+   * 查看详细方案（触发 Part2 分析）
+   * 根据开发方案第 16 节：Part2 触发后应开始轮询任务状态
+   * 实现轮询机制：3 秒间隔，最大 2 分钟（40 次）
+   */
   const handleViewDetailedPlan = async () => {
+    // 验证 taskId 是否存在
+    if (!currentTaskId) {
+      console.error('No taskId available for Part2 analysis');
+      toast.error('任务 ID 缺失，无法继续分析');
+      return;
+    }
+
+    // 切换到加载状态
     setShowStage('loading');
-    // Simulate loading
-    await new Promise(resolve => setTimeout(resolve, 2500));
-    setShowStage('stage2');
+    
+    try {
+      const { analyzeApi } = await import('../lib/api');
+      
+      // 第一步：触发 Part2 分析（根据开发方案第 16 节，应快速返回 { status: 'processing' }）
+      await analyzeApi.part2(currentTaskId);
+      
+      // 第二步：开始轮询任务状态（3 秒间隔，最大 2 分钟 = 40 次）
+      const maxAttempts = 40;
+      const pollInterval = 3000; // 3 秒
+      let attempts = 0;
+      
+      const pollTask = async (): Promise<void> => {
+        attempts++;
+        
+        try {
+          const taskDetail = await analyzeApi.getTask(currentTaskId);
+          
+          // 检查任务状态
+          if (taskDetail.task.status === 'completed' || taskDetail.task.status === 'part2_completed') {
+            // 任务完成，合并结果
+            if (taskDetail.structuredResult) {
+              setPart2Results(taskDetail.structuredResult);
+              
+              // 合并 Part2 结果到 results（根据开发方案，Part2 结果应合并到现有 results）
+              if (results) {
+                results.sections = {
+                  ...results.sections,
+                  ...taskDetail.structuredResult.sections,
+                };
+              }
+            }
+            
+            // 切换到 Stage2，显示完整方案
+            setShowStage('stage2');
+            return;
+          }
+          
+          // 如果未完成且未超时，继续轮询
+          if (attempts < maxAttempts) {
+            setTimeout(pollTask, pollInterval);
+          } else {
+            // 超时
+            toast.error('分析超时，请稍后重试');
+            setShowStage('stage1');
+          }
+        } catch (error: any) {
+          console.error('Polling failed:', error);
+          // 如果轮询失败，尝试最后一次
+          if (attempts < maxAttempts) {
+            setTimeout(pollTask, pollInterval);
+          } else {
+            toast.error('分析失败，请重试');
+            setShowStage('stage1');
+          }
+        }
+      };
+      
+      // 开始第一次轮询（延迟 3 秒）
+      setTimeout(pollTask, pollInterval);
+      
+    } catch (error: any) {
+      console.error('Part2 trigger failed:', error);
+      // 使用 toast 替代 alert，提供更好的用户体验
+      if (error.message) {
+        toast.error(error.message);
+      } else {
+        toast.error('分析失败，请重试');
+      }
+      // 失败时回到 Stage1
+      setShowStage('stage1');
+    }
   };
 
   // Stage 1: First 3 cards (review, composition, lighting)
@@ -123,7 +235,9 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
 
   const displayCards = showStage === 'stage1' ? stage1Cards : stage2Cards;
 
-  // Check scroll position
+  /**
+   * 检查滚动位置，更新左右滚动按钮状态
+   */
   const checkScrollButtons = () => {
     if (scrollContainerRef.current) {
       const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
@@ -132,12 +246,17 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
     }
   };
 
+  // 监听窗口大小变化和卡片变化，更新滚动按钮状态
   useEffect(() => {
     checkScrollButtons();
     window.addEventListener('resize', checkScrollButtons);
     return () => window.removeEventListener('resize', checkScrollButtons);
   }, [displayCards]);
 
+  /**
+   * 水平滚动卡片容器
+   * @param direction - 滚动方向（left/right）
+   */
   const scroll = (direction: 'left' | 'right') => {
     if (scrollContainerRef.current) {
       const scrollAmount = 200;
@@ -149,6 +268,10 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
     }
   };
 
+  /**
+   * 滚动到指定卡片
+   * @param index - 卡片索引
+   */
   const scrollToCard = (index: number) => {
     if (scrollContainerRef.current) {
       const cardWidth = 200;
@@ -201,8 +324,8 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
         {/* User Menu - Top Right */}
         <div className="fixed top-6 right-6 z-50">
           <UserMenu onNavigate={(page) => {
-            // 处理导航
-            console.log('Navigate to:', page);
+            // 导航处理已在 UserMenu 组件内部完成
+            handleNavigate(page);
           }} />
         </div>
 
@@ -212,6 +335,21 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
           animate={{ opacity: 1 }}
           className="fixed top-6 right-24 z-50 flex items-center gap-3"
         >
+          {/* Show Report Button in Stage 2 */}
+          {showStage === 'stage2' && (
+            <motion.button
+              initial={{ opacity: 0, scale: 0.8 }}
+              animate={{ opacity: 1, scale: 1 }}
+              transition={{ delay: 0.2 }}
+              onClick={() => setShowReport(true)}
+              className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-gray-300 hover:border-indigo-400 text-gray-700 hover:text-indigo-600 rounded-full shadow-sm hover:shadow-lg transition-all group"
+              style={{ fontSize: '14px', fontWeight: 600 }}
+            >
+              <FileText className="w-4 h-4 group-hover:scale-110 transition-transform" />
+              仿色报告
+            </motion.button>
+          )}
+
           {/* Show Style Simulation button only in Stage 2 */}
           {showStage === 'stage2' && (
             <motion.button
@@ -483,6 +621,16 @@ export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack
       <StyleSimulation
         isOpen={showStyleSimulation}
         onClose={() => setShowStyleSimulation(false)}
+        sourceImageUrl={sourceImageUrl}
+        targetImageUrl={targetImageUrl}
+        taskId={currentTaskId || undefined}
+      />
+
+      {/* Color Cloning Report */}
+      <ColorCloningReport
+        open={showReport}
+        onClose={() => setShowReport(false)}
+        results={results}
         sourceImageUrl={sourceImageUrl}
         targetImageUrl={targetImageUrl}
       />

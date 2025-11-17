@@ -1,32 +1,52 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { X, Download, Share2, ArrowLeftRight, Sparkles, RotateCcw, Zap } from 'lucide-react';
+import { X, Download, Share2, ArrowLeftRight, Sparkles, RotateCcw, Zap, ArrowLeft } from 'lucide-react';
 
 interface StyleSimulationProps {
   isOpen: boolean;
   onClose: () => void;
   sourceImageUrl: string;
   targetImageUrl: string;
+  taskId?: string;
 }
 
-export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUrl }: StyleSimulationProps) {
-  const [isProcessing, setIsProcessing] = useState(true);
+export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUrl, taskId }: StyleSimulationProps) {
+  const [isProcessing, setIsProcessing] = useState(false);
   const [sliderPosition, setSliderPosition] = useState(50);
+  const [processedImage, setProcessedImage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (isOpen) {
-      setIsProcessing(true);
-      // 模拟AI处理
-      const timer = setTimeout(() => {
-        setIsProcessing(false);
-      }, 3000);
-      return () => clearTimeout(timer);
+    if (isOpen && taskId) {
+      handleSimulate();
     }
-  }, [isOpen]);
+  }, [isOpen, taskId]);
+
+  const handleSimulate = async () => {
+    if (!taskId) {
+      setError('缺少任务 ID');
+      return;
+    }
+
+    setIsProcessing(true);
+    setError(null);
+
+    try {
+      const { simulateApi } = await import('../lib/api');
+      const result = await simulateApi.simulateStyle(taskId);
+      setProcessedImage(result.processedImage);
+      setIsProcessing(false);
+    } catch (error: any) {
+      console.error('Style simulation failed:', error);
+      setError(error.message || '风格模拟失败');
+      setIsProcessing(false);
+    }
+  };
 
   const handleDownload = () => {
+    const imageUrl = processedImage || targetImageUrl;
     const link = document.createElement('a');
-    link.href = targetImageUrl;
+    link.href = imageUrl;
     link.download = 'style-cloned-photo.jpg';
     link.click();
   };
@@ -39,7 +59,8 @@ export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUr
           text: '查看我的照片风格克隆结果！',
         });
       } catch (error) {
-        console.log('分享失败', error);
+        // 分享功能失败，静默处理（不影响主流程）
+        // 可以在这里添加错误日志记录
       }
     }
   };
@@ -240,20 +261,20 @@ export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUr
                   animate={{ opacity: 1, scale: 1 }}
                   exit={{ opacity: 0, scale: 0.95 }}
                   transition={{ type: 'spring', damping: 30, stiffness: 300 }}
-                  className="relative w-full max-w-6xl bg-white rounded-[28px] shadow-2xl overflow-hidden"
+                  className="relative w-full max-w-4xl bg-white rounded-[28px] shadow-2xl overflow-hidden max-h-[90vh] flex flex-col"
                 >
                   {/* Header */}
-                  <div className="sticky top-0 z-10 bg-white/95 backdrop-blur-xl border-b border-gray-200">
-                    <div className="px-8 py-5 flex items-center justify-between">
+                  <div className="flex-shrink-0 bg-white/95 backdrop-blur-xl border-b border-gray-200">
+                    <div className="px-6 py-4 flex items-center justify-between">
                       <div className="flex items-center gap-3">
                         <div className="w-10 h-10 bg-gradient-to-br from-green-500 to-emerald-600 rounded-xl flex items-center justify-center">
                           <Sparkles className="w-5 h-5 text-white" />
                         </div>
                         <div>
-                          <h2 className="text-gray-900" style={{ fontSize: '20px', fontWeight: 600 }}>
+                          <h2 className="text-gray-900" style={{ fontSize: '18px', fontWeight: 600 }}>
                             风格模拟完成
                           </h2>
-                          <p className="text-gray-500" style={{ fontSize: '13px', fontWeight: 400 }}>
+                          <p className="text-gray-500" style={{ fontSize: '12px', fontWeight: 400 }}>
                             拖动滑块对比原图和处理后的效果
                           </p>
                         </div>
@@ -268,10 +289,10 @@ export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUr
                     </div>
                   </div>
 
-                  {/* Content */}
-                  <div className="p-8">
+                  {/* Content - 可滚动 */}
+                  <div className="flex-1 overflow-y-auto p-6">
                     {/* Comparison Slider */}
-                    <div className="relative max-w-5xl mx-auto rounded-2xl overflow-hidden shadow-2xl mb-6">
+                    <div className="relative max-w-3xl mx-auto rounded-2xl overflow-hidden shadow-2xl mb-6">
                       <div className="relative aspect-[16/10] bg-gray-100">
                         {/* Original Image */}
                         <div className="absolute inset-0">
@@ -283,19 +304,18 @@ export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUr
                         </div>
 
                         {/* Processed Image with Clip */}
-                        <div
-                          className="absolute inset-0 transition-all"
-                          style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
-                        >
-                          <img
-                            src={targetImageUrl}
-                            alt="处理后"
-                            className="w-full h-full object-cover"
-                            style={{ 
-                              filter: 'sepia(0.15) saturate(1.35) contrast(1.12) brightness(1.03) hue-rotate(-5deg)',
-                            }}
-                          />
-                        </div>
+                        {processedImage && (
+                          <div
+                            className="absolute inset-0 transition-all"
+                            style={{ clipPath: `inset(0 ${100 - sliderPosition}% 0 0)` }}
+                          >
+                            <img
+                              src={processedImage}
+                              alt="处理后"
+                              className="w-full h-full object-cover"
+                            />
+                          </div>
+                        )}
 
                         {/* Slider Handle */}
                         <div
@@ -303,47 +323,62 @@ export function StyleSimulation({ isOpen, onClose, sourceImageUrl, targetImageUr
                           style={{ left: `${sliderPosition}%` }}
                           onMouseDown={handleSliderMouseDown}
                         >
-                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-14 h-14 bg-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white hover:scale-110 transition-transform">
-                            <ArrowLeftRight className="w-5 h-5 text-gray-700" />
+                          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-12 h-12 bg-white rounded-full shadow-2xl flex items-center justify-center border-4 border-white hover:scale-110 transition-transform">
+                            <ArrowLeftRight className="w-4 h-4 text-gray-700" />
                           </div>
                         </div>
 
                         {/* Labels */}
-                        <div className="absolute top-4 left-4 px-3 py-1.5 bg-black/70 backdrop-blur-sm rounded-lg">
-                          <p className="text-white" style={{ fontSize: '13px', fontWeight: 500 }}>原图</p>
+                        <div className="absolute top-3 left-3 px-3 py-1.5 bg-black/70 backdrop-blur-sm rounded-lg">
+                          <p className="text-white" style={{ fontSize: '12px', fontWeight: 500 }}>原图</p>
                         </div>
-                        <div className="absolute top-4 right-4 px-3 py-1.5 bg-black/70 backdrop-blur-sm rounded-lg">
-                          <p className="text-white" style={{ fontSize: '13px', fontWeight: 500 }}>风格模拟</p>
+                        <div className="absolute top-3 right-3 px-3 py-1.5 bg-black/70 backdrop-blur-sm rounded-lg">
+                          <p className="text-white" style={{ fontSize: '12px', fontWeight: 500 }}>风格模拟</p>
                         </div>
                       </div>
                     </div>
+                  </div>
 
-                    {/* Action Buttons */}
-                    <div className="flex flex-wrap items-center justify-center gap-3">
+                  {/* Footer - 操作按钮 */}
+                  <div className="flex-shrink-0 bg-gradient-to-t from-gray-50 to-white border-t border-gray-200 px-6 py-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      {/* 左侧：返回按钮 */}
                       <button
-                        onClick={handleDownload}
-                        className="flex items-center gap-2 px-6 py-3 bg-gray-900 hover:bg-gray-800 text-white rounded-xl transition-all shadow-lg hover:shadow-xl"
-                        style={{ fontSize: '14px', fontWeight: 600 }}
-                      >
-                        <Download className="w-4 h-4" />
-                        下载结果
-                      </button>
-                      <button
-                        onClick={handleShare}
-                        className="flex items-center gap-2 px-6 py-3 bg-white hover:bg-gray-50 text-gray-900 border border-gray-300 rounded-xl transition-all"
+                        onClick={onClose}
+                        className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl transition-all"
                         style={{ fontSize: '14px', fontWeight: 500 }}
                       >
-                        <Share2 className="w-4 h-4" />
-                        分享
+                        <ArrowLeft className="w-4 h-4" />
+                        返回上一步
                       </button>
-                      <button
-                        onClick={handleReset}
-                        className="flex items-center gap-2 px-6 py-3 bg-white hover:bg-gray-50 text-gray-900 border border-gray-300 rounded-xl transition-all"
-                        style={{ fontSize: '14px', fontWeight: 500 }}
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        重新处理
-                      </button>
+                      
+                      {/* 右侧：操作按钮组 */}
+                      <div className="flex flex-wrap items-center gap-3">
+                        <button
+                          onClick={handleReset}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl transition-all"
+                          style={{ fontSize: '14px', fontWeight: 500 }}
+                        >
+                          <RotateCcw className="w-4 h-4" />
+                          重新处理
+                        </button>
+                        <button
+                          onClick={handleShare}
+                          className="flex items-center gap-2 px-4 py-2.5 bg-white hover:bg-gray-50 text-gray-700 border border-gray-300 rounded-xl transition-all"
+                          style={{ fontSize: '14px', fontWeight: 500 }}
+                        >
+                          <Share2 className="w-4 h-4" />
+                          分享
+                        </button>
+                        <button
+                          onClick={handleDownload}
+                          className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-600 hover:to-emerald-700 text-white rounded-xl transition-all shadow-lg hover:shadow-xl"
+                          style={{ fontSize: '14px', fontWeight: 600 }}
+                        >
+                          <Download className="w-4 h-4" />
+                          下载结果
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </motion.div>

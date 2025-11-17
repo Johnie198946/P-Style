@@ -53,7 +53,7 @@
       outDir: 'build',
     },
     server: {
-      port: 3001,
+      port: 3001,  // 根据开发方案第 0 节，前端必须运行在 3001 端口
       open: true,
     },
   });

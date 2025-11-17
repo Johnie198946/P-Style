@@ -107,7 +107,7 @@ export function ContentManagement() {
       feature: { label: '功能', className: 'bg-orange-100 text-orange-700 border-orange-200' },
       announcement: { label: '公告', className: 'bg-red-100 text-red-700 border-red-200' },
     };
-    const config = configs[type as keyof typeof configs];
+    const config = configs[type as keyof typeof configs] || { label: type, className: 'bg-gray-100 text-gray-700 border-gray-200' };
     return <Badge className={config.className}>{config.label}</Badge>;
   };
 

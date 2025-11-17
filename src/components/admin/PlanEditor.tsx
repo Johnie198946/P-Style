@@ -186,7 +186,7 @@ export function PlanEditor({ isOpen, onClose, onSave, initialPlan }: PlanEditorP
                       <Input
                         id="name"
                         placeholder="例如：专业版"
-                        value={formData.name}
+                        value={formData.name || ''}
                         onChange={(e) => setFormData({ ...formData, name: e.target.value })}
                       />
                     </div>
@@ -196,7 +196,7 @@ export function PlanEditor({ isOpen, onClose, onSave, initialPlan }: PlanEditorP
                       <Input
                         id="nameEn"
                         placeholder="例如：Pro"
-                        value={formData.nameEn}
+                        value={formData.nameEn || ''}
                         onChange={(e) => setFormData({ ...formData, nameEn: e.target.value })}
                       />
                     </div>
@@ -206,7 +206,7 @@ export function PlanEditor({ isOpen, onClose, onSave, initialPlan }: PlanEditorP
                       <Textarea
                         id="description"
                         placeholder="简短描述这个计划适合什么用户"
-                        value={formData.description}
+                        value={formData.description || ''}
                         onChange={(e) => setFormData({ ...formData, description: e.target.value })}
                         rows={2}
                       />
@@ -219,7 +219,7 @@ export function PlanEditor({ isOpen, onClose, onSave, initialPlan }: PlanEditorP
                           id="price"
                           type="number"
                           min="0"
-                          value={formData.price}
+                          value={formData.price || 0}
                           onChange={(e) => setFormData({ ...formData, price: parseFloat(e.target.value) || 0 })}
                         />
                       </div>

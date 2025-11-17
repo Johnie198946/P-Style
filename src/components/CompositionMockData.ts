@@ -130,7 +130,7 @@ export const compositionMockData = {
 稳定性与动态性评估：
 • 稳定性元素：
   - 水平地平线与城市边界提供稳定基底
-  - 富士山的对称锥形��态强化视觉锚定
+  - 富士山的对称锥形态强化视觉锚定
   - 整体构图重心位于画面下半部分，增强稳定感
 
 • 动态性元素：
@@ -193,4 +193,24 @@ export const compositionMockData = {
 • 如需强化"极简感"，可进一步裁剪前景，仅保留塔楼、富士山与大面积天空
 • 如需增强"纪实感"，可保留更多前景城市细节，降低天空占比至 30%
 • 当前构图已具备较高完成度，建议改进方向以"微调"为主，避免大幅度改动破坏原有平衡`
+};
+
+// Review Section Mock Data - 照片点评完整数据
+import { mockReviewData } from './ReviewMockData';
+
+export const fullMockResults = {
+  review: mockReviewData,
+  composition: compositionMockData,
+  lighting: {
+    // 现有的lighting数据...
+  },
+  color: {
+    // 现有的color数据...
+  },
+  lightroom: {
+    // 现有的lightroom数据...
+  },
+  photoshop: {
+    // 现有的photoshop数据...
+  }
 };

@@ -14,6 +14,7 @@ import { SimpleMaskVisualization } from './SimpleMaskVisualization';
 import { ExportDialog } from './ExportDialog';
 import { CurveVisualizationLR } from './CurveVisualizationLR';
 import { compositionMockData } from './CompositionMockData';
+import { realGeminiReviewData } from './RealGeminiMockData';
 
 interface AdjustmentResultsProps {
   results: any;
@@ -1827,7 +1828,8 @@ function getColorClass(color: string) {
 // Mock data generator (same as before)
 export function generateMockResults() {
   return {
-    review: {
+    review: realGeminiReviewData,
+    _oldReview: {
       visualGuidance: '照片采用经典的三分法构图，以右侧红色塔楼为视觉主体，引导观者目光从前景树木逐步过渡到中景城市建筑，最终聚焦于远景的富士山。整体视觉动线流畅自然，层次分明。',
       focusExposure: '采用较小光圈（推测 f/8-f/11），保证了从前景到远景的清晰度。曝光控制得当，高光压制恰到好处，阴影细节丰富，整体呈现出宽容度很高的平衡曝光。',
       colorDepth: '色彩以暖调为主，使用了较大的景深范围，从前景树木到远处富士山都保持清晰。色调偏暖橙，呼应日出/日落时分的自然光线，营造出治愈感。',
@@ -2007,53 +2009,134 @@ export function generateMockResults() {
     ],
     photoshop: [
       {
-        title: '📸 Camera Raw 调整',
-        icon: <Camera className="w-5 h-5" />,
-        steps: [
-          '在 Photoshop 中打开照片，应用 Camera Raw 滤镜',
-          '基本面板中按照 Lightroom 的参数进行初步调色',
-          '使用 HSL 面板调整橙色、绿色、蓝色的饱和度和明度',
-          '在色调曲线中分别调整 RGB 通道，实现冷暖分离',
+        title: '📸 Camera Raw 基础调整',
+        description: '应用 ACR 滤镜，复用 Lightroom 参数作为调整基础',
+        params: [
+          { name: '曝光', value: '+0.10', reason: '微提亮度匹配源照片晨光氛围' },
+          { name: '对比度', value: '+14', reason: '增强画面层次感和视觉冲击力' },
+          { name: '高光', value: '-60', reason: '大幅压制高光，保留天空细节，防止过曝' },
+          { name: '阴影', value: '+45', reason: '提亮暗部，展现城市和树木的细节层次' },
+          { name: '白色', value: '+18', reason: '轻微提升白色点，营造柔光效果' },
+          { name: '黑色', value: '-13', reason: '适度压黑，增加画面深度和对比' },
+          { name: '色温', value: '+700K', reason: '向暖色偏移，模拟日出/日落黄金时段' },
+          { name: '色调', value: '+8', reason: '微调品红方向，避免画面过绿' },
         ],
+        details: '打开照片后，选择 滤镜 > Camera Raw 滤镜，在基本面板中按照以上参数调整。这一步是整个后期流程的基础，确立画面的基本色调和曝光。',
       },
       {
-        title: '🎨 色彩分级',
-        icon: <Palette className="w-5 h-5" />,
-        steps: [
-          '新建色彩查找调整图层，选择 "Film Stock" 或 "Cinematic" 预设作为基础',
-          '新建曲线调整图层，在 RGB 通道中微调整体对比度',
-          '分别在红、蓝、绿通道中调整高光和阴影的色彩倾向',
-          '降低图层不透明度至 30-50%，保持自然感',
+        title: '🎨 色彩分级（分离色调）',
+        description: '使用曲线和色彩平衡实现高光暖调、阴影冷调的电影感',
+        params: [
+          { name: 'RGB 曲线 - 中间调', value: '输入 128 → 输出 138', reason: '轻微提升中间调亮度，保持画面通透' },
+          { name: 'RGB 曲线 - 暗部', value: '输入 60 → 输出 58', reason: '暗部略微抬升，避免死黑' },
+          { name: 'RGB 曲线 - 亮部', value: '输入 200 → 输出 210', reason: '高光适度保留，防止溢出' },
+          { name: '红通道 - 高光', value: '+8', reason: '为高光区域添加暖红色，营造日出氛围' },
+          { name: '蓝通道 - 阴影', value: '-10', reason: '在阴影区域减少蓝色，形成冷暖对比' },
+          { name: '绿通道 - 中间调', value: '-5', reason: '减少绿色通道，让画面偏洋红/褐色' },
         ],
+        details: '新建曲线调整图层，先在 RGB 通道调整整体明暗关系，然后分别在红、绿、蓝通道精细调整。这是实现电影感色调分离的关键步骤。',
+        blendMode: '正常',
+        opacity: '100%',
       },
       {
-        title: '🌅 渐变映射',
-        icon: <Sunrise className="w-5 h-5" />,
-        steps: [
-          '新建渐变映射调整图层，设置从深蓝（阴影）到暖橙（高光）的渐变',
-          '将混合模式改为 "柔光" 或 "叠加"，不透明度降至 15-25%',
-          '使用蒙版工具，在前景暗部区域增强效果，天空区域减弱',
+        title: '🌈 HSL 精细调色',
+        description: '针对性调整特定颜色，降低绿色饱和度，增强橙色表现力',
+        params: [
+          { name: '橙色 - 色相', value: '-6', reason: '让橙色偏向红色，增强温暖感' },
+          { name: '橙色 - 饱和度', value: '+12', reason: '提升橙色饱和度，强化日落/日出氛围' },
+          { name: '橙色 - 明度', value: '+6', reason: '提亮橙色区域，使其更突出' },
+          { name: '绿色 - 色相', value: '+10', reason: '让绿色偏青，减少鲜艳感' },
+          { name: '绿色 - 饱和度', value: '-28', reason: '大幅降低绿色饱和度，使植被呈现褐色/橄榄色' },
+          { name: '绿色 - 明度', value: '-9', reason: '压暗绿色，让树木融入暗部氛围' },
+          { name: '蓝色 - 明度', value: '+8', reason: '提亮蓝色，增强天空的通透感' },
         ],
+        details: '在 Camera Raw 滤镜中切换到 HSL/颜色 面板，按照以上参数调整各个颜色。这一步能精准控制画面中特定色彩的表现。',
       },
       {
-        title: '✨ 局部调整',
-        icon: <Sparkles className="w-5 h-5" />,
-        steps: [
-          '使用径向滤镜或渐变滤镜，在右侧塔楼到富士山方向增强暖光',
-          '新建空白图层，使用柔边画笔在塔楼周围添加橙黄色光晕，混合模式 "柔光"',
-          '对前景树木使用 "色相/饱和度" 调整图层，降低绿色饱和度，增加褐色倾向',
-          '在天空区域使用渐变工具，增强从暖橙到冷蓝的过渡',
+        title: '🖌️ 可选颜色精调',
+        description: '使用可选颜色工具进行 CMYK 四色微调，实现更专业的调色',
+        params: [
+          { name: '红色 - 青色', value: '-10%', reason: '减少红色中的青色成分，让红色更纯净' },
+          { name: '红色 - 洋红', value: '+8%', reason: '增加洋红，让红色更饱满' },
+          { name: '黄色 - 洋红', value: '+12%', reason: '让黄色偏橙，增强暖调' },
+          { name: '黄色 - 黄色', value: '-6%', reason: '适度降低黄色纯度，避免过艳' },
+          { name: '绿色 - 黄色', value: '+15%', reason: '让绿色偏黄褐色，符合源照片风格' },
+          { name: '青色 - 青色', value: '-8%', reason: '降低青色纯度，保持低饱和美感' },
         ],
+        details: '新建可选颜色调整图层（图层 > 新建调整图层 > 可选颜色），针对红、黄、绿、青等颜色进行 CMYK 微调。这是专业调色师常用的技巧。',
+        blendMode: '正常',
+        opacity: '80%',
       },
       {
-        title: '🔧 最终优化',
-        icon: <Settings className="w-5 h-5" />,
-        steps: [
-          '合并可见图层，应用适度的 "USM 锐化"（量：80-100，半径：1.0-1.5，阈值：2-4）',
-          '新建 "色阶" 调整图层，微调黑场和白场',
-          '添加轻微的颗粒效果（滤镜 > 杂色 > 添加杂色，量：1-2%）增强胶片感',
-          '最后进行整体观察，确保高光不溢出，阴影有细节，色彩和谐统一',
+        title: '✨ 局部光影塑造',
+        description: '使用减淡/加深工具和蒙版，强化局部光影效果',
+        params: [
+          { name: '减淡工具 - 范围', value: '高光', reason: '仅作用于高光区域，避免影响暗部' },
+          { name: '减淡工具 - 曝光度', value: '15-20%', reason: '轻微提亮，模拟自然光线' },
+          { name: '加深工具 - 范围', value: '阴影', reason: '针对性压暗阴影，增强层次' },
+          { name: '加深工具 - 曝光度', value: '10-15%', reason: '适度加深，避免死黑' },
         ],
+        details: '新建空白图层，设置为 "柔光" 混合模式。使用减淡工具（O键）在需要提亮的区域（如建筑顶部、远山）轻刷；使用加深工具在前景暗部轻刷，增强立体感。',
+        blendMode: '柔光',
+        opacity: '60%',
+      },
+      {
+        title: '🌅 氛围光晕添加',
+        description: '手绘光晕效果，模拟日出/日落的温暖光线',
+        params: [
+          { name: '画笔硬度', value: '0%', reason: '使用完全柔边画笔，确保光晕自然过渡' },
+          { name: '画笔不透明度', value: '8-12%', reason: '低不透明度多次叠加，避免生硬' },
+          { name: '前景色', value: '#F4A460（橙黄色）', reason: '模拟黄金时段的暖光色温' },
+          { name: '流量', value: '30%', reason: '控制颜色输出，便于精细控制' },
+        ],
+        details: '新建空白图层，使用大号柔边画笔（B键），在画面右侧（塔楼和富士山方向）轻刷橙黄色，模拟日出光线。图层混合模式设为 "滤色" 或 "柔光"，不透明度 20-35%。',
+        blendMode: '滤色',
+        opacity: '25%',
+      },
+      {
+        title: '🔍 细节锐化',
+        description: '使用高反差保留或 USM 锐化增强细节清晰度',
+        params: [
+          { name: '锐化方式', value: 'USM 锐化', reason: '对照片类图像效果最佳，可精确控制参数' },
+          { name: '数量', value: '85%', reason: '适中强度，增强细节但不过度' },
+          { name: '半径', value: '1.2px', reason: '适合高分辨率照片的锐化半径' },
+          { name: '阈值', value: '3', reason: '避免锐化平滑区域（如天空），减少噪点' },
+        ],
+        details: '按 Ctrl+Alt+Shift+E 盖印所有可见图层，转为智能对象（右键 > 转换为智能对象）。执行 滤镜 > 锐化 > USM锐化，按照参数调整。锐化后可通过蒙版控制作用区域。',
+      },
+      {
+        title: '🎞️ 胶片颗粒与质感',
+        description: '添加细微颗粒效果，营造胶片质感和怀旧氛围',
+        params: [
+          { name: '颗粒类型', value: 'Camera Raw 颗粒', reason: 'ACR 的颗粒效果比 PS 杂色滤镜更自然' },
+          { name: '数量', value: '18-25', reason: '适度的颗粒感，增强质感但不抢眼' },
+          { name: '大小', value: '35-40', reason: '中等颗粒大小，模拟胶片效果' },
+          { name: '粗糙度', value: '50', reason: '平衡自然感和规律性' },
+        ],
+        details: '在 Camera Raw 滤镜的 "效果" 面板中，找到 "颗粒" 选项，按照参数调整。颗粒会让画面更有质感，减少数码感。',
+      },
+      {
+        title: '🌓 暗角与边缘处理',
+        description: '添加自然暗角，引导视觉焦点，增强画面氛围',
+        params: [
+          { name: '暗角数量', value: '-15 到 -20', reason: '轻微暗角，不影响主体但增强聚焦感' },
+          { name: '中点', value: '50', reason: '暗角从画面中等位置开始过渡' },
+          { name: '圆度', value: '0', reason: '保持自然的椭圆形暗角' },
+          { name: '羽化', value: '80', reason: '高羽化值确保暗角自然柔和' },
+        ],
+        details: '在 Camera Raw 滤镜的 "效果" 面板中，调整 "镜头晕影" 选项。或者新建曲线调整图层，添加蒙版，使用渐变工具在四周拉出暗角效果。',
+      },
+      {
+        title: '🎯 最终色阶与输出',
+        description: '微调整体色阶，确保完美的黑白场，准备导出',
+        params: [
+          { name: '黑场输入', value: '3-5', reason: '轻微提升黑场，避免纯黑，保留暗部细节' },
+          { name: '白场输入', value: '250-252', reason: '轻微压低白场，防止高光溢出' },
+          { name: '中间调灰度', value: '1.02', reason: '微调中间调，整体略提亮' },
+        ],
+        details: '新建色阶调整图层（图层 > 新建调整图层 > 色阶），观察直方图，微调黑白场滑块。完成后合并所有图层，转换为 sRGB 色彩空间，导出为 JPEG（品质 90-95%）或 PNG。',
+        blendMode: '正常',
+        opacity: '100%',
       },
     ],
   };

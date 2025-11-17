@@ -43,23 +43,18 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
     }
   }, [emailCountdown]);
 
-  // 微信扫码登录检测
+  // 微信扫码登录检测（功能待实现）
   useEffect(() => {
     if (isCheckingWechat && wechatQRCode) {
-      const checkInterval = setInterval(() => {
-        // 模拟检测扫码状态
+      const checkInterval = setInterval(async () => {
+        // 微信注册功能待实现（需要接入微信 OAuth）
+        // 当前为演示模式，不会真正完成注册
         const random = Math.random();
         if (random > 0.95) {
-          // 模拟扫码成功
           clearInterval(checkInterval);
           setIsCheckingWechat(false);
-          localStorage.setItem('isLoggedIn', 'true');
-          localStorage.setItem('userName', 'WeChat用户');
-          localStorage.setItem('userAvatar', 'https://api.dicebear.com/7.x/avataaars/svg?seed=wechat');
-          onClose();
-          setTimeout(() => {
-            alert('微信注册成功！');
-          }, 300);
+          const { toast } = await import('sonner');
+          toast.info('微信注册功能开发中，请使用邮箱注册');
         }
       }, 2000);
 
@@ -84,7 +79,7 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
     return '';
   };
 
-  const handleSendPhoneCode = () => {
+  const handleSendPhoneCode = async () => {
     if (!phone) {
       setErrors({ ...errors, phone: '请输入手机号' });
       return;
@@ -99,13 +94,12 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
     delete newErrors.phone;
     setErrors(newErrors);
 
-    // 模拟发送验证码
-    console.log('发送手机验证码到:', phone);
-    setCountdown(60);
-    alert('验证码已发送到您的手机，请查收');
+    // 手机验证码功能待实现（需要接入短信服务）
+    const { toast } = await import('sonner');
+    toast.info('手机验证码功能开发中，请使用邮箱注册');
   };
 
-  const handleSendEmailCode = () => {
+  const handleSendEmailCode = async () => {
     if (!email) {
       setErrors({ ...errors, email: '请输入邮箱地址' });
       return;
@@ -120,10 +114,20 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
     delete newErrors.email;
     setErrors(newErrors);
 
-    // 模拟发送验证码
-    console.log('发送邮箱验证码到:', email);
-    setEmailCountdown(60);
-    alert('验证码已发送到您的邮箱，请查收');
+    try {
+      const { authApi } = await import('../lib/api');
+      await authApi.sendVerificationCode(email, 'register');
+      setEmailCountdown(60);
+      // 使用 toast 替代 alert
+      const { toast } = await import('sonner');
+      toast.success('验证码已发送到您的邮箱，请查收');
+    } catch (error: any) {
+      console.error('Send code failed:', error);
+      const errorMessage = error.message || '发送验证码失败，请重试';
+      setErrors({ ...errors, email: errorMessage });
+      const { toast } = await import('sonner');
+      toast.error(errorMessage);
+    }
   };
 
   const handleWeChatRegister = () => {
@@ -138,7 +142,8 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
     const newErrors: Record<string, string> = {};
 
     if (!agreedToTerms) {
-      alert('请同意服务条款和隐私政策');
+      const { toast } = await import('sonner');
+      toast.error('请同意服务条款和隐私政策');
       return;
     }
 
@@ -176,25 +181,51 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
 
     setIsLoading(true);
     
-    // 模拟注册
-    setTimeout(() => {
-      setIsLoading(false);
-      // 保存登录状态
-      localStorage.setItem('isLoggedIn', 'true');
-      if (registerMethod === 'email') {
-        localStorage.setItem('userName', email.split('@')[0]);
-        localStorage.setItem('userEmail', email);
-      } else {
-        localStorage.setItem('userName', phone);
-        localStorage.setItem('userPhone', phone);
-      }
-      localStorage.setItem('userAvatar', `https://api.dicebear.com/7.x/avataaars/svg?seed=${email || phone}`);
+    try {
+      const { authApi } = await import('../lib/api');
+      const { toast } = await import('sonner');
       
-      onClose();
-      setTimeout(() => {
-        alert('注册成功！欢迎使用照片风格克隆');
-      }, 300);
-    }, 1500);
+      if (registerMethod === 'email') {
+        // 邮箱注册（使用验证码）
+        if (!emailCode) {
+          setErrors({ ...errors, emailCode: '请输入验证码' });
+          setIsLoading(false);
+          return;
+        }
+        
+        const result = await authApi.registerWithCode({
+          email,
+          code: emailCode,
+          password,
+          display_name: email.split('@')[0],
+        });
+        
+        localStorage.setItem('accessToken', result.accessToken);
+        localStorage.setItem('isLoggedIn', 'true');
+        localStorage.setItem('userName', result.user.display_name || result.user.email);
+        localStorage.setItem('userData', JSON.stringify(result.user));
+        
+        toast.success('注册成功！欢迎使用照片风格克隆');
+        onClose();
+      } else {
+        // 手机号注册（暂时不支持，提示用户使用邮箱）
+        toast.error('手机号注册功能暂未开放，请使用邮箱注册');
+      }
+    } catch (error: any) {
+      console.error('Register failed:', error);
+      const { toast } = await import('sonner');
+      if (error.message) {
+        toast.error(error.message);
+        // 如果是验证码错误，在表单中显示
+        if (error.message.includes('验证码')) {
+          setErrors({ ...errors, emailCode: error.message });
+        }
+      } else {
+        toast.error('注册失败，请重试');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (

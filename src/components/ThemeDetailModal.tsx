@@ -7,6 +7,7 @@ import { ColorSection } from './sections/ColorSection';
 import { ReviewSection } from './sections/ReviewSection';
 import { LightroomSection } from './sections/LightroomSection';
 import { PhotoshopSection } from './sections/PhotoshopSection';
+import { realGeminiReviewData } from './RealGeminiMockData';
 
 interface ThemeDetailModalProps {
   themeId: string | null;
@@ -126,7 +127,7 @@ export function ThemeDetailModal({
           />
         );
       case 'review':
-        return <ReviewSection data={results?.review} />;
+        return <ReviewSection data={results?.review || realGeminiReviewData} />;
       default:
         return null;
     }

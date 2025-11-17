@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Lock, User, Eye, EyeOff, Shield, AlertCircle } from 'lucide-react';
+import { Lock, User, Eye, EyeOff, Shield, AlertCircle, Mail } from 'lucide-react';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import {
@@ -10,6 +10,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import { adminApi, ApiError } from '../../lib/api';
+import { toast } from 'sonner';
 
 interface AdminLoginDialogProps {
   isOpen: boolean;
@@ -18,29 +20,100 @@ interface AdminLoginDialogProps {
 }
 
 export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogProps) {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [mfaToken, setMfaToken] = useState<string | null>(null); // 第一步返回的 MFA Token
+  const [verificationCode, setVerificationCode] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [codeCountdown, setCodeCountdown] = useState(0); // 验证码倒计时
+  const [step, setStep] = useState<'login' | 'mfa'>('login'); // 当前步骤
 
-  const handleSubmit = (e: React.FormEvent) => {
+  // 验证码倒计时
+  useEffect(() => {
+    if (codeCountdown > 0) {
+      const timer = setTimeout(() => setCodeCountdown(codeCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [codeCountdown]);
+
+  // 重置状态
+  useEffect(() => {
+    if (!isOpen) {
+      setStep('login');
+      setEmail('');
+      setPassword('');
+      setMfaToken(null);
+      setVerificationCode('');
+      setError('');
+      setCodeCountdown(0);
+    }
+  }, [isOpen]);
+
+  // 第一步：邮箱+密码登录
+  const handleStep1Login = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
-    // 模拟登录验证
-    setTimeout(() => {
-      if (username === 'admin' && password === 'admin123') {
-        onLogin();
-        onClose();
-        setUsername('');
-        setPassword('');
+    try {
+      const result = await adminApi.login({ email, password });
+      setMfaToken(result.mfaToken);
+      setStep('mfa');
+      setCodeCountdown(60); // 验证码已发送，开始倒计时
+      toast.success('验证码已发送到您的邮箱');
+    } catch (error: any) {
+      console.error('Admin login failed:', error);
+      if (error instanceof ApiError) {
+        setError(error.message || '登录失败');
+        toast.error(error.message || '登录失败');
       } else {
-        setError('用户名或密码错误');
+        setError('登录失败，请重试');
+        toast.error('登录失败，请重试');
       }
+    } finally {
       setLoading(false);
-    }, 800);
+    }
+  };
+
+  // 第二步：验证码验证
+  const handleStep2Verify = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!mfaToken || !verificationCode) {
+      setError('请输入验证码');
+      return;
+    }
+
+    setError('');
+    setLoading(true);
+
+    try {
+      const result = await adminApi.verifyMfa({
+        mfaToken,
+        code: verificationCode,
+      });
+      
+      // 保存管理员 Token
+      localStorage.setItem('adminAuthToken', result.adminAuthToken);
+      localStorage.setItem('isAdminLoggedIn', 'true');
+      localStorage.setItem('adminUserData', JSON.stringify(result.user));
+      
+      toast.success('管理员登录成功');
+      onLogin();
+      onClose();
+    } catch (error: any) {
+      console.error('Admin MFA verify failed:', error);
+      if (error instanceof ApiError) {
+        setError(error.message || '验证失败');
+        toast.error(error.message || '验证失败');
+      } else {
+        setError('验证失败，请重试');
+        toast.error('验证失败，请重试');
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -58,24 +131,25 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
           </DialogDescription>
         </DialogHeader>
 
-        <form onSubmit={handleSubmit} className="space-y-4 mt-4">
-          {/* Username Input */}
-          <div className="space-y-2">
-            <label className="text-sm text-gray-700" style={{ fontWeight: 600 }}>
-              用户名
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
-              <Input
-                type="text"
-                placeholder="输入管理员用户名"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="pl-10"
-                required
-              />
+        {step === 'login' ? (
+          <form onSubmit={handleStep1Login} className="space-y-4 mt-4">
+            {/* Email Input */}
+            <div className="space-y-2">
+              <label className="text-sm text-gray-700" style={{ fontWeight: 600 }}>
+                邮箱
+              </label>
+              <div className="relative">
+                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Input
+                  type="email"
+                  placeholder="输入管理员邮箱"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  className="pl-10"
+                  required
+                />
+              </div>
             </div>
-          </div>
 
           {/* Password Input */}
           <div className="space-y-2">
@@ -121,32 +195,92 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
             )}
           </AnimatePresence>
 
-          {/* Submit Button */}
-          <Button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600"
-          >
-            {loading ? (
-              <div className="flex items-center gap-2">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                <span>登录中...</span>
+            {/* Submit Button */}
+            <Button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600"
+            >
+              {loading ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>验证中...</span>
+                </div>
+              ) : (
+                <span>下一步</span>
+              )}
+            </Button>
+          </form>
+        ) : (
+          <form onSubmit={handleStep2Verify} className="space-y-4 mt-4">
+            {/* Verification Code Input */}
+            <div className="space-y-2">
+              <label className="text-sm text-gray-700" style={{ fontWeight: 600 }}>
+                验证码
+              </label>
+              <div className="flex gap-2">
+                <Input
+                  type="text"
+                  placeholder="输入邮箱验证码"
+                  value={verificationCode}
+                  onChange={(e) => setVerificationCode(e.target.value)}
+                  maxLength={6}
+                  className="flex-1"
+                  required
+                />
+                <Button
+                  type="button"
+                  onClick={() => {
+                    // 重新发送验证码（需要重新执行第一步）
+                    setStep('login');
+                    setMfaToken(null);
+                    setVerificationCode('');
+                    setCodeCountdown(0);
+                  }}
+                  disabled={codeCountdown > 0}
+                  variant="outline"
+                  className="whitespace-nowrap"
+                >
+                  {codeCountdown > 0 ? `${codeCountdown}秒` : '重新发送'}
+                </Button>
               </div>
-            ) : (
-              <span>登录</span>
-            )}
-          </Button>
+              <p className="text-xs text-gray-500">
+                验证码已发送到 {email}，请查收
+              </p>
+            </div>
 
-          {/* Demo Credentials */}
-          <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
-            <p className="text-xs text-blue-800 text-center mb-1" style={{ fontWeight: 600 }}>
-              演示账号
-            </p>
-            <p className="text-xs text-blue-700 text-center">
-              用户名: <span style={{ fontWeight: 600 }}>admin</span> / 密码: <span style={{ fontWeight: 600 }}>admin123</span>
-            </p>
-          </div>
-        </form>
+            {/* Submit Button */}
+            <Button
+              type="submit"
+              disabled={loading || !verificationCode}
+              className="w-full bg-gradient-to-r from-blue-500 to-purple-500 hover:from-blue-600 hover:to-purple-600"
+            >
+              {loading ? (
+                <div className="flex items-center gap-2">
+                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  <span>验证中...</span>
+                </div>
+              ) : (
+                <span>完成登录</span>
+              )}
+            </Button>
+
+            {/* Back Button */}
+            <Button
+              type="button"
+              onClick={() => {
+                setStep('login');
+                setMfaToken(null);
+                setVerificationCode('');
+                setCodeCountdown(0);
+              }}
+              variant="ghost"
+              className="w-full"
+            >
+              返回上一步
+            </Button>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

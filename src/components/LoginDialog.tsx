@@ -1,6 +1,8 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Loader2 } from 'lucide-react';
+import { authApi, ApiError } from '../lib/api';
+import { toast } from 'sonner';
 
 interface LoginDialogProps {
   isOpen: boolean;
@@ -14,26 +16,87 @@ export function LoginDialog({ isOpen, onClose, onSwitchToRegister }: LoginDialog
   const [password, setPassword] = useState('');
   const [verificationCode, setVerificationCode] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [loginMethod, setLoginMethod] = useState<'email' | 'phone'>('email');
+  const [loginMethod, setLoginMethod] = useState<'email' | 'phone' | 'code'>('email');
+  const [codeCountdown, setCodeCountdown] = useState(0); // 验证码倒计时
 
+  // 验证码倒计时
+  useEffect(() => {
+    if (codeCountdown > 0) {
+      const timer = setTimeout(() => setCodeCountdown(codeCountdown - 1), 1000);
+      return () => clearTimeout(timer);
+    }
+  }, [codeCountdown]);
+
+  // 发送验证码
+  const handleSendCode = async () => {
+    if (!email) {
+      toast.error('请输入邮箱地址');
+      return;
+    }
+    
+    try {
+      await authApi.sendVerificationCode(email, 'login');
+      setCodeCountdown(60);
+      toast.success('验证码已发送到您的邮箱');
+    } catch (error: any) {
+      console.error('Send code failed:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || '发送验证码失败');
+      } else {
+        toast.error('发送验证码失败，请重试');
+      }
+    }
+  };
+
+  // 登录处理
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
     
-    // 模拟登录
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      let result;
+      
+      if (loginMethod === 'code') {
+        // 验证码登录
+        if (!verificationCode) {
+          toast.error('请输入验证码');
+          setIsLoading(false);
+          return;
+        }
+        result = await authApi.loginWithCode({
+          email,
+          code: verificationCode,
+        });
+      } else {
+        // 密码登录
+        result = await authApi.login({
+          email: loginMethod === 'email' ? email : `${phone}@temp.com`, // 临时处理手机号
+          password,
+        });
+      }
+      
+      localStorage.setItem('accessToken', result.accessToken);
       localStorage.setItem('isLoggedIn', 'true');
-      localStorage.setItem('userName', loginMethod === 'email' ? email.split('@')[0] : phone);
+      localStorage.setItem('userName', result.user.display_name || result.user.email);
+      localStorage.setItem('userData', JSON.stringify(result.user));
+      toast.success('登录成功');
       onClose();
-    }, 1500);
+    } catch (error: any) {
+      console.error('Login failed:', error);
+      if (error instanceof ApiError) {
+        toast.error(error.message || '登录失败');
+      } else {
+        toast.error('登录失败，请重试');
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleWeChatLogin = () => {
-    console.log('微信登录');
-    localStorage.setItem('isLoggedIn', 'true');
-    localStorage.setItem('userName', 'WeChat用户');
-    onClose();
+  const handleWeChatLogin = async () => {
+    // 微信登录功能待实现（需要接入微信 OAuth）
+    const { toast } = await import('sonner');
+    toast.info('微信登录功能开发中，请使用邮箱登录');
   };
 
   return (
@@ -129,25 +192,63 @@ export function LoginDialog({ isOpen, onClose, onSwitchToRegister }: LoginDialog
                     }`}
                     style={{ fontSize: '14px', fontWeight: 500 }}
                   >
-                    邮箱登录
+                    密码登录
                   </button>
                   <button
                     type="button"
-                    onClick={() => setLoginMethod('phone')}
+                    onClick={() => setLoginMethod('code')}
                     className={`flex-1 px-4 py-2.5 rounded-[8px] transition-all ${
-                      loginMethod === 'phone'
+                      loginMethod === 'code'
                         ? 'bg-white text-gray-900 shadow-sm'
                         : 'text-gray-600 hover:text-gray-900'
                     }`}
                     style={{ fontSize: '14px', fontWeight: 500 }}
                   >
-                    手机登录
+                    验证码登录
                   </button>
                 </div>
 
                 {/* Form */}
                 <form onSubmit={handleLogin} className="space-y-4">
-                  {loginMethod === 'email' ? (
+                  {loginMethod === 'code' ? (
+                    <>
+                      {/* Email Input */}
+                      <div>
+                        <input
+                          type="email"
+                          value={email}
+                          onChange={(e) => setEmail(e.target.value)}
+                          placeholder="输入邮箱地址"
+                          className="w-full px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all placeholder:text-gray-400"
+                          style={{ fontSize: '15px' }}
+                          required
+                        />
+                      </div>
+
+                      {/* Verification Code */}
+                      <div className="flex gap-3">
+                        <input
+                          type="text"
+                          value={verificationCode}
+                          onChange={(e) => setVerificationCode(e.target.value)}
+                          placeholder="输入验证码"
+                          maxLength={6}
+                          className="flex-1 px-4 py-3.5 bg-gray-50 border border-gray-200 rounded-[12px] focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent focus:bg-white transition-all placeholder:text-gray-400"
+                          style={{ fontSize: '15px' }}
+                          required
+                        />
+                        <button
+                          type="button"
+                          onClick={handleSendCode}
+                          disabled={codeCountdown > 0}
+                          className="px-5 py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-[12px] transition-all whitespace-nowrap disabled:bg-gray-300 disabled:cursor-not-allowed"
+                          style={{ fontSize: '14px', fontWeight: 500 }}
+                        >
+                          {codeCountdown > 0 ? `${codeCountdown}秒` : '获取验证码'}
+                        </button>
+                      </div>
+                    </>
+                  ) : loginMethod === 'email' ? (
                     <>
                       {/* Email Input */}
                       <div>

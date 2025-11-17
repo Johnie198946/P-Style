@@ -100,37 +100,290 @@ export function ExportDialog({ open, onOpenChange, results }: ExportDialogProps)
 
   // 生成纯文本格式
   const generateText = () => {
-    return `照片风格克隆调整方案
-================================
+    let text = `━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+    照片风格克隆调整方案
+    AI 智能分析 · 专业后期指导
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-⭐ 专业摄影师评价
-${results.review.photographer}
+生成日期：${new Date().toLocaleDateString('zh-CN')}
 
-🎨 构图与焦点分析
-分辨率: ${results.composition.basicInfo.resolution}
-宽高比: ${results.composition.basicInfo.aspectRatio}
-主体位置: ${results.composition.basicInfo.subjectPosition}
-
-☀️ 光影参数
-- 曝光: ${results.lighting.basic.exposure.range}
-- 对比度: ${results.lighting.basic.contrast.range}
-- 高光: ${results.lighting.basic.highlights.range}
-- 阴影: ${results.lighting.basic.shadows.range}
-- 白色: ${results.lighting.basic.whites.range}
-- 黑色: ${results.lighting.basic.blacks.range}
-
-🌈 色彩方案
-色温: ${results.color.whiteBalance.temp.range}
-色调: ${results.color.whiteBalance.tint.range}
-
-色彩分级:
-- 高光: 色相 ${results.color.grading.highlights.hue}，饱和度 ${results.color.grading.highlights.saturation}
-- 中间调: 色相 ${results.color.grading.midtones.hue}，饱和度 ${results.color.grading.midtones.saturation}
-- 阴影: 色相 ${results.color.grading.shadows.hue}，饱和度 ${results.color.grading.shadows.saturation}
-
-HSL 调整:
-${results.color.hsl.map((hsl: any) => `- ${hsl.color}: 色相 ${hsl.hue}, 饱和度 ${hsl.saturation}, 明度 ${hsl.luminance}`).join('\n')}
 `;
+
+    // 1. 照片点评
+    if (results.review) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  ⭐ 一、照片点评（8维度专业分析）        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      if (results.review.overviewSummary) {
+        text += `【综述】\n${results.review.overviewSummary}\n\n`;
+      }
+
+      if (results.review.dimensions) {
+        const dims = results.review.dimensions;
+        let dimCount = 1;
+        
+        if (dims.visualGuidance) {
+          text += `${dimCount}. 视觉引导\n`;
+          text += `   源照片：${dims.visualGuidance.referenceDescription}\n`;
+          text += `   目标照片：${dims.visualGuidance.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.focusExposure) {
+          text += `${dimCount}. 对焦与曝光\n`;
+          text += `   源照片：${dims.focusExposure.referenceDescription}\n`;
+          text += `   目标照片：${dims.focusExposure.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.colorDepth) {
+          text += `${dimCount}. 色彩与景深\n`;
+          text += `   源照片：${dims.colorDepth.referenceDescription}\n`;
+          text += `   目标照片：${dims.colorDepth.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.composition) {
+          text += `${dimCount}. 构图与情感\n`;
+          text += `   源照片：${dims.composition.referenceDescription}\n`;
+          text += `   目标照片：${dims.composition.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.technicalDetails) {
+          text += `${dimCount}. 技术细节\n`;
+          text += `   源照片：${dims.technicalDetails.referenceDescription}\n`;
+          text += `   目标照片：${dims.technicalDetails.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.equipment) {
+          text += `${dimCount}. 设备推断\n`;
+          text += `   源照片：${dims.equipment.referenceDescription}\n`;
+          text += `   目标照片：${dims.equipment.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.colorEmotion) {
+          text += `${dimCount}. 色彩情感\n`;
+          text += `   源照片：${dims.colorEmotion.referenceDescription}\n`;
+          text += `   目标照片：${dims.colorEmotion.userDescription}\n\n`;
+          dimCount++;
+        }
+        
+        if (dims.advantages) {
+          text += `${dimCount}. 优势总结\n`;
+          text += `   源照片：${dims.advantages.referenceDescription}\n`;
+          text += `   目标照片：${dims.advantages.userDescription}\n\n`;
+        }
+      }
+
+      if (results.review.photographerStyleSummary) {
+        text += `【摄影师风格总结】\n${results.review.photographerStyleSummary}\n\n`;
+      }
+
+      if (results.review.feasibility) {
+        text += `【复刻可行性评估】\n`;
+        text += `- 可行性：${results.review.feasibility.difficulty === 'high' ? '高难度' : results.review.feasibility.difficulty === 'medium' ? '中等难度' : '低难度'}\n`;
+        text += `- 置信度：${(results.review.feasibility.confidence * 100).toFixed(0)}%\n`;
+        if (results.review.feasibility.recommendation) {
+          text += `- 建议：${results.review.feasibility.recommendation}\n`;
+        }
+        text += `\n`;
+      }
+    }
+
+    // 2. 构图分析
+    if (results.composition) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  🎨 二、构图分析                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      if (results.composition.basicInfo) {
+        text += `【基本信息】\n`;
+        if (results.composition.basicInfo.resolution) {
+          text += `分辨率：${results.composition.basicInfo.resolution}\n`;
+        }
+        if (results.composition.basicInfo.aspectRatio) {
+          text += `宽高比：${results.composition.basicInfo.aspectRatio}\n`;
+        }
+        if (results.composition.basicInfo.subjectPosition) {
+          text += `主体位置：${results.composition.basicInfo.subjectPosition}\n`;
+        }
+        text += `\n`;
+      }
+      
+      if (results.composition.analysis) {
+        text += `【分析】\n${results.composition.analysis}\n\n`;
+      }
+    }
+
+    // 3. 光影参数
+    if (results.lighting) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  ☀️ 三、光影参数                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      if (results.lighting.basic) {
+        text += `【基础调整】\n`;
+        if (results.lighting.basic.exposure) {
+          text += `- 曝光：${results.lighting.basic.exposure.range}\n`;
+        }
+        if (results.lighting.basic.contrast) {
+          text += `- 对比度：${results.lighting.basic.contrast.range}\n`;
+        }
+        if (results.lighting.basic.highlights) {
+          text += `- 高光：${results.lighting.basic.highlights.range}\n`;
+        }
+        if (results.lighting.basic.shadows) {
+          text += `- 阴影：${results.lighting.basic.shadows.range}\n`;
+        }
+        if (results.lighting.basic.whites) {
+          text += `- 白色：${results.lighting.basic.whites.range}\n`;
+        }
+        if (results.lighting.basic.blacks) {
+          text += `- 黑色：${results.lighting.basic.blacks.range}\n`;
+        }
+        text += `\n`;
+      }
+      
+      if (results.lighting.texture) {
+        text += `【细节与质感】\n`;
+        if (results.lighting.texture.texture) {
+          text += `- 纹理：${results.lighting.texture.texture.range}\n`;
+        }
+        if (results.lighting.texture.clarity) {
+          text += `- 清晰度：${results.lighting.texture.clarity.range}\n`;
+        }
+        if (results.lighting.texture.dehaze) {
+          text += `- 去雾：${results.lighting.texture.dehaze.range}\n`;
+        }
+        text += `\n`;
+      }
+    }
+
+    // 4. 色彩方案
+    if (results.color) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  🌈 四、色彩方案                        ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      if (results.color.whiteBalance) {
+        text += `【白平衡】\n`;
+        if (results.color.whiteBalance.temp) {
+          text += `色温：${results.color.whiteBalance.temp.range}\n`;
+        }
+        if (results.color.whiteBalance.tint) {
+          text += `色调：${results.color.whiteBalance.tint.range}\n`;
+        }
+        text += `\n`;
+      }
+      
+      if (results.color.grading) {
+        text += `【色彩分级】\n`;
+        if (results.color.grading.highlights) {
+          text += `- 高光：色相 ${results.color.grading.highlights.hue}，饱和度 ${results.color.grading.highlights.saturation}\n`;
+        }
+        if (results.color.grading.midtones) {
+          text += `- 中间调：色相 ${results.color.grading.midtones.hue}，饱和度 ${results.color.grading.midtones.saturation}\n`;
+        }
+        if (results.color.grading.shadows) {
+          text += `- 阴影：色相 ${results.color.grading.shadows.hue}，饱和度 ${results.color.grading.shadows.saturation}\n`;
+        }
+        if (results.color.grading.balance) {
+          text += `- 平衡：${results.color.grading.balance}\n`;
+        }
+        text += `\n`;
+      }
+      
+      if (results.color.hsl && Array.isArray(results.color.hsl)) {
+        text += `【HSL 调整】\n`;
+        results.color.hsl.forEach((hsl: any) => {
+          text += `- ${hsl.color}：色相 ${hsl.hue}, 饱和度 ${hsl.saturation}, 明度 ${hsl.luminance}\n`;
+        });
+        text += `\n`;
+      }
+    }
+
+    // 5. Lightroom 调整
+    if (results.lightroom && Array.isArray(results.lightroom)) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  📷 五、Lightroom 调整方案              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      results.lightroom.forEach((section: any, idx: number) => {
+        text += `【${idx + 1}. ${section.title}】\n`;
+        if (section.description) {
+          text += `${section.description}\n`;
+        }
+        if (section.params && Array.isArray(section.params)) {
+          section.params.forEach((param: any) => {
+            text += `  • ${param.name}：${param.value}\n`;
+          });
+        }
+        text += `\n`;
+      });
+    }
+
+    // 6. Photoshop 调整
+    if (results.photoshop && Array.isArray(results.photoshop)) {
+      text += `
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  🎨 六、Photoshop 调整方案              ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+`;
+      
+      results.photoshop.forEach((step: any, idx: number) => {
+        text += `【步骤 ${idx + 1}：${step.title}】\n`;
+        if (step.description) {
+          text += `${step.description}\n`;
+        }
+        if (step.params && Array.isArray(step.params)) {
+          step.params.forEach((param: any) => {
+            text += `  • ${param.name}：${param.value}\n`;
+            if (param.reason) {
+              text += `    理由：${param.reason}\n`;
+            }
+          });
+        }
+        if (step.details) {
+          text += `详细说明：${step.details}\n`;
+        }
+        if (step.blendMode) {
+          text += `混合模式：${step.blendMode}`;
+          if (step.opacity) {
+            text += ` | 不透明度：${step.opacity}`;
+          }
+          text += `\n`;
+        }
+        text += `\n`;
+      });
+    }
+
+    text += `
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+由 AI 智能分析生成 · 照片风格克隆系统
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+`;
+
+    return text;
   };
 
   // 导出为PDF（模拟）

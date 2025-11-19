@@ -15,11 +15,21 @@ import {
   XCircle,
   Quote
 } from 'lucide-react';
+import { AreaChart, Area, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts';
+
+interface HistogramData {
+  description?: string;
+  data_points: number[];  // 255个整数，表示0-255的亮度分布
+}
 
 interface ComparisonDimension {
   title: string;
   referenceDescription: string;
   userDescription: string;
+  histogramData?: {
+    reference?: HistogramData;
+    user?: HistogramData;
+  };
 }
 
 // 复刻可行性数据结构（根据后端 analysis_formatter.py 返回的数据结构）
@@ -260,9 +270,21 @@ export function ReviewSection({ data }: { data?: ReviewData }) {
                         <div className="w-2 h-2 rounded-full bg-blue-500" />
                         <span className="text-xs text-gray-500">参考照片</span>
                       </div>
-                      <p className="text-gray-700 text-sm leading-relaxed">
+                      <p className="text-gray-700 text-sm leading-relaxed mb-4">
                         {dimension.referenceDescription}
                       </p>
+                      
+                      {/* 直方图显示（仅在 colorDepth 维度） */}
+                      {config.key === 'colorDepth' && dimension.histogramData?.reference && (
+                        <div className="mt-4">
+                          <div className="text-xs text-gray-500 mb-2">AI 反推直方图（趋势参考）</div>
+                          <HistogramChart 
+                            data={dimension.histogramData.reference.data_points}
+                            description={dimension.histogramData.reference.description}
+                            type="reference"
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* 用户图分析 */}
@@ -271,9 +293,21 @@ export function ReviewSection({ data }: { data?: ReviewData }) {
                         <div className="w-2 h-2 rounded-full bg-purple-500" />
                         <span className="text-xs text-gray-500">用户照片</span>
                       </div>
-                      <p className="text-gray-700 text-sm leading-relaxed">
+                      <p className="text-gray-700 text-sm leading-relaxed mb-4">
                         {dimension.userDescription}
                       </p>
+                      
+                      {/* 直方图显示（仅在 colorDepth 维度） */}
+                      {config.key === 'colorDepth' && dimension.histogramData?.user && (
+                        <div className="mt-4">
+                          <div className="text-xs text-gray-500 mb-2">AI 反推直方图（趋势参考）</div>
+                          <HistogramChart 
+                            data={dimension.histogramData.user.data_points}
+                            description={dimension.histogramData.user.description}
+                            type="user"
+                          />
+                        </div>
+                      )}
                     </div>
                   </div>
                 </motion.div>
@@ -494,6 +528,73 @@ export function ReviewSection({ data }: { data?: ReviewData }) {
           </div>
         </motion.div>
       )}
+    </div>
+  );
+}
+
+// 直方图组件（AI 反推直方图）
+function HistogramChart({ data, description, type }: { data: number[]; description?: string; type: 'reference' | 'user' }) {
+  // 将 data_points 转换为 recharts 格式
+  const chartData = data.map((value, index) => ({
+    brightness: index,
+    value: value
+  }));
+
+  const color = type === 'reference' ? '#3b82f6' : '#a855f7';
+
+  return (
+    <div className="space-y-2">
+      {description && (
+        <p className="text-xs text-gray-500 italic">{description}</p>
+      )}
+      <div className="h-32 w-full">
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={chartData} margin={{ top: 5, right: 5, left: 5, bottom: 5 }}>
+            <defs>
+              <linearGradient id={`gradient-${type}`} x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor={color} stopOpacity={0.3} />
+                <stop offset="95%" stopColor={color} stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <XAxis 
+              dataKey="brightness" 
+              type="number"
+              domain={[0, 255]}
+              tick={false}
+              axisLine={false}
+            />
+            <YAxis 
+              tick={false}
+              axisLine={false}
+            />
+            <Tooltip 
+              content={({ active, payload }) => {
+                if (active && payload && payload.length) {
+                  const data = payload[0].payload;
+                  return (
+                    <div className="bg-white p-2 border border-gray-200 rounded shadow-sm text-xs">
+                      <p>亮度: {data.brightness}</p>
+                      <p>分布: {data.value}</p>
+                    </div>
+                  );
+                }
+                return null;
+              }}
+            />
+            <Area
+              type="monotone"
+              dataKey="value"
+              stroke={color}
+              strokeWidth={1.5}
+              fill={`url(#gradient-${type})`}
+            />
+          </AreaChart>
+        </ResponsiveContainer>
+      </div>
+      <div className="flex justify-between text-xs text-gray-400">
+        <span>0</span>
+        <span>255</span>
+      </div>
     </div>
   );
 }

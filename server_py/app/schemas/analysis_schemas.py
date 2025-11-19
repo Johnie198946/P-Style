@@ -12,13 +12,20 @@ class PhotoReviewSchema(BaseModel):
     overviewSummary: Optional[str] = Field(default="", description="整体概览")
     dimensions: Optional[Dict[str, Any]] = Field(default_factory=dict, description="各维度分析")
     photographerStyleSummary: Optional[str] = Field(default="", description="摄影师风格总结")
+    comparisonTable: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="参数对比表")
     feasibility: Optional[Dict[str, Any]] = Field(default_factory=dict, description="可行性评估")
     feasibilityDescription: Optional[str] = Field(default="", description="可行性描述")
 
 
 class CompositionSchema(BaseModel):
     """构图分析 Schema"""
-    advanced_sections: Dict[str, str] = Field(
+    # 支持新结构（5字段）和旧结构（7段）
+    main_structure: Optional[str] = Field(default="", description="画面主结构分析（新结构）")
+    subject_weight: Optional[Dict[str, str]] = Field(default_factory=dict, description="主体位置与视觉权重（新结构）")
+    visual_guidance: Optional[Dict[str, str]] = Field(default_factory=dict, description="线条与方向引导（新结构）")
+    ratios_negative_space: Optional[Dict[str, str]] = Field(default_factory=dict, description="比例与留白（新结构）")
+    style_class: Optional[str] = Field(default="", description="构图风格归类（新结构）")
+    advanced_sections: Optional[Dict[str, str]] = Field(
         default_factory=lambda: {
             "画面主结构分析": "",
             "主体位置与视觉权重": "",
@@ -28,7 +35,7 @@ class CompositionSchema(BaseModel):
             "视觉平衡与动势": "",
             "构图风格归类与改进建议": "",
         },
-        description="构图七段分析"
+        description="构图七段分析（旧结构，向后兼容）"
     )
 
 
@@ -51,10 +58,20 @@ class LightingTextureSchema(BaseModel):
     vibrance: Dict[str, str] = Field(default_factory=lambda: {"range": "+0", "note": ""})
 
 
+class ToneCurvesSchema(BaseModel):
+    """色调曲线 Schema"""
+    explanation: Optional[str] = Field(default="", description="曲线调整逻辑说明")
+    points_rgb: Optional[List[List[int]]] = Field(default_factory=list, description="RGB 曲线坐标点数组")
+    points_red: Optional[List[List[int]]] = Field(default_factory=list, description="红色通道曲线坐标点数组")
+    points_green: Optional[List[List[int]]] = Field(default_factory=list, description="绿色通道曲线坐标点数组")
+    points_blue: Optional[List[List[int]]] = Field(default_factory=list, description="蓝色通道曲线坐标点数组")
+
+
 class LightingSchema(BaseModel):
     """光影参数 Schema"""
     basic: LightingBasicSchema = Field(default_factory=LightingBasicSchema)
     texture: LightingTextureSchema = Field(default_factory=LightingTextureSchema)
+    toneCurves: Optional[ToneCurvesSchema] = Field(default=None, description="色调曲线（新结构）")
 
 
 class ColorGradingSchema(BaseModel):

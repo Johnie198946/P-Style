@@ -15,6 +15,79 @@ class AnalysisFormatter:
 
     PROTOCOL_VERSION = "2025-02"
 
+    def _parse_range_string(self, range_str: str) -> Dict[str, str]:
+        """
+        解析范围字符串，支持多种格式
+        
+        支持的格式：
+        1. 范围+描述："+0.3～+0.6，轻微提升使高光有"柔光"" → range: "+0.45", note: "轻微提升使高光有"柔光""
+        2. 范围："+0.2 ~ +0.5" → range: "+0.35", note: ""
+        3. 单个值："+0.3" → range: "+0.30", note: ""
+        4. 描述："微调" → range: "+0", note: "微调"
+        
+        Args:
+            range_str: 范围字符串
+            
+        Returns:
+            {"range": str, "note": str}
+        """
+        if not range_str or not isinstance(range_str, str):
+            return {"range": "+0", "note": ""}
+        
+        range_str = range_str.strip()
+        
+        # 1. 尝试提取范围+描述格式（如："+0.3～+0.6，轻微提升使高光有"柔光""）
+        # 使用正则表达式匹配：范围部分（可能包含～或~）和描述部分（逗号后的内容）
+        range_desc_match = re.search(r'([+-]?\d+\.?\d*)\s*[～~]\s*([+-]?\d+\.?\d*)\s*[，,]\s*(.+)', range_str)
+        if range_desc_match:
+            val1 = float(range_desc_match.group(1))
+            val2 = float(range_desc_match.group(2))
+            avg = (val1 + val2) / 2
+            description = range_desc_match.group(3).strip()
+            return {
+                "range": f"{avg:+.2f}" if avg != 0 else "+0",
+                "note": description
+            }
+        
+        # 2. 尝试提取范围格式（如："+0.2 ~ +0.5"）
+        range_match = re.search(r'([+-]?\d+\.?\d*)\s*[～~]\s*([+-]?\d+\.?\d*)', range_str)
+        if range_match:
+            val1 = float(range_match.group(1))
+            val2 = float(range_match.group(2))
+            avg = (val1 + val2) / 2
+            return {
+                "range": f"{avg:+.2f}" if avg != 0 else "+0",
+                "note": ""
+            }
+        
+        # 3. 尝试提取单个数值（如："+0.3" 或 "约 +0.3EV"）
+        single_match = re.search(r'([+-]?\d+\.?\d*)', range_str)
+        if single_match:
+            val = float(single_match.group(1))
+            # 如果原字符串包含描述性文字，保留为 note
+            if any(keyword in range_str for keyword in ["约", "微调", "略微", "稍微", "适度", "轻微", "提升", "增强", "压暗", "提亮"]):
+                return {
+                    "range": f"{val:+.2f}" if val != 0 else "+0",
+                    "note": range_str
+                }
+            return {
+                "range": f"{val:+.2f}" if val != 0 else "+0",
+                "note": ""
+            }
+        
+        # 4. 模糊描述（如："微调"、"略微增加"）
+        if any(keyword in range_str for keyword in ["微调", "略微", "稍微", "适度", "轻微"]):
+            return {
+                "range": "+0",
+                "note": range_str
+            }
+        
+        # 5. 默认值
+        return {
+            "range": "+0",
+            "note": range_str
+        }
+
     def format_part1(self, gemini_json: Union[str, Dict[str, Any], List[Any]], feasibility_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """
         格式化 Part1 结果
@@ -108,6 +181,12 @@ class AnalysisFormatter:
             if not isinstance(raw_data, dict):
                 logger.warning(f"raw_data 不是字典类型: {type(raw_data)}, 使用空字典")
                 raw_data = {}
+            
+            # 检测新 Prompt 结构（module_1_critique, module_2_composition, module_3_lighting_params）
+            # 如果存在新结构，转换为旧结构以便后续处理
+            if "module_1_critique" in raw_data or "module_2_composition" in raw_data or "module_3_lighting_params" in raw_data:
+                logger.info("检测到新 Prompt 结构，开始转换...")
+                raw_data = self._convert_new_prompt_to_old_structure(raw_data)
             
             # 调试日志：记录最终 raw_data 的键和内容（用于诊断数据为空的问题）
             logger.info(f"最终 raw_data keys = {list(raw_data.keys()) if isinstance(raw_data, dict) else 'not dict'}")
@@ -463,14 +542,118 @@ class AnalysisFormatter:
         格式化照片点评
         
         Args:
-            raw: Gemini 返回的原始数据（应该包含 professional_evaluation 字段）
+            raw: Gemini 返回的原始数据（应该包含 professional_evaluation 或 module_1_critique 字段）
             feasibility: 可行性评估结果（可选）
         
         Returns:
             标准化的照片点评结构
         """
-        # 从 raw 中提取 professional_evaluation（根据 Prompt 模板，应该在根级别）
+        # 优先使用新结构 module_1_critique，如果没有则使用旧结构 professional_evaluation
+        module_1 = raw.get("module_1_critique", {})
         pe = raw.get("professional_evaluation", {})
+        
+        # 如果存在新结构，优先使用
+        if module_1:
+            logger.info("使用新 Prompt 结构 (module_1_critique)")
+            # 提取新结构字段
+            comprehensive_review = module_1.get("comprehensive_review", "")
+            visual_subject_analysis = module_1.get("visual_subject_analysis", "")
+            focus_exposure_analysis = module_1.get("focus_exposure_analysis", "")
+            color_depth_analysis = module_1.get("color_depth_analysis", {})
+            emotion = module_1.get("emotion", "")
+            pros_evaluation = module_1.get("pros_evaluation", "")
+            parameter_comparison_table = module_1.get("parameter_comparison_table", [])
+            style_summary = module_1.get("style_summary", "")
+            feasibility_assessment = module_1.get("feasibility_assessment", {})
+            
+            # 提取直方图数据（新结构）
+            histogram_data = {}
+            if isinstance(color_depth_analysis, dict):
+                simulated_histogram = color_depth_analysis.get("simulated_histogram_data", {})
+                if isinstance(simulated_histogram, dict):
+                    # 提取 reference 和 user 两个字段
+                    reference_hist = simulated_histogram.get("reference", {})
+                    user_hist = simulated_histogram.get("user", {})
+                    
+                    if reference_hist:
+                        histogram_data["reference"] = {
+                            "description": reference_hist.get("description", ""),
+                            "data_points": reference_hist.get("data_points", [])
+                        }
+                    
+                    if user_hist:
+                        histogram_data["user"] = {
+                            "description": user_hist.get("description", ""),
+                            "data_points": user_hist.get("data_points", [])
+                        }
+            
+            # 构建 colorDepth 维度，包含直方图数据
+            color_depth_dimension = {
+                "title": "色彩与景深",
+                "description": color_depth_analysis.get("text", "") if isinstance(color_depth_analysis, dict) else str(color_depth_analysis)
+            }
+            if histogram_data:
+                color_depth_dimension["histogramData"] = histogram_data
+            
+            # 转换 parameter_comparison_table 格式
+            comparison_table = []
+            if isinstance(parameter_comparison_table, list):
+                for item in parameter_comparison_table:
+                    if isinstance(item, dict):
+                        comparison_table.append({
+                            "dimension": item.get("dimension", ""),
+                            "reference": item.get("ref_feature", ""),
+                            "user": item.get("user_feature", "")
+                        })
+            
+            return {
+                "naturalLanguage": {
+                    "summary": comprehensive_review,
+                    "highlights": pros_evaluation,
+                    "technique": "",
+                    "comparison": visual_subject_analysis,
+                },
+                "structured": {
+                    "overviewSummary": comprehensive_review,
+                    "dimensions": {
+                        "visualGuidance": {
+                            "title": "视觉引导与主体",
+                            "referenceDescription": visual_subject_analysis,
+                            "userDescription": ""
+                        },
+                        "focusExposure": {
+                            "title": "焦点与曝光",
+                            "description": focus_exposure_analysis
+                        },
+                        "colorDepth": color_depth_dimension,  # 包含直方图数据
+                        "composition": {
+                            "title": "构图",
+                            "description": ""
+                        },
+                        "technicalDetails": {
+                            "title": "技术细节",
+                            "description": ""
+                        },
+                        "equipment": {
+                            "title": "设备",
+                            "description": ""
+                        },
+                        "colorEmotion": {
+                            "title": "色彩与情感",
+                            "description": emotion
+                        },
+                        "advantages": {
+                            "title": "优点",
+                            "description": pros_evaluation
+                        },
+                    },
+                    "comparisonTable": comparison_table,
+                    "photographerStyleSummary": style_summary,
+                },
+            }
+        
+        # 使用旧结构（向后兼容）
+        logger.info("使用旧 Prompt 结构 (professional_evaluation)")
         
         # 调试日志：记录 professional_evaluation 的类型和内容
         logger.debug(f"_format_photo_review: professional_evaluation type = {type(pe)}")
@@ -558,13 +741,58 @@ class AnalysisFormatter:
         格式化构图分析
         
         Args:
-            raw: Gemini 返回的原始数据（应该包含 composition 字段）
+            raw: Gemini 返回的原始数据（应该包含 composition 或 module_2_composition 字段）
         
         Returns:
             标准化的构图分析结构
         """
-        # 从 raw 中提取 composition（根据 Prompt 模板，应该在根级别）
+        # 优先使用新结构 module_2_composition，如果没有则使用旧结构 composition
+        module_2 = raw.get("module_2_composition", {})
         comp = raw.get("composition", {})
+        
+        # 如果存在新结构，使用 5 字段结构（方案A）
+        if module_2:
+            logger.info("使用新 Prompt 结构 (module_2_composition) - 5字段结构")
+            
+            main_structure = module_2.get("main_structure", "")
+            subject_weight = module_2.get("subject_weight", {})
+            visual_guidance = module_2.get("visual_guidance", {})
+            ratios_negative_space = module_2.get("ratios_negative_space", {})
+            style_class = module_2.get("style_class", "")
+            
+            # 构建新结构（5字段）
+            structured = {
+                "main_structure": main_structure,
+                "subject_weight": {
+                    "description": subject_weight.get("description", "") if isinstance(subject_weight, dict) else "",
+                    "layers": subject_weight.get("layers", "") if isinstance(subject_weight, dict) else ""
+                },
+                "visual_guidance": {
+                    "analysis": visual_guidance.get("analysis", "") if isinstance(visual_guidance, dict) else "",
+                    "path": visual_guidance.get("path", "") if isinstance(visual_guidance, dict) else ""
+                },
+                "ratios_negative_space": {
+                    "entity_ratio": ratios_negative_space.get("entity_ratio", "") if isinstance(ratios_negative_space, dict) else "",
+                    "space_ratio": ratios_negative_space.get("space_ratio", "") if isinstance(ratios_negative_space, dict) else "",
+                    "distribution": ratios_negative_space.get("distribution", "") if isinstance(ratios_negative_space, dict) else ""
+                },
+                "style_class": style_class
+            }
+            
+            return {
+                "naturalLanguage": {
+                    "framework": main_structure,
+                    "subjectWeight": subject_weight.get("description", "") if isinstance(subject_weight, dict) else "",
+                    "leadingLines": visual_guidance.get("analysis", "") if isinstance(visual_guidance, dict) else "",
+                    "spaceLayers": subject_weight.get("layers", "") if isinstance(subject_weight, dict) else "",
+                    "proportion": ratios_negative_space.get("distribution", "") if isinstance(ratios_negative_space, dict) else "",
+                    "balanceDynamics": visual_guidance.get("path", "") if isinstance(visual_guidance, dict) else "",
+                },
+                "structured": structured,
+            }
+        
+        # 使用旧结构（向后兼容 - 7段结构）
+        logger.info("使用旧 Prompt 结构 (composition) - 7段结构")
         
         # 调试日志：记录 composition 的类型和内容
         logger.debug(f"_format_composition: composition type = {type(comp)}")
@@ -632,8 +860,91 @@ class AnalysisFormatter:
         }
 
     def _format_lighting(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """格式化光影参数"""
-        # Part1 中 lighting 可能只有趋势描述
+        """
+        格式化光影参数
+        
+        Args:
+            raw: Gemini 返回的原始数据（应该包含 lighting 或 module_3_lighting_params 字段）
+        
+        Returns:
+            标准化的光影参数结构
+        """
+        # 优先使用新结构 module_3_lighting_params，如果没有则使用旧结构
+        module_3 = raw.get("module_3_lighting_params", {})
+        
+        # 如果存在新结构，处理范围字符串和色调曲线
+        if module_3:
+            logger.info("使用新 Prompt 结构 (module_3_lighting_params)")
+            
+            exposure_control = module_3.get("exposure_control", {})
+            tone_curves = module_3.get("tone_curves", {})
+            texture_clarity = module_3.get("texture_clarity", {})
+            
+            # 解析曝光控制参数（范围+描述格式）
+            basic = {}
+            if isinstance(exposure_control, dict):
+                basic["exposure"] = self._parse_range_string(exposure_control.get("exposure", ""))
+                basic["contrast"] = self._parse_range_string(exposure_control.get("contrast", ""))
+                basic["highlights"] = self._parse_range_string(exposure_control.get("highlights", ""))
+                basic["shadows"] = self._parse_range_string(exposure_control.get("shadows", ""))
+                basic["whites"] = self._parse_range_string(exposure_control.get("whites", ""))
+                basic["blacks"] = self._parse_range_string(exposure_control.get("blacks", ""))
+            else:
+                # 默认值
+                basic = {
+                    "exposure": {"range": "+0", "note": ""},
+                    "contrast": {"range": "+0", "note": ""},
+                    "highlights": {"range": "+0", "note": ""},
+                    "shadows": {"range": "+0", "note": ""},
+                    "whites": {"range": "+0", "note": ""},
+                    "blacks": {"range": "+0", "note": ""},
+                }
+            
+            # 解析纹理与清晰度参数（范围+描述格式）
+            texture = {}
+            if isinstance(texture_clarity, dict):
+                texture["texture"] = self._parse_range_string(texture_clarity.get("texture", ""))
+                texture["clarity"] = self._parse_range_string(texture_clarity.get("clarity", ""))
+                texture["dehaze"] = self._parse_range_string(texture_clarity.get("dehaze", ""))
+            else:
+                # 默认值
+                texture = {
+                    "texture": {"range": "+0", "note": ""},
+                    "clarity": {"range": "+0", "note": ""},
+                    "dehaze": {"range": "+0", "note": ""},
+                }
+            
+            # 提取色调曲线数据
+            tone_curves_data = {}
+            if isinstance(tone_curves, dict):
+                tone_curves_data = {
+                    "explanation": tone_curves.get("explanation", ""),
+                    "points_rgb": tone_curves.get("points_rgb", []),
+                    "points_red": tone_curves.get("points_red", []),
+                    "points_green": tone_curves.get("points_green", []),
+                    "points_blue": tone_curves.get("points_blue", []),
+                }
+            
+            structured = {
+                "basic": basic,
+                "texture": texture,
+            }
+            
+            # 如果有色调曲线数据，添加到 structured
+            if tone_curves_data.get("points_rgb") or tone_curves_data.get("points_red"):
+                structured["toneCurves"] = tone_curves_data
+            
+            return {
+                "naturalLanguage": {
+                    "exposureControl": "",
+                    "toneCurve": tone_curves_data.get("explanation", ""),
+                    "textureClarity": "",
+                },
+                "structured": structured,
+            }
+        
+        # 使用旧结构（向后兼容）
+        logger.info("使用旧 Prompt 结构 (lighting)")
         return {
             "naturalLanguage": {
                 "exposureControl": "",
@@ -803,6 +1114,58 @@ class AnalysisFormatter:
                     advanced[title] = ""
 
         structured["meta"]["warnings"] = warnings
+
+    def _convert_new_prompt_to_old_structure(self, raw: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        将新 Prompt 结构转换为旧结构，以便后续处理
+        
+        新结构：
+        - module_1_critique: 照片点评
+        - module_2_composition: 构图分析
+        - module_3_lighting_params: 光影参数
+        
+        旧结构：
+        - professional_evaluation: 照片点评
+        - composition: 构图分析
+        - lighting: 光影参数（在 _format_lighting 中处理）
+        """
+        converted = {}
+        
+        # 转换 module_1_critique -> professional_evaluation
+        module_1 = raw.get("module_1_critique", {})
+        if module_1:
+            converted["professional_evaluation"] = {
+                "comprehensive_review": module_1.get("comprehensive_review", ""),
+                "visual_subject_analysis": module_1.get("visual_subject_analysis", ""),
+                "focus_exposure_analysis": module_1.get("focus_exposure_analysis", ""),
+                "color_depth_analysis": module_1.get("color_depth_analysis", {}),  # 包含直方图数据
+                "emotion": module_1.get("emotion", ""),
+                "pros_evaluation": module_1.get("pros_evaluation", ""),
+                "parameter_comparison_table": module_1.get("parameter_comparison_table", []),
+                "style_summary": module_1.get("style_summary", ""),
+                "feasibility_assessment": module_1.get("feasibility_assessment", {}),
+            }
+            # 保留新结构以便后续处理
+            converted["module_1_critique"] = module_1
+        
+        # 转换 module_2_composition -> composition
+        module_2 = raw.get("module_2_composition", {})
+        if module_2:
+            # 保留新结构以便后续处理
+            converted["module_2_composition"] = module_2
+        
+        # 转换 module_3_lighting_params -> lighting
+        module_3 = raw.get("module_3_lighting_params", {})
+        if module_3:
+            # 保留新结构以便后续处理
+            converted["module_3_lighting_params"] = module_3
+        
+        # 保留其他字段
+        for key, value in raw.items():
+            if key not in ["module_1_critique", "module_2_composition", "module_3_lighting_params"]:
+                converted[key] = value
+        
+        return converted
 
     def _create_error_structure(self, stage: str, error_msg: str) -> Dict[str, Any]:
         """创建错误结构"""

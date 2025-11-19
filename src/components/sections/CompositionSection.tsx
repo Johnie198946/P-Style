@@ -10,7 +10,26 @@ import {
   Frame
 } from 'lucide-react';
 
+// 支持新结构（5字段）和旧结构（7段）
 interface CompositionData {
+  // 新结构（5字段）
+  main_structure?: string;
+  subject_weight?: {
+    description?: string;
+    layers?: string;
+  };
+  visual_guidance?: {
+    analysis?: string;
+    path?: string;
+  };
+  ratios_negative_space?: {
+    entity_ratio?: string;
+    space_ratio?: string;
+    distribution?: string;
+  };
+  style_class?: string;
+  
+  // 旧结构（7段，向后兼容）
   画面主结构分析?: string;
   主体位置与视觉权重?: string;
   线条与方向引导?: string;
@@ -24,7 +43,72 @@ interface CompositionSectionProps {
   data: CompositionData;
 }
 
-const analysisItems = [
+// 新结构（5字段）配置
+const newAnalysisItems = [
+  {
+    key: 'main_structure' as const,
+    title: '画面主结构分析',
+    subtitle: 'Main Structure',
+    icon: Grid3x3,
+    gradient: 'from-blue-500 to-cyan-500',
+    bg: 'from-blue-50 to-cyan-50',
+    border: 'border-blue-200',
+    iconBg: 'bg-blue-100',
+    iconColor: 'text-blue-600',
+    description: '几何框架 · 视觉轴线 · 平衡关系'
+  },
+  {
+    key: 'subject_weight' as const,
+    title: '主体位置与视觉权重',
+    subtitle: 'Subject Weight',
+    icon: Target,
+    gradient: 'from-purple-500 to-pink-500',
+    bg: 'from-purple-50 to-pink-50',
+    border: 'border-purple-200',
+    iconBg: 'bg-purple-100',
+    iconColor: 'text-purple-600',
+    description: '位置分析 · 面积比例 · 权重关系'
+  },
+  {
+    key: 'visual_guidance' as const,
+    title: '线条与方向引导',
+    subtitle: 'Visual Guidance',
+    icon: TrendingUp,
+    gradient: 'from-indigo-500 to-blue-500',
+    bg: 'from-indigo-50 to-blue-50',
+    border: 'border-indigo-200',
+    iconBg: 'bg-indigo-100',
+    iconColor: 'text-indigo-600',
+    description: '引导线 · 线条走向 · 视线动线'
+  },
+  {
+    key: 'ratios_negative_space' as const,
+    title: '比例与留白',
+    subtitle: 'Proportion & Negative Space',
+    icon: Maximize2,
+    gradient: 'from-emerald-500 to-green-500',
+    bg: 'from-emerald-50 to-green-50',
+    border: 'border-emerald-200',
+    iconBg: 'bg-emerald-100',
+    iconColor: 'text-emerald-600',
+    description: '比例关系 · 留白节奏 · 元素密度'
+  },
+  {
+    key: 'style_class' as const,
+    title: '构图风格归类',
+    subtitle: 'Style Classification',
+    icon: Lightbulb,
+    gradient: 'from-rose-500 to-red-500',
+    bg: 'from-rose-50 to-red-50',
+    border: 'border-rose-200',
+    iconBg: 'bg-rose-100',
+    iconColor: 'text-rose-600',
+    description: '风格判定 · 改进方向 · 优化建议'
+  }
+];
+
+// 旧结构（7段）配置（向后兼容）
+const oldAnalysisItems = [
   {
     key: '画面主结构分析' as keyof CompositionData,
     title: '画面主结构分析',
@@ -114,12 +198,58 @@ const analysisItems = [
 export function CompositionSection({ data }: CompositionSectionProps) {
   if (!data) return null;
 
+  // 检测是否使用新结构（5字段）
+  const isNewStructure = data.main_structure !== undefined || data.subject_weight !== undefined || 
+                         data.visual_guidance !== undefined || data.ratios_negative_space !== undefined || 
+                         data.style_class !== undefined;
+  
+  const analysisItems = isNewStructure ? newAnalysisItems : oldAnalysisItems;
+  const totalItems = isNewStructure ? 5 : 7;
+
   return (
     <div className="space-y-6">
       {/* Analysis Grid */}
       <div className="grid grid-cols-1 gap-6">
         {analysisItems.map((item, index) => {
-          const content = data[item.key];
+          let content: string | undefined = '';
+          let subContent: { label: string; value: string }[] = [];
+
+          if (isNewStructure) {
+            // 新结构处理
+            switch (item.key) {
+              case 'main_structure':
+                content = data.main_structure;
+                break;
+              case 'subject_weight':
+                content = data.subject_weight?.description;
+                if (data.subject_weight?.layers) {
+                  subContent.push({ label: '空间层次', value: data.subject_weight.layers });
+                }
+                break;
+              case 'visual_guidance':
+                content = data.visual_guidance?.analysis;
+                if (data.visual_guidance?.path) {
+                  subContent.push({ label: '视觉路径', value: data.visual_guidance.path });
+                }
+                break;
+              case 'ratios_negative_space':
+                content = data.ratios_negative_space?.distribution;
+                if (data.ratios_negative_space?.entity_ratio || data.ratios_negative_space?.space_ratio) {
+                  subContent.push({ 
+                    label: '比例', 
+                    value: `实体 ${data.ratios_negative_space.entity_ratio || 'N/A'}，留白 ${data.ratios_negative_space.space_ratio || 'N/A'}` 
+                  });
+                }
+                break;
+              case 'style_class':
+                content = data.style_class;
+                break;
+            }
+          } else {
+            // 旧结构处理（向后兼容）
+            content = data[item.key as keyof CompositionData] as string | undefined;
+          }
+
           if (!content) return null;
 
           const Icon = item.icon;
@@ -161,7 +291,7 @@ export function CompositionSection({ data }: CompositionSectionProps) {
                           bg-gradient-to-r ${item.gradient}
                           text-white shadow-sm
                         `}>
-                          {index + 1}/7
+                          {index + 1}/{totalItems}
                         </div>
                       </div>
                       <p className="text-sm text-gray-500 mb-2">
@@ -182,9 +312,25 @@ export function CompositionSection({ data }: CompositionSectionProps) {
                     `} />
                     
                     <div className="pl-6 pr-2">
-                      <p className="text-gray-700 leading-relaxed whitespace-pre-line">
+                      <p className="text-gray-700 leading-relaxed whitespace-pre-line mb-4">
                         {content}
                       </p>
+                      
+                      {/* 子字段显示（新结构） */}
+                      {subContent.length > 0 && (
+                        <div className="mt-4 space-y-2">
+                          {subContent.map((sub, idx) => (
+                            <div key={idx} className="p-3 bg-white/50 rounded-lg border border-gray-200/50">
+                              <p className="text-xs text-gray-600 mb-1">
+                                <strong>{sub.label}：</strong>
+                              </p>
+                              <p className="text-sm text-gray-700">
+                                {sub.value}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   </div>
 

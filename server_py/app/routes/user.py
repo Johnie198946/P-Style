@@ -8,9 +8,10 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import desc
+from typing import Optional
 
 from ..db import get_db
-from ..models import AnalysisTask
+from ..models import AnalysisTask, Subscription, SubscriptionPlan
 from ..middleware.auth import get_current_user, security
 from ..services.usage_service import UsageService
 from ..services.auth_service import AuthService
@@ -47,6 +48,44 @@ async def get_user_info(
         }
     """
     current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
+    
+    # 查询用户真实订阅信息（根据开发方案第 14 节，不再硬编码返回"免费版"）
+    subscription = db.query(Subscription).filter(
+        Subscription.user_id == current_user.id,
+        Subscription.status == "active",
+    ).first()
+    
+    # 默认值（如果没有订阅）
+    plan_id = None
+    plan_name = "免费版"
+    status = "active"
+    end_at = None
+    auto_renew = False
+    limits = {"analysis_per_month": 10, "generations_per_month": 5}  # 免费版默认限制
+    
+    # 如果有订阅，查询订阅计划信息
+    if subscription:
+        plan = db.query(SubscriptionPlan).filter(SubscriptionPlan.id == subscription.plan_id).first()
+        if plan:
+            plan_id = plan.id
+            plan_name = plan.name
+            status = subscription.status
+            end_at = subscription.end_at.isoformat() if subscription.end_at else None
+            # 从 extra_data 中获取 auto_renew（如果存在）
+            if subscription.extra_data and isinstance(subscription.extra_data, dict):
+                auto_renew = subscription.extra_data.get("auto_renew", False)
+            # 从 plan.features 中获取用量限制
+            if plan.features and isinstance(plan.features, dict):
+                limits = {
+                    "analysis_per_month": plan.features.get("analysis_per_month", 10),
+                    "generations_per_month": plan.features.get("generations_per_month", 5),
+                }
+    
+    # 管理员账号：显示特殊标识（管理员不受用量限制）
+    if current_user.role == "admin":
+        plan_name = "管理员版"
+        limits = {"analysis_per_month": -1, "generations_per_month": -1}  # -1 表示无限
+    
     return success_response(
         data={
             "user": {
@@ -57,12 +96,12 @@ async def get_user_info(
                 "role": current_user.role,
             },
             "subscriptionSummary": {
-                "plan_id": None,
-                "plan_name": "免费版",
-                "status": "active",
-                "end_at": None,
-                "auto_renew": False,
-                "limits": {"analysis_per_month": 10, "generations_per_month": 5},
+                "plan_id": plan_id,
+                "plan_name": plan_name,
+                "status": status,
+                "end_at": end_at,
+                "auto_renew": auto_renew,
+                "limits": limits,
             },
         },
     )
@@ -97,7 +136,8 @@ async def get_usage(
         }
     """
     current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
-    usage = usage_service.get_user_usage(db, current_user.id, month)
+    # 获取用户用量（传入 user_role 以便管理员返回无限限制）
+    usage = usage_service.get_user_usage(db, current_user.id, month, user_role=current_user.role)
     return success_response(data=usage)
 
 

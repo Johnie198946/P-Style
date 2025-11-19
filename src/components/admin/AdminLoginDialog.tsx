@@ -20,7 +20,7 @@ interface AdminLoginDialogProps {
 }
 
 export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogProps) {
-  const [email, setEmail] = useState('');
+  const [username, setUsername] = useState(''); // 用户名或邮箱（支持 admin 或 admin@admin.local）
   const [password, setPassword] = useState('');
   const [mfaToken, setMfaToken] = useState<string | null>(null); // 第一步返回的 MFA Token
   const [verificationCode, setVerificationCode] = useState('');
@@ -42,7 +42,7 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
   useEffect(() => {
     if (!isOpen) {
       setStep('login');
-      setEmail('');
+      setUsername('');
       setPassword('');
       setMfaToken(null);
       setVerificationCode('');
@@ -51,18 +51,30 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
     }
   }, [isOpen]);
 
-  // 第一步：邮箱+密码登录
+  // 第一步：用户名/邮箱+密码登录
+  // 支持通过用户名（display_name）或邮箱（email）登录
   const handleStep1Login = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
 
     try {
-      const result = await adminApi.login({ email, password });
+      const result = await adminApi.login({ username, password });
       setMfaToken(result.mfaToken);
       setStep('mfa');
       setCodeCountdown(60); // 验证码已发送，开始倒计时
-      toast.success('验证码已发送到您的邮箱');
+      
+      // 使用后端返回的 message 字段显示提示消息
+      // 开发环境下，如果邮件未发送，后端会返回明确的提示消息
+      // 生产环境下，后端返回"验证码已发送到您的邮箱"
+      const message = result.message || '验证码已发送到您的邮箱';
+      if (result.dev_mode && !result.email_sent) {
+        // 开发环境且邮件未发送：显示警告消息
+        toast.warning(message);
+      } else {
+        // 正常情况：显示成功消息
+        toast.success(message);
+      }
     } catch (error: any) {
       console.error('Admin login failed:', error);
       if (error instanceof ApiError) {
@@ -133,18 +145,18 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
 
         {step === 'login' ? (
           <form onSubmit={handleStep1Login} className="space-y-4 mt-4">
-            {/* Email Input */}
+            {/* Username/Email Input */}
             <div className="space-y-2">
               <label className="text-sm text-gray-700" style={{ fontWeight: 600 }}>
-                邮箱
+                用户名/邮箱
               </label>
               <div className="relative">
-                <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <Input
-                  type="email"
-                  placeholder="输入管理员邮箱"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  placeholder="输入用户名（如：admin）或邮箱"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
                   className="pl-10"
                   required
                 />
@@ -245,7 +257,7 @@ export function AdminLoginDialog({ isOpen, onClose, onLogin }: AdminLoginDialogP
                 </Button>
               </div>
               <p className="text-xs text-gray-500">
-                验证码已发送到 {email}，请查收
+                验证码已发送到您的邮箱，请查收
               </p>
             </div>
 

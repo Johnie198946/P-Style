@@ -162,41 +162,74 @@ class StorageService:
             return self._upload_to_local(object_key, image_data)
 
     def _upload_to_minio(self, object_key: str, image_data: bytes, content_type: str) -> str:
-        """上传到 MinIO"""
+        """
+        上传到 MinIO
+        注意：如果 MinIO 连接失败或超时，会抛出异常，由调用方处理
+        """
         try:
             from io import BytesIO
+            import socket
             
-            self._client.put_object(
-                self.bucket_name,
-                object_key,
-                BytesIO(image_data),
-                length=len(image_data),
-                content_type=content_type
-            )
+            # 设置超时（防止 MinIO 连接失败时一直阻塞）
+            # 注意：MinIO Python SDK 的 put_object 方法本身不支持超时参数
+            # 但可以通过设置 socket 默认超时来控制
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(10)  # 设置 10 秒超时
             
-            # 构建访问 URL
-            endpoint = getattr(settings, "OSS_ENDPOINT", "http://localhost:9000")
-            if not endpoint.startswith("http"):
-                endpoint = f"http://{endpoint}"
-            url = f"{endpoint}/{self.bucket_name}/{object_key}"
-            logger.info(f"图片上传到 MinIO 成功: {object_key}")
-            return url
+            try:
+                self._client.put_object(
+                    self.bucket_name,
+                    object_key,
+                    BytesIO(image_data),
+                    length=len(image_data),
+                    content_type=content_type
+                )
+                
+                # 构建访问 URL
+                endpoint = getattr(settings, "OSS_ENDPOINT", "http://localhost:9000")
+                if not endpoint.startswith("http"):
+                    endpoint = f"http://{endpoint}"
+                url = f"{endpoint}/{self.bucket_name}/{object_key}"
+                logger.info(f"图片上传到 MinIO 成功: {object_key}")
+                return url
+            finally:
+                # 恢复原始超时设置
+                socket.setdefaulttimeout(original_timeout)
+        except socket.timeout:
+            logger.error(f"MinIO 上传超时: {object_key}")
+            raise ValueError(f"图片上传超时，请检查 MinIO 服务是否正常运行")
         except Exception as e:
             logger.error(f"MinIO 上传失败: {e}")
             raise ValueError(f"图片上传失败: {str(e)}")
 
     def _upload_to_oss(self, object_key: str, image_data: bytes, content_type: str) -> str:
-        """上传到阿里云 OSS"""
+        """
+        上传到阿里云 OSS
+        注意：如果阿里云 OSS 连接失败或超时，会抛出异常，由调用方处理
+        """
         try:
-            self._client.put_object(object_key, image_data, headers={"Content-Type": content_type})
+            import socket
             
-            # 构建访问 URL（公开访问或签名 URL）
-            endpoint = getattr(settings, "OSS_ENDPOINT", "")
-            if not endpoint.startswith("http"):
-                endpoint = f"https://{endpoint}"
-            url = f"{endpoint}/{object_key}"
-            logger.info(f"图片上传到阿里云 OSS 成功: {object_key}")
-            return url
+            # 设置超时（防止阿里云 OSS 连接失败时一直阻塞）
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(10)  # 设置 10 秒超时
+            
+            try:
+                self._client.put_object(object_key, image_data, headers={"Content-Type": content_type})
+                
+                # 构建访问 URL（公开访问或签名 URL）
+                endpoint = getattr(settings, "OSS_ENDPOINT", "")
+                if not endpoint.startswith("http"):
+                    endpoint = f"https://{endpoint}"
+                url = f"{endpoint}/{object_key}"
+                logger.info(f"图片上传到阿里云 OSS 成功: {object_key}")
+                return url
+            finally:
+                # 恢复原始超时设置
+                socket.setdefaulttimeout(original_timeout)
+        except socket.timeout:
+            logger.error(f"阿里云 OSS 上传超时: {object_key}")
+            raise ValueError(f"图片上传超时，请检查阿里云 OSS 服务是否正常运行")
         except Exception as e:
             logger.error(f"阿里云 OSS 上传失败: {e}")
             raise ValueError(f"图片上传失败: {str(e)}")

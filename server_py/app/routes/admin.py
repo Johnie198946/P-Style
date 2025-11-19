@@ -13,7 +13,7 @@ from jose import jwt
 
 from ..db import get_db
 from ..models import User, AnalysisTask, Subscription, SubscriptionPlan, Payment, AuthToken
-from ..middleware.auth import get_current_user, security
+from ..middleware.auth import get_current_user, security, optional_security
 from ..services.auth_service import AuthService
 from ..config import get_settings
 from ..utils.response import success_response, error_response
@@ -25,8 +25,10 @@ settings = get_settings()
 
 
 class AdminLoginRequest(BaseModel):
-    """管理员登录第一步：邮箱+密码"""
-    email: EmailStr
+    """管理员登录第一步：用户名/邮箱+密码"""
+    # 支持用户名（display_name）或邮箱（email）登录
+    # 如果输入包含 @，则视为邮箱；否则视为用户名
+    username: str  # 用户名或邮箱
     password: str
 
 
@@ -40,17 +42,28 @@ class AdminVerifyMfaRequest(BaseModel):
 async def admin_login(
     request: AdminLoginRequest,
     db: Session = Depends(get_db),
+    # 注意：管理员登录接口是公开接口，不需要认证
+    # 如果请求中带有 Token（可能是无效的残留 Token），我们忽略它，不进行验证
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
 ):
     """
-    管理员登录第一步：邮箱+密码
+    管理员登录第一步：用户名/邮箱+密码
     根据注册登录与权限设计方案第 3.1 节实现
+    支持通过用户名（display_name）或邮箱（email）登录
     返回 mfaToken，用于第二步验证
     """
     try:
-        # 1. 验证邮箱和密码
-        user = db.query(User).filter(User.email == request.email).first()
+        # 1. 根据输入判断是用户名还是邮箱（如果包含 @ 则视为邮箱，否则视为用户名）
+        username_or_email = request.username.strip()
+        if "@" in username_or_email:
+            # 输入是邮箱，通过邮箱查找用户
+            user = db.query(User).filter(User.email == username_or_email).first()
+        else:
+            # 输入是用户名，通过 display_name 查找用户
+            user = db.query(User).filter(User.display_name == username_or_email).first()
+        
         if not user:
-            raise error_response(ErrorCode.AUTH_LOGIN_FAILED, "邮箱或密码错误")
+            raise error_response(ErrorCode.AUTH_LOGIN_FAILED, "用户名/邮箱或密码错误")
         
         if user.role != "admin":
             raise error_response(ErrorCode.AUTH_ADMIN_PERMISSION_DENIED, "非管理员账号")
@@ -59,12 +72,14 @@ async def admin_login(
             raise error_response(ErrorCode.AUTH_USER_DISABLED, "账号已被禁用")
         
         if not auth_service.verify_password(request.password, user.password_hash):
-            raise error_response(ErrorCode.AUTH_LOGIN_FAILED, "邮箱或密码错误")
+            raise error_response(ErrorCode.AUTH_LOGIN_FAILED, "用户名/邮箱或密码错误")
         
         # 2. 生成临时 MFA Token（有效期 5 分钟）
+        # 注意：使用 auth_service.create_token 方法创建 Token，确保符合 JWT 标准（sub 必须是字符串）
+        # 但 MFA Token 需要特殊处理（有效期 5 分钟，类型为 admin_mfa_token）
         expire = datetime.utcnow() + timedelta(minutes=5)
         mfa_payload = {
-            "sub": user.id,
+            "sub": str(user.id),  # JWT 标准要求 sub 必须是字符串类型
             "type": "admin_mfa_token",
             "role": "admin",
             "exp": expire,
@@ -72,15 +87,36 @@ async def admin_login(
         mfa_token = jwt.encode(mfa_payload, settings.SECRET_KEY, algorithm="HS256")
         
         # 3. 发送验证码到邮箱
-        code = auth_service.send_verification_code_for_admin_mfa(db, user.id, user.email)
+        # 返回值为 (code, email_sent)，其中 email_sent 表示邮件是否发送成功
+        result = auth_service.send_verification_code_for_admin_mfa(db, user.id, user.email)
+        code, email_sent = result if isinstance(result, tuple) else (result, True)
         
-        # 4. 返回 MFA Token（注意：验证码通过邮件发送，不在这里返回）
-        return success_response(
-            data={
-                "mfaToken": mfa_token,
-            },
-            message="验证码已发送到您的邮箱",
-        )
+        # 4. 根据邮件发送状态返回不同的消息
+        # 开发环境下，如果邮件未发送，返回明确的提示，告知用户这是开发环境，邮件未发送
+        # 生产环境下，如果邮件未发送，会抛出异常，不会执行到这里
+        if not email_sent and settings.DEBUG:
+            # 开发环境：邮件未发送，返回明确的提示消息
+            # 注意：验证码已保存到数据库和 Redis，开发人员可以通过查看日志获取验证码
+            return success_response(
+                data={
+                    "mfaToken": mfa_token,
+                    "email_sent": False,  # 明确标记邮件未发送
+                    "dev_mode": True,  # 标记这是开发环境
+                },
+                message="【开发环境】邮件服务不可用，验证码已生成但未发送。请查看后端日志获取验证码。",
+            )
+        else:
+            # 生产环境或邮件发送成功：返回正常消息
+            # 注意：验证码通过邮件发送，不在这里返回（安全考虑）
+            # 返回 email_sent 和 dev_mode 字段，让前端能够正确判断邮件发送状态
+            return success_response(
+                data={
+                    "mfaToken": mfa_token,
+                    "email_sent": True,  # 明确标记邮件已发送
+                    "dev_mode": settings.DEBUG,  # 标记是否为开发环境
+                },
+                message="验证码已发送到您的邮箱",
+            )
     except HTTPException:
         raise
     except Exception as e:
@@ -91,6 +127,9 @@ async def admin_login(
 async def admin_verify_mfa(
     request: AdminVerifyMfaRequest,
     db: Session = Depends(get_db),
+    # 注意：管理员验证 MFA 接口是公开接口，不需要认证
+    # 如果请求中带有 Token（可能是无效的残留 Token），我们忽略它，不进行验证
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(optional_security),
 ):
     """
     管理员登录第二步：验证 MFA Token + 验证码
@@ -107,9 +146,15 @@ async def admin_verify_mfa(
         if payload.get("type") != "admin_mfa_token" or payload.get("role") != "admin":
             raise error_response(ErrorCode.AUTH_TOKEN_INVALID, "MFA Token 类型不正确")
         
-        user_id = payload.get("sub")
-        if not user_id:
+        user_id_str = payload.get("sub")
+        if not user_id_str:
             raise error_response(ErrorCode.AUTH_TOKEN_INVALID, "MFA Token 无效")
+        
+        # 将字符串转换为整数（JWT 标准要求 sub 是字符串）
+        try:
+            user_id = int(user_id_str)
+        except (ValueError, TypeError):
+            raise error_response(ErrorCode.AUTH_TOKEN_INVALID, "MFA Token 中的用户 ID 格式错误")
         
         # 2. 查询用户
         user = db.query(User).filter(User.id == user_id).first()

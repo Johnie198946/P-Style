@@ -12,15 +12,84 @@ interface TopNavProps {
 export function TopNav({ onNavigateToSubscription }: TopNavProps = {}) {
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isRegisterOpen, setIsRegisterOpen] = useState(false);
-  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  // 使用函数式初始化 useState，在组件初始化时立即从 localStorage 读取登录状态
+  // 避免初始化时误判为未登录，导致用户菜单不显示
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window !== 'undefined') {
+      const loggedIn = localStorage.getItem('isLoggedIn') === 'true';
+      // 调试日志：帮助排查登录状态初始化问题
+      console.log('[TopNav] 组件初始化，检查登录状态:', {
+        loggedIn,
+        localStorage_isLoggedIn: localStorage.getItem('isLoggedIn'),
+        accessToken: localStorage.getItem('accessToken') ? '存在' : '不存在',
+      });
+      return loggedIn;
+    }
+    return false;
+  });
   const [userCenterOpen, setUserCenterOpen] = useState(false);
   const [userCenterPage, setUserCenterPage] = useState<'subscription' | 'usage' | 'gallery'>('subscription');
 
-  useEffect(() => {
-    // 检查登录状态
+  // 检查登录状态的函数
+  const checkLoginStatus = () => {
+    if (typeof window === 'undefined') return;
+    
     const loggedIn = localStorage.getItem('isLoggedIn') === 'true';
+    const accessToken = localStorage.getItem('accessToken');
+    
+    // 调试日志：帮助排查登录状态检查问题
+    console.log('[TopNav] checkLoginStatus 调用:', {
+      loggedIn,
+      accessToken: accessToken ? '存在' : '不存在',
+      localStorage_isLoggedIn: localStorage.getItem('isLoggedIn'),
+      current_isLoggedIn_state: isLoggedIn,
+    });
+    
+    // 数据一致性检查：如果 isLoggedIn 为 'true' 但 accessToken 不存在，说明数据不一致
+    // 根据注册登录与权限设计方案，登录状态应该与 accessToken 保持一致
+    if (loggedIn && !accessToken) {
+      console.warn('[TopNav] 检测到数据不一致：isLoggedIn 为 true 但 accessToken 不存在，清除 isLoggedIn');
+      localStorage.removeItem('isLoggedIn');
+      localStorage.removeItem('userData');
+      setIsLoggedIn(false);
+      return;
+    }
+    
     setIsLoggedIn(loggedIn);
+  };
+
+  useEffect(() => {
+    // 初始化时检查登录状态
+    checkLoginStatus();
+    
+    // 监听对话框打开/关闭事件（当对话框关闭时，可能已经登录成功）
+    checkLoginStatus();
   }, [isLoginOpen, isRegisterOpen]);
+
+  // 监听登录状态变化事件（当用户登录或登出时触发）
+  useEffect(() => {
+    // 监听自定义事件，当登录状态改变时更新
+    const handleLoginStatusChanged = () => {
+      checkLoginStatus();
+    };
+    
+    window.addEventListener('loginStatusChanged', handleLoginStatusChanged);
+    
+    // 监听 storage 事件（跨标签页同步，但同标签页的 localStorage 变化不会触发）
+    // 因此主要依赖自定义事件
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'isLoggedIn') {
+        checkLoginStatus();
+      }
+    };
+    
+    window.addEventListener('storage', handleStorageChange);
+    
+    return () => {
+      window.removeEventListener('loginStatusChanged', handleLoginStatusChanged);
+      window.removeEventListener('storage', handleStorageChange);
+    };
+  }, []);
 
   const handleSwitchToRegister = () => {
     setIsLoginOpen(false);

@@ -19,36 +19,51 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
   const userName = userData?.display_name || localStorage.getItem('userName') || '用户';
   const userEmail = userData?.email || 'user@example.com';
 
-  useEffect(() => {
-    // 加载用户信息
+  // 加载用户信息的函数
+  const loadUserInfo = async () => {
     // 根据注册登录与权限设计方案：只有已登录用户才能调用 /api/user/me 接口
-    const loadUserInfo = async () => {
-      // 先检查登录状态，如果未登录则不调用 API（避免 403 错误）
-      const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
-      if (!isLoggedIn) {
-        // 未登录时，不调用 API，直接返回
-        return;
-      }
+    // 先检查登录状态，如果未登录则不调用 API（避免 403 错误）
+    const isLoggedIn = localStorage.getItem('isLoggedIn') === 'true';
+    if (!isLoggedIn) {
+      // 未登录时，不调用 API，直接返回
+      setUserData(null);
+      return;
+    }
 
-      try {
-        const stored = localStorage.getItem('userData');
-        if (stored) {
-          setUserData(JSON.parse(stored));
-        } else {
-          const { userApi } = await import('../lib/api');
-          const data = await userApi.getMe();
-          setUserData(data.user);
-          localStorage.setItem('userData', JSON.stringify(data.user));
-        }
-      } catch (error) {
-        console.error('Failed to load user info:', error);
-        // 如果 API 调用失败（如 401/403），清除本地存储的用户数据
-        localStorage.removeItem('userData');
-        localStorage.removeItem('isLoggedIn');
-        localStorage.removeItem('accessToken');
+    try {
+      const stored = localStorage.getItem('userData');
+      if (stored) {
+        setUserData(JSON.parse(stored));
+      } else {
+        const { userApi } = await import('../lib/api');
+        const data = await userApi.getMe();
+        setUserData(data.user);
+        localStorage.setItem('userData', JSON.stringify(data.user));
       }
-    };
+    } catch (error) {
+      console.error('Failed to load user info:', error);
+      // 如果 API 调用失败（如 401/403），清除本地存储的用户数据
+      localStorage.removeItem('userData');
+      localStorage.removeItem('isLoggedIn');
+      localStorage.removeItem('accessToken');
+      setUserData(null);
+    }
+  };
+
+  useEffect(() => {
+    // 初始化时加载用户信息
     loadUserInfo();
+    
+    // 监听登录状态变化事件，当用户登录或登出时重新加载用户信息
+    const handleLoginStatusChanged = () => {
+      loadUserInfo();
+    };
+    
+    window.addEventListener('loginStatusChanged', handleLoginStatusChanged);
+    
+    return () => {
+      window.removeEventListener('loginStatusChanged', handleLoginStatusChanged);
+    };
   }, []);
 
   // 检查是否已经是管理员
@@ -108,8 +123,14 @@ export function UserMenu({ onNavigate }: UserMenuProps) {
     localStorage.removeItem('isLoggedIn');
     localStorage.removeItem('userName');
     localStorage.removeItem('isAdmin');
+    localStorage.removeItem('accessToken');
+    localStorage.removeItem('userData');
+    
+    // 触发自定义事件通知其他组件登录状态已改变（根据注册登录与权限设计方案）
+    window.dispatchEvent(new CustomEvent('loginStatusChanged'));
     // 触发自定义事件通知其他组件管理员状态已改变
     window.dispatchEvent(new CustomEvent('adminStatusChanged'));
+    
     window.location.reload();
   };
 

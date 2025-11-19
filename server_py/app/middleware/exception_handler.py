@@ -63,8 +63,42 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
     
     Returns:
         JSONResponse: 统一格式的错误响应
+    
+    Note:
+        - 此处理器会捕获所有未预期的异常（包括参数验证错误、数据解析错误等）
+        - 对于参数验证错误（如 FastAPI 的 RequestValidationError），会返回 400 错误
+        - 对于其他异常，会返回 500 错误
     """
-    logger.error(f"未捕获的异常: {exc}", exc_info=True)
+    error_type = type(exc).__name__
+    error_detail = str(exc)
+    
+    # 检查是否是参数验证错误（FastAPI 的 RequestValidationError）
+    # 这通常发生在 Form 数据解析失败、参数类型不匹配等情况
+    if "validation" in error_type.lower() or "value" in error_type.lower() or "form" in error_type.lower():
+        logger.error(f"参数验证错误: {error_type}: {error_detail}")
+        logger.error(f"请求路径: {request.url.path}")
+        logger.error(f"请求方法: {request.method}")
+        # 尝试获取请求体信息（但不记录完整的图片数据）
+        try:
+            if hasattr(request, '_body'):
+                body_length = len(request._body) if request._body else 0
+                logger.error(f"请求体长度: {body_length} 字节")
+        except:
+            pass
+        
+        return JSONResponse(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            content={
+                "code": ErrorCode.INVALID_REQUEST,
+                "message": f"请求参数错误: {error_detail}",
+                "data": None,
+            },
+        )
+    
+    # 其他未预期的异常
+    logger.error(f"未捕获的异常: {error_type}: {error_detail}", exc_info=True)
+    logger.error(f"请求路径: {request.url.path}")
+    logger.error(f"请求方法: {request.method}")
     
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

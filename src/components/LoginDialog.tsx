@@ -35,9 +35,19 @@ export function LoginDialog({ isOpen, onClose, onSwitchToRegister }: LoginDialog
     }
     
     try {
-      await authApi.sendVerificationCode(email, 'login');
+      const result = await authApi.sendVerificationCode(email, 'login');
       setCodeCountdown(60);
-      toast.success('验证码已发送到您的邮箱');
+      // 使用后端返回的 message 字段显示提示消息
+      // 开发环境下，如果邮件未发送，后端会返回明确的提示消息
+      // 生产环境下，后端返回"验证码已发送到您的邮箱"
+      const message = result.message || '验证码已发送到您的邮箱';
+      if (result.dev_mode && !result.email_sent) {
+        // 开发环境且邮件未发送：显示警告消息
+        toast.warning(message);
+      } else {
+        // 正常情况：显示成功消息
+        toast.success(message);
+      }
     } catch (error: any) {
       console.error('Send code failed:', error);
       if (error instanceof ApiError) {
@@ -79,6 +89,11 @@ export function LoginDialog({ isOpen, onClose, onSwitchToRegister }: LoginDialog
       localStorage.setItem('isLoggedIn', 'true');
       localStorage.setItem('userName', result.user.display_name || result.user.email);
       localStorage.setItem('userData', JSON.stringify(result.user));
+      
+      // 触发自定义事件，通知其他组件登录状态已改变（根据注册登录与权限设计方案）
+      // 这样 TopNav 等组件可以立即更新显示状态
+      window.dispatchEvent(new CustomEvent('loginStatusChanged'));
+      
       toast.success('登录成功');
       onClose();
     } catch (error: any) {

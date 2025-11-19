@@ -14,20 +14,22 @@ class UsageService:
     """用量服务"""
 
     @staticmethod
-    def get_user_usage(db: Session, user_id: int, month: Optional[str] = None) -> Dict[str, Any]:
+    def get_user_usage(db: Session, user_id: int, month: Optional[str] = None, user_role: Optional[str] = None) -> Dict[str, Any]:
         """
         获取用户用量
+        根据开发方案，管理员账号不受用量限制，返回 -1 表示无限
         
         Args:
             user_id: 用户 ID
             month: 月份（格式：YYYY-MM），默认当前月
+            user_role: 用户角色（"admin" 或 "user"），如果为 "admin" 则返回无限限制
         
         Returns:
             {
                 "analysisUsed": int,
-                "analysisLimit": int,
+                "analysisLimit": int,  # -1 表示无限（管理员）
                 "generationUsed": int,
-                "generationLimit": int,
+                "generationLimit": int,  # -1 表示无限（管理员）
                 "period": str,
             }
         """
@@ -60,6 +62,7 @@ class UsageService:
         ).scalar() or 0
 
         # 获取用户订阅和额度
+        # 注意：管理员账号不受用量限制，返回 -1 表示无限
         subscription = db.query(Subscription).filter(
             Subscription.user_id == user_id,
             Subscription.status == "active",
@@ -74,34 +77,56 @@ class UsageService:
                 features = plan.features if isinstance(plan.features, dict) else {}
                 analysis_limit = features.get("analysis_per_month", 0)
                 generation_limit = features.get("generations_per_month", 0)
+        
+        # 管理员账号：不受用量限制，返回 -1 表示无限
+        if user_role == "admin":
+            analysis_limit = -1
+            generation_limit = -1
+        elif analysis_limit == 0 and generation_limit == 0:
+            # 如果用户没有订阅，使用免费版默认限制（10次分析，5次生成）
+            analysis_limit = 10
+            generation_limit = 5
 
         return {
             "analysisUsed": analysis_count,
-            "analysisLimit": analysis_limit,
+            "analysisLimit": analysis_limit,  # -1 表示无限（管理员）
             "generationUsed": generation_count,
-            "generationLimit": generation_limit,
+            "generationLimit": generation_limit,  # -1 表示无限（管理员）
             "period": month,
         }
 
     @staticmethod
-    def check_usage_limit(db: Session, user_id: int, usage_type: str) -> tuple[bool, Optional[str]]:
+    def check_usage_limit(db: Session, user_id: int, usage_type: str, user_role: Optional[str] = None) -> tuple[bool, Optional[str]]:
         """
         检查用量是否超限
+        根据开发方案，管理员账号不受用量限制，可以无限制使用分析和生成功能
         
         Args:
             user_id: 用户 ID
             usage_type: "analysis" 或 "generation"
+            user_role: 用户角色（"admin" 或 "user"），如果为 "admin" 则不受用量限制
         
         Returns:
             (is_allowed, error_code)
+        
+        Note:
+            - 管理员账号（role="admin"）不受用量限制，直接返回 (True, None)
+            - 普通用户需要检查用量是否超限
         """
-        usage = UsageService.get_user_usage(db, user_id)
+        # 管理员用量限制豁免：管理员账号不受用量限制
+        if user_role == "admin":
+            return True, None
+        
+        # 获取用户用量（传入 user_role 以便正确处理管理员和普通用户的限制）
+        usage = UsageService.get_user_usage(db, user_id, user_role=user_role)
 
         if usage_type == "analysis":
-            if usage["analysisUsed"] >= usage["analysisLimit"]:
+            # 如果 analysisLimit 为 0（没有订阅），也允许使用（免费版默认限制）
+            if usage["analysisLimit"] > 0 and usage["analysisUsed"] >= usage["analysisLimit"]:
                 return False, "USAGE_ANALYSIS_LIMIT_EXCEEDED"
         elif usage_type == "generation":
-            if usage["generationUsed"] >= usage["generationLimit"]:
+            # 如果 generationLimit 为 0（没有订阅），也允许使用（免费版默认限制）
+            if usage["generationLimit"] > 0 and usage["generationUsed"] >= usage["generationLimit"]:
                 return False, "USAGE_GENERATION_LIMIT_EXCEEDED"
 
         return True, None

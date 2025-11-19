@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
-import { Search, Filter, UserPlus, MoreVertical, Mail, Phone, Calendar, Crown, Ban, Eye } from 'lucide-react';
+import { Search, Filter, UserPlus, MoreVertical, Mail, Phone, Calendar, Crown, Ban, Eye, Loader2, AlertCircle, RefreshCw } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Input } from '../ui/input';
 import { Button } from '../ui/button';
@@ -26,85 +26,96 @@ import {
   DialogHeader,
   DialogTitle,
 } from '../ui/dialog';
+import { adminApi, AdminUserItem, AdminUserDetailResponse, ApiError } from '../../lib/api';
+import { toast } from 'sonner';
 
-// 模拟用户数据
-const mockUsers = [
-  {
-    id: 1,
-    name: '张三',
-    email: 'zhangsan@example.com',
-    phone: '138****8888',
-    avatar: 'ZS',
-    plan: 'Pro',
-    status: 'active',
-    registered: '2024-01-15',
-    lastLogin: '2024-06-08',
-    tasksCount: 234,
-    storageUsed: '2.3 GB',
-  },
-  {
-    id: 2,
-    name: '李四',
-    email: 'lisi@example.com',
-    phone: '139****6666',
-    avatar: 'LS',
-    plan: 'Free',
-    status: 'active',
-    registered: '2024-02-20',
-    lastLogin: '2024-06-09',
-    tasksCount: 45,
-    storageUsed: '0.5 GB',
-  },
-  {
-    id: 3,
-    name: '王五',
-    email: 'wangwu@example.com',
-    phone: '137****5555',
-    avatar: 'WW',
-    plan: 'Business',
-    status: 'active',
-    registered: '2024-03-10',
-    lastLogin: '2024-06-09',
-    tasksCount: 567,
-    storageUsed: '8.9 GB',
-  },
-  {
-    id: 4,
-    name: '赵六',
-    email: 'zhaoliu@example.com',
-    phone: '136****4444',
-    avatar: 'ZL',
-    plan: 'Free',
-    status: 'inactive',
-    registered: '2024-04-05',
-    lastLogin: '2024-05-20',
-    tasksCount: 12,
-    storageUsed: '0.2 GB',
-  },
-  {
-    id: 5,
-    name: '陈七',
-    email: 'chenqi@example.com',
-    phone: '135****3333',
-    avatar: 'CQ',
-    plan: 'Pro',
-    status: 'suspended',
-    registered: '2024-05-12',
-    lastLogin: '2024-06-01',
-    tasksCount: 89,
-    storageUsed: '1.8 GB',
-  },
-];
-
+/**
+ * 用户管理组件
+ * 根据开发方案第 768-779 节，使用 GET /api/admin/users 获取真实数据
+ * 不再使用模拟数据（根据开发方案第 382-387 节要求）
+ */
 export function UsersManagement() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [users, setUsers] = useState<AdminUserItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize] = useState(20);
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedUser, setSelectedUser] = useState<any>(null);
+  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [selectedUser, setSelectedUser] = useState<AdminUserDetailResponse | null>(null);
   const [showUserDetail, setShowUserDetail] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
 
-  const filteredUsers = mockUsers.filter(user => 
-    user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // 加载用户列表
+  useEffect(() => {
+    loadUsers();
+  }, [page, searchTerm, statusFilter]);
+
+  const loadUsers = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await adminApi.getUsers({
+        page,
+        pageSize,
+        q: searchTerm || undefined,
+        status: statusFilter !== 'all' ? statusFilter : undefined,
+      });
+      setUsers(response.items);
+      setTotal(response.total);
+    } catch (err) {
+      console.error('加载用户列表失败:', err);
+      const errorMessage = err instanceof ApiError ? err.message : '加载用户列表失败，请稍后重试';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 加载用户详情
+  const loadUserDetail = async (userId: number) => {
+    try {
+      setLoadingDetail(true);
+      const detail = await adminApi.getUserDetail(userId);
+      setSelectedUser(detail);
+      setShowUserDetail(true);
+    } catch (err) {
+      console.error('加载用户详情失败:', err);
+      const errorMessage = err instanceof ApiError ? err.message : '加载用户详情失败';
+      toast.error(errorMessage);
+    } finally {
+      setLoadingDetail(false);
+    }
+  };
+
+  // 处理搜索（防抖）
+  const handleSearch = (value: string) => {
+    setSearchTerm(value);
+    setPage(1); // 重置到第一页
+  };
+
+  // 格式化日期
+  const formatDate = (dateString: string) => {
+    try {
+      const date = new Date(dateString);
+      return date.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
+    } catch {
+      return dateString;
+    }
+  };
+
+  // 获取用户头像字母
+  const getAvatarLetter = (user: AdminUserItem) => {
+    if (user.display_name) {
+      return user.display_name.charAt(0).toUpperCase();
+    }
+    if (user.email) {
+      return user.email.charAt(0).toUpperCase();
+    }
+    return 'U';
+  };
 
   const getPlanColor = (plan: string) => {
     switch (plan) {

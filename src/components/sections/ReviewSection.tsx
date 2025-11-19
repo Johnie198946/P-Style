@@ -22,13 +22,22 @@ interface ComparisonDimension {
   userDescription: string;
 }
 
+// 复刻可行性数据结构（根据后端 analysis_formatter.py 返回的数据结构）
+interface ConversionFeasibility {
+  can_transform: boolean;  // 是否可以转换
+  difficulty: string;  // 难度等级（如"低"、"中"、"高"、"极高"）
+  confidence: number;  // 置信度（0-1）
+  limiting_factors: string[] | string;  // 限制因素（可能是数组或字符串）
+  recommendation: string;  // 推荐方案
+}
+
 interface FeasibilityData {
-  conversion_feasibility: string;
-  difficulty: string;
-  confidence: number;
-  limiting_factors: string;
-  recommendation: string;
-  notes?: string;
+  conversion_feasibility: ConversionFeasibility;  // 转换可行性对象（不是字符串）
+  difficulty?: string;  // 兼容旧格式（如果直接从 conversion_feasibility 提取）
+  confidence?: number;  // 兼容旧格式（如果直接从 conversion_feasibility 提取）
+  limiting_factors?: string[] | string;  // 兼容旧格式（如果直接从 conversion_feasibility 提取）
+  recommendation?: string;  // 兼容旧格式（如果直接从 conversion_feasibility 提取）
+  notes?: string;  // 备注（可选）
 }
 
 interface ReviewData {
@@ -340,96 +349,130 @@ export function ReviewSection({ data }: { data?: ReviewData }) {
       )}
 
       {/* 5. 复刻可行性评估 */}
-      {data.feasibility && (
-        <div>
-          <div className="flex items-center gap-3 mb-6">
-            <div className="w-1 h-6 bg-gradient-to-b from-rose-500 to-orange-500 rounded-full" />
-            <h3 className="text-gray-900">复刻可行性评估</h3>
-          </div>
+      {data.feasibility && (() => {
+        // 提取 conversion_feasibility 对象（根据后端返回的数据结构）
+        // 后端返回：feasibility.conversion_feasibility 是一个对象，包含 can_transform, difficulty, confidence, limiting_factors, recommendation
+        const conversionFeasibility = data.feasibility.conversion_feasibility;
+        
+        // 兼容处理：如果 conversion_feasibility 是对象，使用它；否则使用顶层的字段（向后兼容）
+        const difficulty = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'difficulty' in conversionFeasibility)
+          ? conversionFeasibility.difficulty
+          : (data.feasibility.difficulty || '未知');
+        
+        const confidence = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'confidence' in conversionFeasibility)
+          ? conversionFeasibility.confidence
+          : (data.feasibility.confidence || 0);
+        
+        const limitingFactors = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'limiting_factors' in conversionFeasibility)
+          ? conversionFeasibility.limiting_factors
+          : (data.feasibility.limiting_factors || '');
+        
+        const recommendation = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'recommendation' in conversionFeasibility)
+          ? conversionFeasibility.recommendation
+          : (data.feasibility.recommendation || '');
+        
+        const canTransform = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'can_transform' in conversionFeasibility)
+          ? conversionFeasibility.can_transform
+          : false;
+        
+        // 格式化限制因素（可能是数组或字符串）
+        const formatLimitingFactors = (factors: string[] | string | undefined): string => {
+          if (!factors) return '';
+          if (Array.isArray(factors)) {
+            return factors.join('、');
+          }
+          return String(factors);
+        };
+        
+        return (
+          <div>
+            <div className="flex items-center gap-3 mb-6">
+              <div className="w-1 h-6 bg-gradient-to-b from-rose-500 to-orange-500 rounded-full" />
+              <h3 className="text-gray-900">复刻可行性评估</h3>
+            </div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="bg-white rounded-2xl border border-gray-200 overflow-hidden"
-          >
-            {/* 指标卡片 */}
-            <div className="p-6 border-b border-gray-200">
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-                {/* 可行性 */}
-                <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-xs text-gray-500 mb-2">转换可行性</div>
-                  <div className="text-gray-900">
-                    {data.feasibility.conversion_feasibility === 'can_transform: true' 
-                      ? '✓ 可转换' 
-                      : data.feasibility.conversion_feasibility}
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="bg-white rounded-2xl border border-gray-200 overflow-hidden"
+            >
+              {/* 指标卡片 */}
+              <div className="p-6 border-b border-gray-200">
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {/* 可行性 */}
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <div className="text-xs text-gray-500 mb-2">转换可行性</div>
+                    <div className="text-gray-900">
+                      {canTransform ? '✓ 可转换' : '✗ 难以转换'}
+                    </div>
                   </div>
-                </div>
 
-                {/* 难度 */}
-                <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-xs text-gray-500 mb-2">难度等级</div>
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const config = getDifficultyConfig(data.feasibility.difficulty);
-                      const Icon = config.icon;
-                      return (
-                        <>
-                          <div className={`p-1 ${config.bg} rounded`}>
-                            <Icon className={`w-4 h-4 ${config.color}`} />
-                          </div>
-                          <span className="text-gray-900 text-sm">{data.feasibility.difficulty}</span>
-                        </>
-                      );
-                    })()}
+                  {/* 难度 */}
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <div className="text-xs text-gray-500 mb-2">难度等级</div>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const config = getDifficultyConfig(difficulty);
+                        const Icon = config.icon;
+                        return (
+                          <>
+                            <div className={`p-1 ${config.bg} rounded`}>
+                              <Icon className={`w-4 h-4 ${config.color}`} />
+                            </div>
+                            <span className="text-gray-900 text-sm">{difficulty}</span>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
-                </div>
 
-                {/* 信心度 */}
-                <div className="p-4 bg-gray-50 rounded-xl">
-                  <div className="text-xs text-gray-500 mb-2">信心指数</div>
-                  <div className="flex items-center gap-2">
-                    {(() => {
-                      const config = getConfidenceConfig(data.feasibility.confidence);
-                      return (
-                        <>
-                          <div className={`px-2 py-1 ${config.bg} rounded`}>
-                            <span className={`text-sm ${config.color}`}>
-                              {(data.feasibility.confidence * 100).toFixed(0)}%
-                            </span>
-                          </div>
-                          <span className="text-gray-600 text-xs">{config.label}</span>
-                        </>
-                      );
-                    })()}
+                  {/* 信心度 */}
+                  <div className="p-4 bg-gray-50 rounded-xl">
+                    <div className="text-xs text-gray-500 mb-2">信心指数</div>
+                    <div className="flex items-center gap-2">
+                      {(() => {
+                        const config = getConfidenceConfig(confidence);
+                        return (
+                          <>
+                            <div className={`px-2 py-1 ${config.bg} rounded`}>
+                              <span className={`text-sm ${config.color}`}>
+                                {(confidence * 100).toFixed(0)}%
+                              </span>
+                            </div>
+                            <span className="text-gray-600 text-xs">{config.label}</span>
+                          </>
+                        );
+                      })()}
+                    </div>
                   </div>
                 </div>
               </div>
-            </div>
 
-            {/* 详细信息表格 */}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <tbody>
-                  <tr className="border-b border-gray-100">
-                    <td className="p-4 text-sm text-gray-500 w-1/4">限制因素</td>
-                    <td className="p-4 text-sm text-gray-700">{data.feasibility.limiting_factors}</td>
-                  </tr>
-                  <tr className="border-b border-gray-100">
-                    <td className="p-4 text-sm text-gray-500 w-1/4">推荐方案</td>
-                    <td className="p-4 text-sm text-gray-700">{data.feasibility.recommendation}</td>
-                  </tr>
-                  {data.feasibility.notes && (
-                    <tr>
-                      <td className="p-4 text-sm text-gray-500 w-1/4">备注</td>
-                      <td className="p-4 text-sm text-gray-700">{data.feasibility.notes}</td>
+              {/* 详细信息表格 */}
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <tbody>
+                    <tr className="border-b border-gray-100">
+                      <td className="p-4 text-sm text-gray-500 w-1/4">限制因素</td>
+                      <td className="p-4 text-sm text-gray-700">{formatLimitingFactors(limitingFactors)}</td>
                     </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </motion.div>
-        </div>
-      )}
+                    <tr className="border-b border-gray-100">
+                      <td className="p-4 text-sm text-gray-500 w-1/4">推荐方案</td>
+                      <td className="p-4 text-sm text-gray-700">{recommendation}</td>
+                    </tr>
+                    {data.feasibility.notes && (
+                      <tr>
+                        <td className="p-4 text-sm text-gray-500 w-1/4">备注</td>
+                        <td className="p-4 text-sm text-gray-700">{data.feasibility.notes}</td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </motion.div>
+          </div>
+        );
+      })()}
 
       {/* 6. 复刻可行性描述 */}
       {data.feasibilityDescription && (

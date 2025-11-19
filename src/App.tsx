@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { PhotoUploadZone } from './components/PhotoUploadZone';
 import { ThemeCardsGrid } from './components/ThemeCardsGrid';
@@ -8,7 +8,10 @@ import { AnalysisLoading } from './components/AnalysisLoading';
 import { ScrollableHero } from './components/ScrollableHero';
 import { UserCenter } from './components/UserCenter';
 import { AdminPage } from './components/admin/AdminPage';
+import { AdminLoginDialog } from './components/admin/AdminLoginDialog';
 import { FanNavMenu } from './components/FanNavMenu';
+// 注意：TopNav 组件用于其他页面（如订阅页面），home 页面不使用 TopNav，而是直接使用 UserMenu
+import { TopNav } from './components/TopNav';
 import { SubscriptionPage } from './components/SubscriptionPage';
 import { FeasibilityDialog } from './components/FeasibilityDialog';
 import { LoginDialog } from './components/LoginDialog';
@@ -40,6 +43,49 @@ export default function App() {
   const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
   // 登录对话框状态（根据注册登录与权限设计方案，点击"开始分析"时检查登录）
   const [showLoginDialog, setShowLoginDialog] = useState(false);
+  // 管理员登录对话框状态（根据顶层设计文档第 3.3 节，Ctrl+Shift+A 唤醒管理后台）
+  const [showAdminLoginDialog, setShowAdminLoginDialog] = useState(false);
+  // home 页面登录状态（根据设计规范：home 页面右上角应该只显示一个头像，而不是居中显示的 TopNav）
+  // 使用 state 管理登录状态，并监听 loginStatusChanged 事件，确保登录状态变化时及时更新 UI
+  const [isLoggedIn, setIsLoggedIn] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('isLoggedIn') === 'true';
+    }
+    return false;
+  });
+
+  // 用于取消正在进行的请求（防止重复请求和 pending 状态）
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  // 用于取消正在进行的上传请求（防止重复上传和 pending 状态）
+  const [uploadAbortController, setUploadAbortController] = useState<AbortController | null>(null);
+
+  // 监听登录状态变化事件（当用户登录或登出时触发）
+  useEffect(() => {
+    const handleLoginStatusChanged = () => {
+      if (typeof window !== 'undefined') {
+        const loggedIn = localStorage.getItem('isLoggedIn') === 'true';
+        setIsLoggedIn(loggedIn);
+      }
+    };
+    
+    window.addEventListener('loginStatusChanged', handleLoginStatusChanged);
+    
+    return () => {
+      window.removeEventListener('loginStatusChanged', handleLoginStatusChanged);
+    };
+  }, []);
+
+  // 组件卸载时取消所有正在进行的请求
+  useEffect(() => {
+    return () => {
+      if (abortController) {
+        abortController.abort();
+      }
+      if (uploadAbortController) {
+        uploadAbortController.abort();
+      }
+    };
+  }, [abortController, uploadAbortController]);
 
   /**
    * 处理"开始分析"按钮点击
@@ -48,6 +94,11 @@ export default function App() {
    */
   const handleAnalyze = async () => {
     if (!sourceImage || !targetImage) return;
+
+    // 如果正在分析，取消之前的请求
+    if (abortController) {
+      abortController.abort();
+    }
 
     // 检查登录状态（根据注册登录与权限设计方案，未登录不允许使用分析功能）
     const isLoggedIn = typeof window !== 'undefined' && localStorage.getItem('isLoggedIn') === 'true';
@@ -58,11 +109,17 @@ export default function App() {
       return;
     }
 
+    // 创建新的 AbortController，用于取消请求
+    const controller = new AbortController();
+    setAbortController(controller);
+
     try {
       // 第一步：执行可行性评估（根据开发方案第 26 节，由系统 CV 算法主导）
       const feasibility = await analyzeApi.feasibility(
         sourceImage.preview,
-        targetImage.preview
+        targetImage.preview,
+        undefined,  // taskId
+        controller.signal  // 传递 AbortSignal，支持取消请求
       );
       setFeasibilityResult(feasibility);
 
@@ -73,10 +130,22 @@ export default function App() {
       }
 
       // 显示可行性评估对话框，让用户决定是否继续
-    setShowFeasibilityDialog(true);
+      setShowFeasibilityDialog(true);
+      
+      // 清除 AbortController（请求成功完成）
+      setAbortController(null);
     } catch (error) {
       console.error('Feasibility check failed:', error);
+      
+      // 清除 AbortController（请求已完成，无论成功或失败）
+      setAbortController(null);
+      
       if (error instanceof ApiError) {
+        // 如果是请求取消（499），不显示错误提示
+        if (error.code === 499) {
+          console.log('请求已取消');
+          return;
+        }
         // 如果是 401 错误，说明 Token 已失效，弹出登录对话框
         if (error.code === 401) {
           setShowLoginDialog(true);
@@ -97,22 +166,109 @@ export default function App() {
     setIsAnalyzing(true);
     setResults(null);
 
+    // 如果正在分析，取消之前的请求
+    if (abortController) {
+      abortController.abort();
+    }
+
+    // 创建新的 AbortController，用于取消请求
+    const controller = new AbortController();
+    setAbortController(controller);
+
     try {
       // 调用 Part1 分析接口（根据开发方案第 14 节）
       const part1Result = await analyzeApi.part1(
         sourceImage.preview,
-        targetImage.preview
+        targetImage.preview,
+        undefined,  // optionalStyle
+        controller.signal  // 传递 AbortSignal，支持取消请求
       );
 
       // 保存 taskId 和 Part1 结果
       setCurrentTaskId(part1Result.taskId);
-      setResults(part1Result.structuredAnalysis);
-        setIsAnalyzing(false);
+      
+      // 根据开发方案第 14 节，将 structuredAnalysis.sections 映射到 results 对象
+      // sections.photoReview → results.review
+      // sections.composition → results.composition
+      // sections.lighting → results.lighting
+      // sections.color → results.color
+      const structuredAnalysis = part1Result.structuredAnalysis || {};
+      const sections = structuredAnalysis.sections || {};
+      
+      // 构建 results 对象（根据开发方案第 14 节）
+      // 注意：后端返回的 sections.photoReview 包含 naturalLanguage 和 structured 两个字段
+      // 前端需要从 structured 中提取数据，并合并 feasibility 字段
+      const photoReview = sections.photoReview || {};
+      const photoReviewStructured = photoReview.structured || {};
+      const photoReviewFeasibility = photoReview.feasibility || null;
+      const photoReviewFeasibilityDescription = photoReview.feasibilityDescription || '';
+      
+      // 扁平化 photoReview 数据（从 structured 中提取字段）
+      const flattenedReview = {
+        overviewSummary: photoReviewStructured.overviewSummary || '',
+        dimensions: photoReviewStructured.dimensions || {},
+        photographerStyleSummary: photoReviewStructured.photographerStyleSummary || '',
+        feasibility: photoReviewFeasibility,
+        feasibilityDescription: photoReviewFeasibilityDescription,
+        // 保留 naturalLanguage 以便后续使用
+        naturalLanguage: photoReview.naturalLanguage || {},
+      };
+      
+      // 同样处理 composition（从 structured 中提取 advanced_sections）
+      const composition = sections.composition || {};
+      const compositionStructured = composition.structured || {};
+      const flattenedComposition = {
+        ...compositionStructured.advanced_sections,  // 展开 advanced_sections 对象
+        // 保留 naturalLanguage 以便后续使用
+        naturalLanguage: composition.naturalLanguage || {},
+      };
+      
+      // 同样处理 lighting（从 structured 中提取数据）
+      const lighting = sections.lighting || {};
+      const lightingStructured = lighting.structured || {};
+      const flattenedLighting = {
+        ...lightingStructured,  // 展开 structured 对象
+        // 保留 naturalLanguage 以便后续使用
+        naturalLanguage: lighting.naturalLanguage || {},
+      };
+      
+      // 同样处理 color（从 structured 中提取数据）
+      const color = sections.color || {};
+      const colorStructured = color.structured || {};
+      const flattenedColor = {
+        ...colorStructured,  // 展开 structured 对象
+        // 保留 naturalLanguage 以便后续使用
+        naturalLanguage: color.naturalLanguage || {},
+      };
+      
+      const mappedResults = {
+        review: flattenedReview,
+        composition: flattenedComposition,
+        lighting: flattenedLighting,
+        color: flattenedColor,
+        // 保留原始 structuredAnalysis 以便后续使用
+        _structuredAnalysis: structuredAnalysis,
+      };
+      
+      setResults(mappedResults);
+      setIsAnalyzing(false);
       setShowResults(true);
+      
+      // 清除 AbortController（请求成功完成）
+      setAbortController(null);
     } catch (error) {
       console.error('Analysis failed:', error);
       setIsAnalyzing(false);
+      
+      // 清除 AbortController（请求已完成，无论成功或失败）
+      setAbortController(null);
+      
       if (error instanceof ApiError) {
+        // 如果是请求取消（499），不显示错误提示
+        if (error.code === 499) {
+          console.log('请求已取消');
+          return;
+        }
         // 检查是否超出用量限制（根据开发方案第 0 节，严格限流）
         if (error.code === 403 && error.message.includes('USAGE_ANALYSIS_LIMIT_EXCEEDED')) {
           toast.error('分析次数已用完，请升级套餐');
@@ -163,12 +319,40 @@ export default function App() {
     }
   };
 
+  // 监听键盘快捷键 Ctrl+Shift+A 打开管理员登录（根据顶层设计文档第 3.3 节）
+  // 注意：此快捷键应该在全局范围内生效，不依赖于 UserMenu 组件是否挂载
+  useEffect(() => {
+    const handleKeyPress = (e: KeyboardEvent) => {
+      // 检查是否按下 Ctrl+Shift+A（Mac 上可能是 Cmd+Shift+A）
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key === 'A') {
+        e.preventDefault();
+        // 打开管理员登录对话框
+        setShowAdminLoginDialog(true);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyPress);
+    return () => window.removeEventListener('keydown', handleKeyPress);
+  }, []);
+
+  // 处理管理员登录成功
+  const handleAdminLogin = () => {
+    setShowAdminLoginDialog(false);
+    setCurrentPage('admin');
+  };
+
   // Show admin page
   if (currentPage === 'admin') {
     return (
       <>
         <AdminPage onBack={() => setCurrentPage('home')} />
         <Toaster position="top-center" richColors closeButton />
+        {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+        <AdminLoginDialog
+          isOpen={showAdminLoginDialog}
+          onClose={() => setShowAdminLoginDialog(false)}
+          onLogin={handleAdminLogin}
+        />
       </>
     );
   }
@@ -179,6 +363,12 @@ export default function App() {
       <>
         <SubscriptionPage onBack={() => setCurrentPage('home')} />
         <Toaster position="top-center" richColors closeButton />
+        {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+        <AdminLoginDialog
+          isOpen={showAdminLoginDialog}
+          onClose={() => setShowAdminLoginDialog(false)}
+          onLogin={handleAdminLogin}
+        />
       </>
     );
   }
@@ -189,6 +379,12 @@ export default function App() {
       <>
         <UserCenter onBack={() => setCurrentPage('home')} />
         <Toaster position="top-center" richColors closeButton />
+        {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+        <AdminLoginDialog
+          isOpen={showAdminLoginDialog}
+          onClose={() => setShowAdminLoginDialog(false)}
+          onLogin={handleAdminLogin}
+        />
       </>
     );
   }
@@ -205,33 +401,20 @@ export default function App() {
           taskId={currentTaskId || undefined}
         />
         <Toaster position="top-center" richColors closeButton />
+        {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+        <AdminLoginDialog
+          isOpen={showAdminLoginDialog}
+          onClose={() => setShowAdminLoginDialog(false)}
+          onLogin={handleAdminLogin}
+        />
       </>
     );
   }
 
-  // Show home page with hero
-  if (currentPage === 'home') {
-    const isLoggedIn = typeof window !== 'undefined' && localStorage.getItem('isLoggedIn') === 'true';
-    
-    return (
-      <>
-        {isLoggedIn && (
-          <div className="fixed top-6 right-6 z-50">
-            <UserMenu onNavigate={handleNavigate} />
-          </div>
-        )}
-        <ScrollableHero onNavigate={handleNavigate}>
-          {renderUploadContent()}
-        </ScrollableHero>
-        <Toaster position="top-center" richColors closeButton />
-      </>
-    );
-  }
-
-  // Show upload page directly
-  return renderUploadPage();
-
-  function renderUploadContent() {
+  // 将 renderUploadContent 和 renderUploadPage 作为组件内部的普通函数
+  // 它们不是 hooks，只是普通的渲染函数，不会导致 React Hooks 顺序错误
+  // React Hooks 顺序错误是指 useState、useEffect 等 hooks 的调用顺序不一致
+  const renderUploadContent = () => {
     return (
       <div className="space-y-12 max-w-6xl mx-auto">
         {/* Section Title & Subtitle */}
@@ -262,15 +445,53 @@ export default function App() {
                 title="源照片"
                 description="上传想要模仿风格的参考照片"
                 onImageUpload={async (file, preview) => {
+                  // 检查登录状态（根据注册登录与权限设计方案，上传需要登录）
+                  const isLoggedIn = typeof window !== 'undefined' && localStorage.getItem('isLoggedIn') === 'true';
+                  if (!isLoggedIn) {
+                    toast.error('请先登录后再上传照片');
+                    setShowLoginDialog(true);
+                    return;
+                  }
+                  
+                  // 如果正在上传，取消之前的请求
+                  if (uploadAbortController) {
+                    uploadAbortController.abort();
+                  }
+                  
+                  // 创建新的 AbortController，用于取消上传请求
+                  const controller = new AbortController();
+                  setUploadAbortController(controller);
+                  
                   // 先设置预览
                   setSourceImage({ file, preview });
                   // 然后调用上传 API
                   try {
-                    const response = await uploadApi.uploadPhotos(file);
-                    setSourceImage(prev => prev ? { ...prev, uploadId: response.source_image_id } : null);
+                    const response = await uploadApi.uploadPhotos(file, undefined, controller.signal);
+                    // 后端返回的字段是 uploadId，不是 source_image_id
+                    setSourceImage(prev => prev ? { ...prev, uploadId: response.uploadId } : null);
+                    // 清除 AbortController（请求成功完成）
+                    setUploadAbortController(null);
                   } catch (error) {
                     console.error('源照片上传失败:', error);
-                    toast.error('源照片上传失败，请重试');
+                    // 清除 AbortController（请求已完成，无论成功或失败）
+                    setUploadAbortController(null);
+                    
+                    if (error instanceof ApiError) {
+                      // 如果是请求取消（499），不显示错误提示
+                      if (error.code === 499) {
+                        console.log('上传请求已取消');
+                        return;
+                      }
+                      // 如果是 401 错误，说明 Token 已失效，弹出登录对话框
+                      if (error.code === 401) {
+                        toast.error('登录已过期，请重新登录');
+                        setShowLoginDialog(true);
+                      } else {
+                        toast.error(error.message || '源照片上传失败，请重试');
+                      }
+                    } else {
+                      toast.error('源照片上传失败，请重试');
+                    }
                   }
                 }}
                 image={sourceImage?.preview || null}
@@ -298,15 +519,53 @@ export default function App() {
                 title="目标照片"
                 description="上传需要调整风格的照片"
                 onImageUpload={async (file, preview) => {
+                  // 检查登录状态（根据注册登录与权限设计方案，上传需要登录）
+                  const isLoggedIn = typeof window !== 'undefined' && localStorage.getItem('isLoggedIn') === 'true';
+                  if (!isLoggedIn) {
+                    toast.error('请先登录后再上传照片');
+                    setShowLoginDialog(true);
+                    return;
+                  }
+                  
+                  // 如果正在上传，取消之前的请求
+                  if (uploadAbortController) {
+                    uploadAbortController.abort();
+                  }
+                  
+                  // 创建新的 AbortController，用于取消上传请求
+                  const controller = new AbortController();
+                  setUploadAbortController(controller);
+                  
                   // 先设置预览
                   setTargetImage({ file, preview });
                   // 然后调用上传 API
                   try {
-                    const response = await uploadApi.uploadPhotos(sourceImage?.file || file, file);
-                    setTargetImage(prev => prev ? { ...prev, uploadId: response.target_image_id || response.source_image_id } : null);
+                    const response = await uploadApi.uploadPhotos(sourceImage?.file || file, file, controller.signal);
+                    // 后端返回的字段是 uploadId，不是 target_image_id
+                    setTargetImage(prev => prev ? { ...prev, uploadId: response.uploadId } : null);
+                    // 清除 AbortController（请求成功完成）
+                    setUploadAbortController(null);
                   } catch (error) {
                     console.error('目标照片上传失败:', error);
-                    toast.error('目标照片上传失败，请重试');
+                    // 清除 AbortController（请求已完成，无论成功或失败）
+                    setUploadAbortController(null);
+                    
+                    if (error instanceof ApiError) {
+                      // 如果是请求取消（499），不显示错误提示
+                      if (error.code === 499) {
+                        console.log('上传请求已取消');
+                        return;
+                      }
+                      // 如果是 401 错误，说明 Token 已失效，弹出登录对话框
+                      if (error.code === 401) {
+                        toast.error('登录已过期，请重新登录');
+                        setShowLoginDialog(true);
+                      } else {
+                        toast.error(error.message || '目标照片上传失败，请重试');
+                      }
+                    } else {
+                      toast.error('目标照片上传失败，请重试');
+                    }
                   }
                 }}
                 image={targetImage?.preview || null}
@@ -382,11 +641,18 @@ export default function App() {
             isOpen={showLoginDialog}
             onClose={() => setShowLoginDialog(false)}
           />
+          
+          {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+          <AdminLoginDialog
+            isOpen={showAdminLoginDialog}
+            onClose={() => setShowAdminLoginDialog(false)}
+            onLogin={handleAdminLogin}
+          />
       </div>
     );
-  }
+  };
 
-  function renderUploadPage() {
+  const renderUploadPage = () => {
     return (
     <div className="min-h-screen bg-[#f5f5f7]">
       {/* User Menu - Always visible */}
@@ -432,9 +698,45 @@ export default function App() {
             richColors
             closeButton
           />
+          
+          {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+          <AdminLoginDialog
+            isOpen={showAdminLoginDialog}
+            onClose={() => setShowAdminLoginDialog(false)}
+            onLogin={handleAdminLogin}
+          />
         </div>
       </div>
     </div>
     );
+  };
+
+  // Show home page with hero
+  if (currentPage === 'home') {
+    // 根据设计规范：home 页面右上角应该只显示一个头像（UserMenu），而不是居中显示的 TopNav
+    // 如果已登录，显示 UserMenu；如果未登录，ScrollableHero 中的 FanNavMenu 会处理登录/订阅按钮
+    return (
+      <>
+        {/* 右上角用户菜单（仅当已登录时显示） */}
+        {isLoggedIn && (
+          <div className="fixed top-6 right-6 z-50">
+            <UserMenu onNavigate={handleNavigate} />
+          </div>
+        )}
+        <ScrollableHero onNavigate={handleNavigate}>
+          {renderUploadContent()}
+        </ScrollableHero>
+        <Toaster position="top-center" richColors closeButton />
+        {/* 管理员登录对话框（全局快捷键 Ctrl+Shift+A 触发） */}
+        <AdminLoginDialog
+          isOpen={showAdminLoginDialog}
+          onClose={() => setShowAdminLoginDialog(false)}
+          onLogin={handleAdminLogin}
+        />
+      </>
+    );
   }
+
+  // Show upload page directly
+  return renderUploadPage();
 }

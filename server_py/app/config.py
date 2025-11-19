@@ -3,6 +3,8 @@
 从环境变量和 .env 文件加载配置，支持开发/生产环境分离
 """
 from functools import lru_cache
+from pathlib import Path
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -19,7 +21,22 @@ class Settings(BaseSettings):
 
     # ========== 数据库配置 ==========
     # 默认使用本地 SQLite（开发环境），生产环境应切换到 MySQL/PostgreSQL
-    DATABASE_URL: str = "sqlite:///./photostyle.db"
+    # 注意：如果 DATABASE_URL 未在环境变量或 .env 文件中设置，将使用相对于 server_py 目录的绝对路径
+    # 这样可以避免因为工作目录不同导致使用不同的数据库文件（如项目根目录的旧数据库）
+    DATABASE_URL: str = ""  # 如果为空，将在 model_validator 中自动计算绝对路径
+    
+    @model_validator(mode='after')
+    def set_database_url_if_empty(self):
+        """
+        如果 DATABASE_URL 为空或使用相对路径，自动设置为 server_py 目录下的绝对路径
+        这样可以确保无论从哪个目录启动应用，都使用同一个数据库文件
+        """
+        if not self.DATABASE_URL or self.DATABASE_URL == "sqlite:///./photostyle.db":
+            # 获取 server_py 目录的绝对路径（config.py 位于 server_py/app/ 目录下）
+            server_py_dir = Path(__file__).parent.parent.absolute()
+            database_file = server_py_dir / "photostyle.db"
+            self.DATABASE_URL = f"sqlite:///{database_file}"
+        return self
 
     # ========== 安全配置 ==========
     SECRET_KEY: str = "CHANGE_ME_IN_PROD"  # JWT 签名密钥（生产环境必须通过环境变量覆盖）
@@ -29,8 +46,8 @@ class Settings(BaseSettings):
 
     # ========== Gemini API 配置 ==========
     GEMINI_API_KEY: str = ""  # Gemini API Key（必须通过环境变量配置）
-    GEMINI_MODEL: str = "gemini-2.5-pro"  # Part1/Part2 使用的模型
-    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash-image"  # Part3 风格模拟使用的模型
+    GEMINI_MODEL: str = "gemini-3-pro-preview"  # Part1/Part2 使用的模型（已迁移到 Gemini 3.0）
+    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash-image"  # Part3 风格模拟使用的模型（保持不变，Gemini 3.0 不支持图片分割功能）
     GEMINI_TIMEOUT_MS: int = 120000  # Gemini API 调用超时时间（毫秒），默认 120 秒
 
     # ========== 代理配置（ClashX） ==========
@@ -48,7 +65,14 @@ class Settings(BaseSettings):
     ALIYUN_ACCESS_KEY_ID: str = ""  # AccessKey ID
     ALIYUN_ACCESS_KEY_SECRET: str = ""  # AccessKey Secret
     ALIYUN_EMAIL_FROM: str = "noreply@t-react.com"  # 发信地址
+    ALIYUN_EMAIL_FROM_ALIAS: str = "图像科学"  # 发件人昵称（显示名称），用户收到邮件时显示为"图像科学"而不是完整的邮箱地址
     ALIYUN_EMAIL_TEMPLATE_ID: str = "417051"  # 验证码邮件模版ID
+    # 邮件模板变量名配置（根据实际模板中的变量名设置）
+    # 模板 ID 417051 中使用的是 {变量名称} 作为占位符
+    # 因此变量名应设置为 "变量名称"（不包括花括号）
+    # 如果模板中使用的是 {code}，则设置为 "code"
+    # 如果模板中使用的是 {验证码}，则设置为 "验证码"
+    ALIYUN_EMAIL_TEMPLATE_VAR_NAME: str = "变量名称"  # 模板变量名（默认 "变量名称"，对应模板中的 {变量名称}）
 
     # ========== Redis 缓存配置（根据永久化存储方案第 7 节） ==========
     # 当前未实现，预留配置项，待第一阶段实施时启用

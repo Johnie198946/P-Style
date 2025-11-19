@@ -463,22 +463,34 @@ export function LightroomSection({ data, targetImageUrl, userImageUrl, reviewDat
                 )}
 
                 {/* Limiting Factors */}
-                {conversionData.conversion_feasibility.limiting_factors && 
-                 conversionData.conversion_feasibility.limiting_factors.length > 0 && (
-                  <div className="p-4 bg-gradient-to-br from-orange-50 to-red-50 rounded-xl border border-orange-200">
-                    <h4 className="text-gray-900 text-sm mb-3" style={{ fontWeight: 600 }}>
-                      ⚠️ 限制因素
-                    </h4>
-                    <ul className="space-y-2">
-                      {conversionData.conversion_feasibility.limiting_factors.map((factor: string, idx: number) => (
-                        <li key={idx} className="flex items-start gap-2 text-sm text-gray-700">
-                          <span className="text-orange-500 mt-0.5">•</span>
-                          <span>{factor}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
+                {(() => {
+                  // 处理 limiting_factors（可能是数组或字符串）
+                  const limitingFactors = conversionData.conversion_feasibility.limiting_factors;
+                  if (!limitingFactors) return null;
+                  
+                  // 如果是数组，转换为数组；如果是字符串，转换为单元素数组
+                  const factorsArray = Array.isArray(limitingFactors) 
+                    ? limitingFactors 
+                    : (typeof limitingFactors === 'string' && limitingFactors.trim() ? [limitingFactors] : []);
+                  
+                  if (factorsArray.length === 0) return null;
+                  
+                  return (
+                    <div className="p-4 bg-gradient-to-br from-orange-50 to-red-50 rounded-xl border border-orange-200">
+                      <h4 className="text-gray-900 text-sm mb-3" style={{ fontWeight: 600 }}>
+                        ⚠️ 限制因素
+                      </h4>
+                      <ul className="space-y-2">
+                        {factorsArray.map((factor: string, idx: number) => (
+                          <li key={idx} className="flex items-start gap-2 text-sm text-gray-700">
+                            <span className="text-orange-500 mt-0.5">•</span>
+                            <span>{factor}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  );
+                })()}
 
                 {/* Recommendation */}
                 {conversionData.conversion_feasibility.recommendation && (

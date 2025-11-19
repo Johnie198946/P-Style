@@ -69,6 +69,12 @@ export function UserDrawer({ open, onClose, initialPanel = 'profile' }: UserDraw
     localStorage.removeItem('isLoggedIn');
     localStorage.removeItem('userName');
     localStorage.removeItem('userData');
+    localStorage.removeItem('isAdmin');
+    
+    // 触发自定义事件，通知其他组件登录状态已改变（根据注册登录与权限设计方案）
+    window.dispatchEvent(new CustomEvent('loginStatusChanged'));
+    window.dispatchEvent(new CustomEvent('adminStatusChanged'));
+    
     window.location.reload();
   };
 

@@ -116,11 +116,20 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
 
     try {
       const { authApi } = await import('../lib/api');
-      await authApi.sendVerificationCode(email, 'register');
+      const result = await authApi.sendVerificationCode(email, 'register');
       setEmailCountdown(60);
-      // 使用 toast 替代 alert
+      // 使用后端返回的 message 字段显示提示消息
+      // 开发环境下，如果邮件未发送，后端会返回明确的提示消息
+      // 生产环境下，后端返回"验证码已发送到您的邮箱"
       const { toast } = await import('sonner');
-      toast.success('验证码已发送到您的邮箱，请查收');
+      const message = result.message || '验证码已发送到您的邮箱，请查收';
+      if (result.dev_mode && !result.email_sent) {
+        // 开发环境且邮件未发送：显示警告消息
+        toast.warning(message);
+      } else {
+        // 正常情况：显示成功消息
+        toast.success(message);
+      }
     } catch (error: any) {
       console.error('Send code failed:', error);
       const errorMessage = error.message || '发送验证码失败，请重试';
@@ -204,6 +213,10 @@ export function RegisterDialog({ isOpen, onClose, onSwitchToLogin }: RegisterDia
         localStorage.setItem('isLoggedIn', 'true');
         localStorage.setItem('userName', result.user.display_name || result.user.email);
         localStorage.setItem('userData', JSON.stringify(result.user));
+        
+        // 触发自定义事件，通知其他组件登录状态已改变（根据注册登录与权限设计方案）
+        // 这样 TopNav 等组件可以立即更新显示状态
+        window.dispatchEvent(new CustomEvent('loginStatusChanged'));
         
         toast.success('注册成功！欢迎使用照片风格克隆');
         onClose();

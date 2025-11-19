@@ -57,9 +57,12 @@ async def upload_photos(
         - 如果提供了目标图片，会计算两张图片的相似度
         - 图片以 base64 格式存储在数据库中（后续可迁移到对象存储）
     """
+    # 注意：get_current_user 在认证失败时会抛出 HTTPException（通过 error_response 创建）
+    # 这个异常应该直接传播，不应该被捕获并转换为其他错误
+    # 因此，我们需要先调用 get_current_user，如果抛出 HTTPException，让它正常传播
+    current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
+    
     try:
-        current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
-        
         # 读取图片数据
         source_data = await sourceImage.read()
         target_data = None
@@ -77,7 +80,8 @@ async def upload_photos(
         target_base64 = None
         
         try:
-            # 尝试上传到对象存储
+            # 尝试上传到对象存储（添加超时控制，防止阻塞）
+            # 注意：如果对象存储连接失败或超时，会抛出异常，回退到 Base64 存储
             source_image_url = storage_service.upload_image(
                 source_data,
                 user_id=current_user.id,
@@ -86,6 +90,7 @@ async def upload_photos(
                 content_type=sourceImage.content_type or "image/jpeg"
             )
             logger.info(f"源图上传到对象存储成功: {source_image_url}")
+            source_base64 = None  # 对象存储成功，不需要 Base64
         except Exception as e:
             logger.warning(f"对象存储上传失败，回退到 Base64: {e}")
             # 回退到 Base64 存储（兼容模式）
@@ -94,6 +99,8 @@ async def upload_photos(
         
         if target_data:
             try:
+                # 尝试上传到对象存储（添加超时控制，防止阻塞）
+                # 注意：如果对象存储连接失败或超时，会抛出异常，回退到 Base64 存储
                 target_image_url = storage_service.upload_image(
                     target_data,
                     user_id=current_user.id,
@@ -102,6 +109,7 @@ async def upload_photos(
                     content_type=targetImage.content_type or "image/jpeg"
                 )
                 logger.info(f"目标图上传到对象存储成功: {target_image_url}")
+                target_base64 = None  # 对象存储成功，不需要 Base64
             except Exception as e:
                 logger.warning(f"对象存储上传失败，回退到 Base64: {e}")
                 # 回退到 Base64 存储（兼容模式）
@@ -134,6 +142,11 @@ async def upload_photos(
                 "similarity_score": similarity,
             },
         )
+    except HTTPException:
+        # HTTPException（包括认证错误）应该直接传播，不进行转换
+        # 这样认证错误（401）可以正确返回，而不是被转换为 500 错误
+        raise
     except Exception as e:
+        # 其他异常（如数据库错误、文件读取错误等）才转换为上传失败错误
         logger.error(f"上传失败: {e}")
         raise error_response(ErrorCode.UPLOAD_FAILED, f"上传失败: {str(e)}")

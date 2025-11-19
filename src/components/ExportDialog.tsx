@@ -187,11 +187,27 @@ export function ExportDialog({ open, onOpenChange, results }: ExportDialogProps)
       }
 
       if (results.review.feasibility) {
+        // 提取 conversion_feasibility 对象（根据后端返回的数据结构）
+        const conversionFeasibility = results.review.feasibility.conversion_feasibility;
+        
+        // 兼容处理：如果 conversion_feasibility 是对象，使用它；否则使用顶层的字段（向后兼容）
+        const difficulty = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'difficulty' in conversionFeasibility)
+          ? conversionFeasibility.difficulty
+          : (results.review.feasibility.difficulty || '未知');
+        
+        const confidence = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'confidence' in conversionFeasibility)
+          ? conversionFeasibility.confidence
+          : (results.review.feasibility.confidence || 0);
+        
+        const recommendation = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'recommendation' in conversionFeasibility)
+          ? conversionFeasibility.recommendation
+          : (results.review.feasibility.recommendation || '');
+        
         text += `【复刻可行性评估】\n`;
-        text += `- 可行性：${results.review.feasibility.difficulty === 'high' ? '高难度' : results.review.feasibility.difficulty === 'medium' ? '中等难度' : '低难度'}\n`;
-        text += `- 置信度：${(results.review.feasibility.confidence * 100).toFixed(0)}%\n`;
-        if (results.review.feasibility.recommendation) {
-          text += `- 建议：${results.review.feasibility.recommendation}\n`;
+        text += `- 可行性：${difficulty === 'high' || difficulty === '高' || difficulty === '极高' ? '高难度' : difficulty === 'medium' || difficulty === '中' ? '中等难度' : '低难度'}\n`;
+        text += `- 置信度：${(confidence * 100).toFixed(0)}%\n`;
+        if (recommendation) {
+          text += `- 建议：${recommendation}\n`;
         }
         text += `\n`;
       }

@@ -60,7 +60,9 @@ async def simulate_style(
     try:
         current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
         
-        allowed, error_code = usage_service.check_usage_limit(db, current_user.id, "generation")
+        # 检查用量限制（严格限流，超出则返回错误码）
+        # 注意：管理员账号不受用量限制（根据开发方案，管理员拥有所有权限）
+        allowed, error_code = usage_service.check_usage_limit(db, current_user.id, "generation", user_role=current_user.role)
         if not allowed:
             raise error_response(error_code, "生成次数已达上限")
 

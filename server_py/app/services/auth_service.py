@@ -5,13 +5,13 @@
 from jose import jwt, JWTError
 import bcrypt
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from loguru import logger
 
 from ..models import User, AuthToken, Subscription, SubscriptionPlan
 from ..config import get_settings
-from ..services.email_service import EmailService
+from ..services.email_service import EmailService  # 用于 generate_code 静态方法
 from ..services.cache_service import cache_service
 
 
@@ -30,13 +30,28 @@ class AuthService:
         return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
 
     def create_token(self, user_id: int, token_type: str = "session", role: str = "user") -> str:
-        """创建 JWT Token"""
+        """
+        创建 JWT Token
+        根据注册登录与权限设计方案实现
+        
+        Args:
+            user_id: 用户 ID（整数）
+            token_type: Token 类型（"session" 普通用户 / "admin_session" 管理员）
+            role: 用户角色（"user" / "admin"）
+        
+        Returns:
+            str: JWT Token 字符串
+        
+        Note:
+            - JWT 标准要求 "sub" (subject) 必须是字符串类型，因此需要将 user_id 转换为字符串
+            - Token 过期时间由 settings.ACCESS_TOKEN_EXPIRE_MINUTES 配置（默认 120 分钟）
+        """
         expire = datetime.utcnow() + timedelta(minutes=self.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         payload = {
-            "sub": user_id,
-            "type": token_type,
-            "role": role,
-            "exp": expire,
+            "sub": str(user_id),  # JWT 标准要求 sub 必须是字符串类型，将 user_id 转换为字符串
+            "type": token_type,  # Token 类型：session（普通用户）或 admin_session（管理员）
+            "role": role,  # 用户角色：user 或 admin
+            "exp": expire,  # Token 过期时间
         }
         return jwt.encode(payload, self.settings.SECRET_KEY, algorithm="HS256")
 
@@ -164,40 +179,104 @@ class AuthService:
         }
 
     def get_current_user(self, db: Session, token: str) -> Optional[User]:
-        """从 Token 获取当前用户"""
+        """
+        从 Token 获取当前用户
+        根据注册登录与权限设计方案实现
+        
+        Args:
+            db: 数据库会话
+            token: JWT Token 字符串
+        
+        Returns:
+            Optional[User]: 用户对象，如果 Token 无效或用户不存在则返回 None
+        
+        Note:
+            - 验证 Token 的有效性（签名、过期时间）
+            - 检查 Token 是否在数据库中且未过期
+            - 对于验证码类型的 Token（email_otp、admin_mfa），需要检查 consumed 字段（必须为 False）
+            - 对于 session Token（session、admin_session），不检查 consumed 字段（允许重复使用）
+            - JWT 标准要求 "sub" 是字符串类型，因此需要将字符串转换为整数
+        """
+        # 1. 验证 Token（检查签名和过期时间）
         payload = self.verify_token(token)
         if not payload:
+            logger.debug("Token 验证失败：签名无效或已过期")
             return None
 
-        user_id = payload.get("sub")
-        if not user_id:
+        # 2. 从 payload 获取用户 ID
+        # 注意：JWT 标准要求 "sub" 必须是字符串类型，因此需要将字符串转换为整数
+        user_id_str = payload.get("sub")
+        if not user_id_str:
+            logger.debug("Token payload 中没有 sub 字段")
+            return None
+        
+        # 将字符串转换为整数（JWT 标准要求 sub 是字符串）
+        try:
+            user_id = int(user_id_str)
+        except (ValueError, TypeError):
+            logger.warning(f"Token payload 中的 sub 字段无法转换为整数: {user_id_str}")
             return None
 
-        # 检查 Token 是否在数据库中且未消费
-        auth_token = db.query(AuthToken).filter(
+        # 3. 检查 Token 是否在数据库中
+        # 注意：
+        # - 对于 session Token（type="session" 或 "admin_session"），consumed 字段应该始终为 False，不需要检查
+        # - consumed 字段主要用于一次性验证码（email_otp、admin_mfa），这些验证码在使用后会被标记为 consumed=True
+        # - session Token 是可以重复使用的，直到过期或被用户主动登出
+        # - 因此，对于 session Token，我们只检查 Token 是否存在、是否过期，不检查 consumed 字段
+        token_type = payload.get("type", "")
+        
+        # 构建查询条件
+        query = db.query(AuthToken).filter(
             AuthToken.token == token,
-            AuthToken.consumed == False,
             AuthToken.expired_at > datetime.utcnow(),
-        ).first()
+        )
+        
+        # 对于验证码类型的 Token（email_otp、admin_mfa），需要检查 consumed 字段
+        # 对于 session Token（session、admin_session），不需要检查 consumed 字段
+        if token_type in ("email_otp", "admin_mfa"):
+            # 验证码类型的 Token：必须未消费
+            query = query.filter(AuthToken.consumed == False)
+        # session Token 类型（session、admin_session）：不检查 consumed 字段，允许重复使用
+        
+        auth_token = query.first()
 
         if not auth_token:
+            logger.debug(f"Token 不在数据库中或已过期: user_id={user_id}, type={token_type}")
             return None
 
-        return db.query(User).filter(User.id == user_id).first()
+        # 4. 从数据库获取用户
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            logger.warning(f"Token 中的用户 ID 不存在: user_id={user_id}")
+            return None
+        
+        # 5. 检查用户状态
+        if user.status != "active":
+            logger.warning(f"用户账号已被禁用: user_id={user_id}, status={user.status}")
+            return None
 
-    def send_verification_code_for_register(self, db: Session, email: str) -> str:
+        return user
+
+    def send_verification_code_for_register(self, db: Session, email: str) -> Tuple[str, bool]:
         """
         发送注册验证码
+        根据注册登录与权限设计方案第 2.3 节实现
         
         Args:
             db: 数据库会话
             email: 用户邮箱
         
         Returns:
-            str: 验证码（6位数字）
+            tuple[str, bool]: (验证码, 邮件是否发送成功)
+                - 验证码：6位数字验证码
+                - 邮件是否发送成功：True 表示邮件已发送，False 表示邮件未发送（仅开发环境）
         
         Raises:
-            ValueError: 邮箱已注册或发送过于频繁
+            ValueError: 邮箱已注册或发送过于频繁（生产环境邮件发送失败也会抛出异常）
+        
+        Note:
+            - 开发环境（DEBUG=True）：如果邮件发送失败，返回 (code, False)，不抛出异常
+            - 生产环境（DEBUG=False）：如果邮件发送失败，抛出 ValueError 异常
         """
         # 1. 检查邮箱是否已注册
         existing = db.query(User).filter(User.email == email).first()
@@ -233,26 +312,51 @@ class AuthService:
         cache_service.cache_verification_code(email, code, code_type="register")
         
         # 6. 发送邮件
-        email_service = EmailService()
-        success = email_service.send_verification_code(email, code, type="register")
+        # 注意：开发环境下，如果邮件服务不可用，验证码仍然会保存到数据库和 Redis
+        # 开发人员可以通过查看日志或数据库获取验证码，不会阻止开发流程
+        # 使用单例模式的 email_service 实例，避免每次调用都重新初始化客户端
+        from ..services.email_service import email_service
+        success = email_service.send_verification_code(email, code, code_type="register")
         if not success:
-            raise ValueError("邮件发送失败，请稍后再试")
+            # 开发环境降级方案：如果邮件发送失败，记录日志但不抛出异常
+            # 验证码已经保存到数据库和 Redis，开发人员可以通过查看日志获取验证码
+            from ..config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                # 开发环境：记录警告日志，但不抛出异常，允许继续开发
+                logger.warning(f"【开发环境】邮件发送失败，但验证码已保存: {email}, code={code}")
+                logger.warning("【开发环境】开发人员可以通过查看日志或数据库获取验证码")
+                # 开发环境允许继续，返回验证码（虽然邮件未发送）
+                # 注意：返回一个特殊标记，让路由层知道邮件未发送，可以返回不同的消息
+                # 使用元组返回 (code, email_sent)，其中 email_sent=False 表示邮件未发送
+                return (code, False)
+            else:
+                # 生产环境：邮件发送失败必须抛出异常
+                raise ValueError("邮件发送失败，请稍后再试")
         
-        return code
+        # 邮件发送成功，返回验证码和发送状态
+        return (code, True)
 
-    def send_verification_code_for_login(self, db: Session, email: str) -> str:
+    def send_verification_code_for_login(self, db: Session, email: str) -> Tuple[str, bool]:
         """
         发送登录验证码
+        根据注册登录与权限设计方案第 2.3 节实现
         
         Args:
             db: 数据库会话
             email: 用户邮箱
         
         Returns:
-            str: 验证码（6位数字）
+            tuple[str, bool]: (验证码, 邮件是否发送成功)
+                - 验证码：6位数字验证码
+                - 邮件是否发送成功：True 表示邮件已发送，False 表示邮件未发送（仅开发环境）
         
         Raises:
-            ValueError: 邮箱未注册或账号已禁用
+            ValueError: 邮箱未注册或账号已禁用（生产环境邮件发送失败也会抛出异常）
+        
+        Note:
+            - 开发环境（DEBUG=True）：如果邮件发送失败，返回 (code, False)，不抛出异常
+            - 生产环境（DEBUG=False）：如果邮件发送失败，抛出 ValueError 异常
         """
         # 1. 查询用户
         user = db.query(User).filter(User.email == email).first()
@@ -291,16 +395,35 @@ class AuthService:
         cache_service.cache_verification_code(email, code, code_type="login")
         
         # 6. 发送邮件
-        email_service = EmailService()
-        success = email_service.send_verification_code(email, code, type="login")
+        # 注意：开发环境下，如果邮件服务不可用，验证码仍然会保存到数据库和 Redis
+        # 开发人员可以通过查看日志或数据库获取验证码，不会阻止开发流程
+        # 使用单例模式的 email_service 实例，避免每次调用都重新初始化客户端
+        from ..services.email_service import email_service
+        success = email_service.send_verification_code(email, code, code_type="login")
         if not success:
-            raise ValueError("邮件发送失败，请稍后再试")
+            # 开发环境降级方案：如果邮件发送失败，记录日志但不抛出异常
+            # 验证码已经保存到数据库和 Redis，开发人员可以通过查看日志获取验证码
+            from ..config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                # 开发环境：记录警告日志，但不抛出异常，允许继续开发
+                logger.warning(f"【开发环境】邮件发送失败，但验证码已保存: {email}, code={code}")
+                logger.warning("【开发环境】开发人员可以通过查看日志或数据库获取验证码")
+                # 开发环境允许继续，返回验证码（虽然邮件未发送）
+                # 注意：返回一个特殊标记，让路由层知道邮件未发送，可以返回不同的消息
+                # 使用元组返回 (code, email_sent)，其中 email_sent=False 表示邮件未发送
+                return (code, False)
+            else:
+                # 生产环境：邮件发送失败必须抛出异常
+                raise ValueError("邮件发送失败，请稍后再试")
         
-        return code
+        # 邮件发送成功，返回验证码和发送状态
+        return (code, True)
 
-    def send_verification_code_for_admin_mfa(self, db: Session, user_id: int, email: str) -> str:
+    def send_verification_code_for_admin_mfa(self, db: Session, user_id: int, email: str) -> Tuple[str, bool]:
         """
         发送管理员二次验证码
+        根据注册登录与权限设计方案第 3.2 节实现
         
         Args:
             db: 数据库会话
@@ -308,10 +431,16 @@ class AuthService:
             email: 管理员邮箱
         
         Returns:
-            str: 验证码（6位数字）
+            tuple[str, bool]: (验证码, 邮件是否发送成功)
+                - 验证码：6位数字验证码
+                - 邮件是否发送成功：True 表示邮件已发送，False 表示邮件未发送（仅开发环境）
         
         Raises:
-            ValueError: 发送过于频繁
+            ValueError: 发送过于频繁（生产环境邮件发送失败也会抛出异常）
+        
+        Note:
+            - 开发环境（DEBUG=True）：如果邮件发送失败，返回 (code, False)，不抛出异常
+            - 生产环境（DEBUG=False）：如果邮件发送失败，抛出 ValueError 异常
         """
         # 1. 检查发送频率（60秒内只能发送一次）
         recent_code = db.query(AuthToken).filter(
@@ -342,12 +471,30 @@ class AuthService:
         cache_service.cache_verification_code(email, code, code_type="admin_mfa")
         
         # 5. 发送邮件
-        email_service = EmailService()
-        success = email_service.send_verification_code(email, code, type="admin_mfa")
+        # 注意：开发环境下，如果邮件服务不可用，验证码仍然会保存到数据库和 Redis
+        # 开发人员可以通过查看日志或数据库获取验证码，不会阻止开发流程
+        # 使用单例模式的 email_service 实例，避免每次调用都重新初始化客户端
+        from ..services.email_service import email_service
+        success = email_service.send_verification_code(email, code, code_type="admin_mfa")
         if not success:
-            raise ValueError("邮件发送失败，请稍后再试")
+            # 开发环境降级方案：如果邮件发送失败，记录日志但不抛出异常
+            # 验证码已经保存到数据库和 Redis，开发人员可以通过查看日志获取验证码
+            from ..config import get_settings
+            settings = get_settings()
+            if settings.DEBUG:
+                # 开发环境：记录警告日志，但不抛出异常，允许继续开发
+                logger.warning(f"【开发环境】邮件发送失败，但验证码已保存: {email}, code={code}")
+                logger.warning("【开发环境】开发人员可以通过查看日志或数据库获取验证码")
+                # 开发环境允许继续，返回验证码（虽然邮件未发送）
+                # 注意：返回一个特殊标记，让路由层知道邮件未发送，可以返回不同的消息
+                # 使用元组返回 (code, email_sent)，其中 email_sent=False 表示邮件未发送
+                return (code, False)
+            else:
+                # 生产环境：邮件发送失败必须抛出异常
+                raise ValueError("邮件发送失败，请稍后再试")
         
-        return code
+        # 邮件发送成功，返回验证码和发送状态
+        return (code, True)
 
     def verify_code(
         self, 

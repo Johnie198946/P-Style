@@ -1,9 +1,52 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Zap, Image, Download, TrendingUp, Calendar, Crown, Check, X } from 'lucide-react';
+import { Zap, Image, Download, TrendingUp, Calendar, Crown, Check, X, Loader2, AlertCircle } from 'lucide-react';
+import { userApi, UsageData, ApiError } from '../../lib/api';
+import { toast } from 'sonner';
 
+/**
+ * 资源用量页面
+ * 根据开发方案第 14 节和第 27 节，使用 GET /api/user/usage 获取真实数据
+ * 不再使用模拟数据（根据开发方案第 382-387 节要求）
+ */
 export function UsagePage() {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [usageData, setUsageData] = useState<UsageData | null>(null);
+  const [subscriptionInfo, setSubscriptionInfo] = useState<any>(null);
   const [showUpgradeDialog, setShowUpgradeDialog] = useState(false);
+
+  // 加载用量数据
+  useEffect(() => {
+    loadUsageData();
+    loadSubscriptionInfo();
+  }, []);
+
+  const loadUsageData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const data = await userApi.getUsage();
+      setUsageData(data);
+    } catch (err) {
+      console.error('加载用量数据失败:', err);
+      const errorMessage = err instanceof ApiError ? err.message : '加载用量数据失败，请稍后重试';
+      setError(errorMessage);
+      toast.error(errorMessage);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadSubscriptionInfo = async () => {
+    try {
+      const data = await userApi.getMe();
+      setSubscriptionInfo(data.subscriptionSummary);
+    } catch (err) {
+      console.error('加载订阅信息失败:', err);
+      // 订阅信息加载失败不影响页面显示
+    }
+  };
 
   const handleUpgrade = () => {
     setShowUpgradeDialog(true);
@@ -15,12 +58,70 @@ export function UsagePage() {
     setShowUpgradeDialog(false);
     alert('订阅升级成功！');
   };
-  const usageData = {
-    plan: '专业版',
-    resetDate: '2025年12月9日',
-    analyses: { used: 127, total: 500, percentage: 25.4 },
-    exports: { used: 89, total: 500, percentage: 17.8 },
-    storage: { used: 2.3, total: 50, unit: 'GB', percentage: 4.6 },
+
+  // 如果正在加载，显示加载状态
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
+        <span className="ml-2 text-gray-600">加载中...</span>
+      </div>
+    );
+  }
+
+  // 如果加载失败，显示错误信息
+  if (error || !usageData) {
+    return (
+      <div className="px-8 py-8">
+        <div className="bg-red-50 border border-red-200 rounded-2xl p-6">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="w-5 h-5 text-red-500" />
+            <div>
+              <p className="text-red-900" style={{ fontWeight: 600 }}>加载失败</p>
+              <p className="text-red-700 text-sm mt-1">{error || '无法获取数据'}</p>
+              <button
+                onClick={loadUsageData}
+                className="mt-3 text-sm text-red-600 hover:text-red-700 underline"
+              >
+                重试
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // 格式化限制显示（-1 表示无限）
+  const formatLimit = (limit: number) => {
+    if (limit === -1) return '∞';
+    return limit.toLocaleString();
+  };
+
+  // 计算百分比（-1 表示无限，显示为 0%）
+  const calculatePercentage = (used: number, total: number) => {
+    if (total === -1) return 0; // 管理员无限，不显示百分比
+    if (total === 0) return 0;
+    return (used / total) * 100;
+  };
+
+  // 构建显示数据
+  const displayData = {
+    plan: subscriptionInfo?.plan_name || '免费版',
+    resetDate: subscriptionInfo?.end_at 
+      ? new Date(subscriptionInfo.end_at).toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })
+      : '下个月',
+    analyses: { 
+      used: usageData.analysisUsed, 
+      total: usageData.analysisLimit,
+      percentage: calculatePercentage(usageData.analysisUsed, usageData.analysisLimit)
+    },
+    exports: { 
+      used: usageData.generationUsed, 
+      total: usageData.generationLimit,
+      percentage: calculatePercentage(usageData.generationUsed, usageData.generationLimit)
+    },
+    storage: { used: 0, total: 0, unit: 'GB', percentage: 0 }, // 存储功能暂未实现
   };
 
   const recentActivity = [
@@ -31,20 +132,23 @@ export function UsagePage() {
     { id: 5, type: '风格模拟', name: '风景照片', date: '2025-11-06 18:00', status: 'completed' },
   ];
 
+  // 构建统计数据（使用真实 API 数据）
   const stats = [
     {
       label: '本月分析',
-      value: usageData.analyses.used,
-      total: usageData.analyses.total,
+      value: displayData.analyses.used,
+      total: displayData.analyses.total,
+      percentage: displayData.analyses.percentage,
       icon: <Zap className="w-5 h-5" />,
       color: 'from-blue-500 to-cyan-500',
       bgColor: 'bg-blue-50',
       textColor: 'text-blue-600',
     },
     {
-      label: '导出次数',
-      value: usageData.exports.used,
-      total: usageData.exports.total,
+      label: '生成次数',
+      value: displayData.exports.used,
+      total: displayData.exports.total,
+      percentage: displayData.exports.percentage,
       icon: <Download className="w-5 h-5" />,
       color: 'from-purple-500 to-pink-500',
       bgColor: 'bg-purple-50',
@@ -52,9 +156,10 @@ export function UsagePage() {
     },
     {
       label: '存储空间',
-      value: `${usageData.storage.used}`,
-      total: `${usageData.storage.total}`,
-      unit: usageData.storage.unit,
+      value: `${displayData.storage.used}`,
+      total: `${displayData.storage.total}`,
+      percentage: displayData.storage.percentage,
+      unit: displayData.storage.unit,
       icon: <Image className="w-5 h-5" />,
       color: 'from-amber-500 to-orange-500',
       bgColor: 'bg-amber-50',
@@ -73,13 +178,13 @@ export function UsagePage() {
                 当前订阅
               </p>
               <h3 className="text-gray-900" style={{ fontSize: '20px', fontWeight: 600 }}>
-                {usageData.plan}
+                {displayData.plan}
               </h3>
             </div>
             <div className="flex items-center gap-2 text-gray-600">
               <Calendar className="w-4 h-4" />
               <span style={{ fontSize: '13px', fontWeight: 400 }}>
-                重置时间: {usageData.resetDate}
+                重置时间: {displayData.resetDate}
               </span>
             </div>
           </div>
@@ -116,23 +221,31 @@ export function UsagePage() {
                   {stat.value}
                 </span>
                 <span className="text-gray-500" style={{ fontSize: '14px', fontWeight: 400 }}>
-                  / {stat.total} {stat.unit || '次'}
+                  / {stat.total === -1 ? '∞' : stat.total} {stat.unit || '次'}
                 </span>
               </div>
 
               {/* Progress Bar */}
-              <div className="relative w-full h-2 bg-gray-100 rounded-full overflow-hidden">
-                <motion.div
-                  initial={{ width: 0 }}
-                  animate={{ width: `${(Number(stat.value) / Number(stat.total)) * 100}%` }}
-                  transition={{ duration: 1, delay: index * 0.1 + 0.3 }}
-                  className={`absolute inset-y-0 left-0 bg-gradient-to-r ${stat.color} rounded-full`}
-                />
-              </div>
-
-              <p className="text-gray-500 mt-2 text-right" style={{ fontSize: '12px', fontWeight: 400 }}>
-                已使用 {((Number(stat.value) / Number(stat.total)) * 100).toFixed(1)}%
-              </p>
+              {stat.total !== -1 && stat.total > 0 && (
+                <>
+                  <div className="relative w-full h-2 bg-gray-100 rounded-full overflow-hidden">
+                    <motion.div
+                      initial={{ width: 0 }}
+                      animate={{ width: `${stat.percentage}%` }}
+                      transition={{ duration: 1, delay: index * 0.1 + 0.3 }}
+                      className={`absolute inset-y-0 left-0 bg-gradient-to-r ${stat.color} rounded-full`}
+                    />
+                  </div>
+                  <p className="text-gray-500 mt-2 text-right" style={{ fontSize: '12px', fontWeight: 400 }}>
+                    已使用 {stat.percentage.toFixed(1)}%
+                  </p>
+                </>
+              )}
+              {stat.total === -1 && (
+                <p className="text-gray-500 mt-2 text-right" style={{ fontSize: '12px', fontWeight: 400 }}>
+                  无限使用
+                </p>
+              )}
             </motion.div>
           ))}
         </div>

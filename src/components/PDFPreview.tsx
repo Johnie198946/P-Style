@@ -310,30 +310,52 @@ export function PDFPreview({ results, targetImageUrl }: PDFPreviewProps) {
             </div>
 
             {/* 可行性评估 */}
-            {results.review?.feasibility && (
-              <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200 mt-4">
-                <h3 className="text-sm text-gray-900 mb-2">复刻可行性评估</h3>
-                <div className="grid grid-cols-3 gap-2 text-xs">
-                  <div className="bg-white rounded p-2 text-center">
-                    <div className="text-gray-500 mb-1">可行性</div>
-                    <div className="text-green-700">{results.review.feasibility.difficulty === 'high' ? '高难度' : results.review.feasibility.difficulty === 'medium' ? '中等难度' : '低难度'}</div>
+            {results.review?.feasibility && (() => {
+              // 提取 conversion_feasibility 对象（根据后端返回的数据结构）
+              const conversionFeasibility = results.review.feasibility.conversion_feasibility;
+              
+              // 兼容处理：如果 conversion_feasibility 是对象，使用它；否则使用顶层的字段（向后兼容）
+              const difficulty = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'difficulty' in conversionFeasibility)
+                ? conversionFeasibility.difficulty
+                : (results.review.feasibility.difficulty || '未知');
+              
+              const confidence = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'confidence' in conversionFeasibility)
+                ? conversionFeasibility.confidence
+                : (results.review.feasibility.confidence || 0);
+              
+              const canTransform = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'can_transform' in conversionFeasibility)
+                ? conversionFeasibility.can_transform
+                : false;
+              
+              const recommendation = (conversionFeasibility && typeof conversionFeasibility === 'object' && 'recommendation' in conversionFeasibility)
+                ? conversionFeasibility.recommendation
+                : (results.review.feasibility.recommendation || '');
+              
+              return (
+                <div className="bg-gradient-to-br from-green-50 to-emerald-50 rounded-lg p-4 border border-green-200 mt-4">
+                  <h3 className="text-sm text-gray-900 mb-2">复刻可行性评估</h3>
+                  <div className="grid grid-cols-3 gap-2 text-xs">
+                    <div className="bg-white rounded p-2 text-center">
+                      <div className="text-gray-500 mb-1">可行性</div>
+                      <div className="text-green-700">{difficulty === 'high' || difficulty === '高' || difficulty === '极高' ? '高难度' : difficulty === 'medium' || difficulty === '中' ? '中等难度' : '低难度'}</div>
+                    </div>
+                    <div className="bg-white rounded p-2 text-center">
+                      <div className="text-gray-500 mb-1">置信度</div>
+                      <div className="text-green-700">{(confidence * 100).toFixed(0)}%</div>
+                    </div>
+                    <div className="bg-white rounded p-2 text-center">
+                      <div className="text-gray-500 mb-1">可转换</div>
+                      <div className="text-green-700">{canTransform ? '✓ 是' : '✗ 否'}</div>
+                    </div>
                   </div>
-                  <div className="bg-white rounded p-2 text-center">
-                    <div className="text-gray-500 mb-1">置信度</div>
-                    <div className="text-green-700">{(results.review.feasibility.confidence * 100).toFixed(0)}%</div>
-                  </div>
-                  <div className="bg-white rounded p-2 text-center">
-                    <div className="text-gray-500 mb-1">可转换</div>
-                    <div className="text-green-700">{results.review.feasibility.conversion_feasibility?.includes('true') ? '✓ 是' : '✗ 否'}</div>
-                  </div>
+                  {recommendation && (
+                    <p className="text-xs text-gray-700 mt-2 leading-relaxed line-clamp-3">
+                      {recommendation}
+                    </p>
+                  )}
                 </div>
-                {results.review.feasibility.recommendation && (
-                  <p className="text-xs text-gray-700 mt-2 leading-relaxed line-clamp-3">
-                    {results.review.feasibility.recommendation}
-                  </p>
-                )}
-              </div>
-            )}
+              );
+            })()}
 
             {/* 页脚 */}
             <div className="text-center text-xs text-gray-400 border-t pt-3 mt-auto">

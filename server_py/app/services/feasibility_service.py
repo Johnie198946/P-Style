@@ -107,20 +107,47 @@ class FeasibilityService:
             return self._create_error_result(f"评估失败: {str(e)}")
 
     def _decode_image(self, image_data: str) -> Optional[np.ndarray]:
-        """解码 base64 图片或 URL"""
+        """
+        解码 base64 图片或 URL
+        统一转换为 RGB 格式（3通道），避免 RGBA（4通道）和 RGB（3通道）混用导致的数组形状不匹配问题
+        
+        Args:
+            image_data: base64 字符串或 data URL 格式的图片数据
+        
+        Returns:
+            numpy.ndarray: RGB 格式的图片数组，形状为 (H, W, 3)
+            如果解码失败，返回 None
+        
+        Note:
+            - 所有图片都会转换为 RGB 格式，确保通道数一致
+            - RGBA 图片会先转换为 RGB（丢弃 alpha 通道）
+            - 灰度图会转换为 RGB（复制通道）
+        """
         try:
             if image_data.startswith("data:image"):
-                # base64
+                # data URL 格式：data:image/jpeg;base64,...
                 header, encoded = image_data.split(",", 1)
                 img_bytes = base64.b64decode(encoded)
             else:
                 # 假设是 base64 字符串（无 data URL 前缀）
                 img_bytes = base64.b64decode(image_data)
 
+            # 使用 PIL 打开图片
             img = Image.open(io.BytesIO(img_bytes))
+            
+            # 统一转换为 RGB 格式（3通道）
+            # 这样可以避免 RGBA（4通道）和 RGB（3通道）混用导致的数组形状不匹配问题
+            # convert('RGB') 会自动处理：
+            # - RGBA -> RGB（丢弃 alpha 通道）
+            # - 灰度图 -> RGB（复制通道）
+            # - RGB -> RGB（保持不变）
+            if img.mode != 'RGB':
+                img = img.convert('RGB')
+            
+            # 转换为 numpy 数组，形状为 (H, W, 3)
             return np.array(img)
         except Exception as e:
-            logger.error(f"Image decode failed: {e}")
+            logger.error(f"图片解码失败: {e}")
             return None
 
     def _detect_deal_breakers(

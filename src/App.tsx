@@ -207,6 +207,7 @@ export default function App() {
       const flattenedReview = {
         overviewSummary: photoReviewStructured.overviewSummary || '',
         dimensions: photoReviewStructured.dimensions || {},
+        comparisonTable: photoReviewStructured.comparisonTable || [], // 参数对比表
         photographerStyleSummary: photoReviewStructured.photographerStyleSummary || '',
         feasibility: photoReviewFeasibility,
         feasibilityDescription: photoReviewFeasibilityDescription,
@@ -214,14 +215,32 @@ export default function App() {
         naturalLanguage: photoReview.naturalLanguage || {},
       };
       
-      // 同样处理 composition（从 structured 中提取 advanced_sections）
+      // 同样处理 composition（支持新结构5字段和旧结构7段）
       const composition = sections.composition || {};
       const compositionStructured = composition.structured || {};
-      const flattenedComposition = {
-        ...compositionStructured.advanced_sections,  // 展开 advanced_sections 对象
-        // 保留 naturalLanguage 以便后续使用
-        naturalLanguage: composition.naturalLanguage || {},
-      };
+      
+      // 检测是否使用新结构（5字段）
+      const isNewCompositionStructure = compositionStructured.main_structure !== undefined || 
+                                         compositionStructured.subject_weight !== undefined ||
+                                         compositionStructured.visual_guidance !== undefined ||
+                                         compositionStructured.ratios_negative_space !== undefined ||
+                                         compositionStructured.style_class !== undefined;
+      
+      const flattenedComposition = isNewCompositionStructure
+        ? {
+            // 新结构（5字段）
+            main_structure: compositionStructured.main_structure,
+            subject_weight: compositionStructured.subject_weight,
+            visual_guidance: compositionStructured.visual_guidance,
+            ratios_negative_space: compositionStructured.ratios_negative_space,
+            style_class: compositionStructured.style_class,
+            naturalLanguage: composition.naturalLanguage || {},
+          }
+        : {
+            // 旧结构（7段）
+            ...compositionStructured.advanced_sections,
+            naturalLanguage: composition.naturalLanguage || {},
+          };
       
       // 同样处理 lighting（从 structured 中提取数据）
       const lighting = sections.lighting || {};

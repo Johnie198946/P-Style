@@ -1,297 +1,298 @@
-import { motion, useMotionValue, animate, AnimatePresence } from 'motion/react';
-import { Upload, X, ImageIcon, Check, Info } from 'lucide-react';
-import { useRef, useState, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { Histogram } from './Histogram';
+import { VisualAnalysisDashboard } from './analysis/VisualAnalysisDashboard';
+import { FalseColorOverlay } from './analysis/FalseColorOverlay';
+import { motion } from 'motion/react';
+import { useLanguage } from '../src/contexts/LanguageContext';
 
 interface PhotoUploadZoneProps {
-  title: string;
-  description: string;
-  onImageUpload: (file: File, preview: string) => void;
-  image: string | null;
-  onRemove: () => void;
-  index: number;
+  label: string;
+  imageSrc: string | null;
+  onFileSelect: (file: File) => void;
+  className?: string;
+  isScanning?: boolean;
 }
 
-export function PhotoUploadZone({ title, description, onImageUpload, image, onRemove, index }: PhotoUploadZoneProps) {
-  const [isDraggingGlobal, setIsDraggingGlobal] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
+export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isScanning }: PhotoUploadZoneProps) => {
+  const { t } = useLanguage();
+  const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  
-  const scale = useMotionValue(1);
-  const magneticX = useMotionValue(0);
-  const magneticY = useMotionValue(0);
-  const borderRadius = useMotionValue(16);
+  const imgRef = useRef<HTMLImageElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
+  const [isDragging, setIsDragging] = useState(false);
+  const [hoverPos, setHoverPos] = useState<{x: number, y: number} | null>(null);
+  const [colorInfo, setColorInfo] = useState<{r:number, g:number, b:number, hex:string} | null>(null);
+  const [isFalseColorActive, setIsFalseColorActive] = useState(false);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisData, setAnalysisData] = useState<any>(null);
+
+  const handleStartAnalysis = () => {
+      setIsAnalyzing(true);
+      // Mock API call delay
+      setTimeout(() => {
+          // In a real app, this would come from api.analyze.getTask()
+          setAnalysisData({
+              review: {
+                  style_summary: "电影感青橙色调",
+                  comprehensive_review: "画面呈现出强烈的冷暖对比，温暖的肤色（橙色）与冷调的阴影（青色）形成鲜明反差。光线柔和且具方向性，是典型的电影人像风格。",
+                  pros_evaluation: "主体与背景的分离度极佳。"
+              },
+              lighting: {
+                  exposure_control: [
+                      { param: "曝光", range: "+0.5", desc: "略微欠曝以保留高光细节。" },
+                      { param: "对比度", range: "+15", desc: "高对比度以增强戏剧效果。" }
+                  ]
+              },
+              color: {
+                  white_balance: { temp: { range: "5600K", reason: "日光平衡。" } },
+                  grading: { balance: "偏暖" }
+              },
+              composition: {
+                  main_structure: "三分法构图",
+                  subject_weight: { description: "主体占据画面 40% 的比例。" }
+              }
+          });
+          setIsAnalyzing(false);
+      }, 3000);
+  };
+
+  // Reset state when image changes
   useEffect(() => {
-    const handleDragOver = (e: DragEvent) => {
-      e.preventDefault();
-      if (!containerRef.current) return;
-      
-      const rect = containerRef.current.getBoundingClientRect();
-      const centerX = rect.left + rect.width / 2;
-      const centerY = rect.top + rect.height / 2;
-      const distance = Math.sqrt(
-        Math.pow(e.clientX - centerX, 2) + Math.pow(e.clientY - centerY, 2)
-      );
-      
-      const threshold = 400;
-      
-      if (distance < threshold) {
-        setIsDraggingGlobal(true);
-        const pullStrength = Math.max(0, 1 - distance / threshold);
-        const pullX = (e.clientX - centerX) * pullStrength * 0.15;
-        const pullY = (e.clientY - centerY) * pullStrength * 0.15;
-        
-        animate(magneticX, pullX, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(magneticY, pullY, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(scale, 1 + pullStrength * 0.05, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(borderRadius, 16 + pullStrength * 12, { type: 'spring', stiffness: 200, damping: 20 });
+    if (!imageSrc) {
+        setHoverPos(null);
+        setColorInfo(null);
+        canvasRef.current = null;
+        setIsFalseColorActive(false);
+        setAnalysisData(null);
+        setIsAnalyzing(false);
+    }
+  }, [imageSrc]);
+
+  const handleImageLoad = () => {
+      if (!imgRef.current || !imageSrc) return;
+      // Create offscreen canvas for pixel reading
+      const canvas = document.createElement('canvas');
+      canvas.width = imgRef.current.naturalWidth;
+      canvas.height = imgRef.current.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+          ctx.drawImage(imgRef.current, 0, 0);
+          canvasRef.current = canvas;
+      }
+  };
+
+  // Precise Coordinate Mapping for object-fit: cover
+  const getOriginalCoords = (domX: number, domY: number, containerW: number, containerH: number, imgW: number, imgH: number) => {
+      const containerRatio = containerW / containerH;
+      const imgRatio = imgW / imgH;
+
+      let renderW, renderH, offsetX, offsetY;
+
+      if (imgRatio > containerRatio) {
+          // Image is wider than container: Height matches, Width is cropped
+          renderH = containerH;
+          renderW = imgH * imgRatio;
+          offsetY = 0;
+          offsetX = (renderW - containerW) / 2; // Crop is centered
       } else {
-        setIsDraggingGlobal(false);
-        animate(magneticX, 0, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(magneticY, 0, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(scale, 1, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(borderRadius, 16, { type: 'spring', stiffness: 200, damping: 20 });
+          // Image is taller than container: Width matches, Height is cropped
+          renderW = containerW;
+          renderH = containerW / imgRatio;
+          offsetX = 0;
+          offsetY = (renderH - containerH) / 2; // Crop is centered
       }
-    };
+      
+      // 1. Convert DOM (0,0 at top-left of container) to Render Space (0,0 at top-left of rendered image)
+      const renderX = domX + offsetX;
+      const renderY = domY + offsetY;
 
-    const handleDragEnter = () => {
-      document.body.classList.add('dragging');
-    };
+      // 2. Scale Render Space to Original Image Space
+      const scaleX = imgW / renderW;
+      const scaleY = imgH / renderH;
 
-    const handleDragLeave = (e: DragEvent) => {
-      if (e.clientX === 0 && e.clientY === 0) {
-        setIsDraggingGlobal(false);
-        animate(magneticX, 0, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(magneticY, 0, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(scale, 1, { type: 'spring', stiffness: 200, damping: 20 });
-        animate(borderRadius, 16, { type: 'spring', stiffness: 200, damping: 20 });
-        document.body.classList.remove('dragging');
+      return {
+          x: Math.floor(renderX * scaleX),
+          y: Math.floor(renderY * scaleY)
+      };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+      if (!imageSrc || !containerRef.current || !imgRef.current || !canvasRef.current) return;
+
+      const rect = containerRef.current.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      
+      setHoverPos({ x, y });
+
+      const { naturalWidth, naturalHeight } = imgRef.current;
+      const { width, height } = rect;
+
+      const coords = getOriginalCoords(x, y, width, height, naturalWidth, naturalHeight);
+      
+      if (coords.x >= 0 && coords.x < naturalWidth && coords.y >= 0 && coords.y < naturalHeight) {
+          const ctx = canvasRef.current.getContext('2d');
+          if (ctx) {
+              // 1x1 pixel read
+              const pixel = ctx.getImageData(coords.x, coords.y, 1, 1).data;
+              const r = pixel[0];
+              const g = pixel[1];
+              const b = pixel[2];
+              const hex = "#" + ((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1).toUpperCase();
+              setColorInfo({ r, g, b, hex });
+          }
+      } else {
+          setColorInfo(null); // Mouse over padding/border but outside image
       }
-    };
+  };
 
-    const handleDrop = () => {
-      setIsDraggingGlobal(false);
-      animate(magneticX, 0, { type: 'spring', stiffness: 200, damping: 20 });
-      animate(magneticY, 0, { type: 'spring', stiffness: 200, damping: 20 });
-      animate(scale, 1, { type: 'spring', stiffness: 200, damping: 20 });
-      animate(borderRadius, 16, { type: 'spring', stiffness: 200, damping: 20 });
-      document.body.classList.remove('dragging');
-    };
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  };
 
-    window.addEventListener('dragover', handleDragOver);
-    window.addEventListener('dragenter', handleDragEnter);
-    window.addEventListener('dragleave', handleDragLeave);
-    window.addEventListener('drop', handleDrop);
-
-    return () => {
-      window.removeEventListener('dragover', handleDragOver);
-      window.removeEventListener('dragenter', handleDragEnter);
-      window.removeEventListener('dragleave', handleDragLeave);
-      window.removeEventListener('drop', handleDrop);
-    };
-  }, [magneticX, magneticY, scale, borderRadius]);
+  const handleDragLeave = () => setIsDragging(false);
 
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
-    
-    const files = Array.from(e.dataTransfer.files);
-    const imageFile = files.find(file => file.type.startsWith('image/'));
-    
-    if (imageFile) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          onImageUpload(imageFile, event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(imageFile);
+    setIsDragging(false);
+    if (e.dataTransfer.files?.[0]) {
+      onFileSelect(e.dataTransfer.files[0]);
     }
   };
 
-  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file && file.type.startsWith('image/')) {
-      const reader = new FileReader();
-      reader.onload = (event) => {
-        if (event.target?.result) {
-          onImageUpload(file, event.target.result as string);
-        }
-      };
-      reader.readAsDataURL(file);
-    }
+  const handleClick = () => {
+      if (!imageSrc) inputRef.current?.click();
   };
 
   return (
-    <div ref={containerRef} className="relative">
-      <motion.div
-        style={{
-          scale,
-          x: magneticX,
-          y: magneticY,
-        }}
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ delay: index * 0.1 }}
+    <div className={`flex flex-col gap-4 ${className}`}>
+      <div 
+        ref={containerRef}
+        className={`
+          w-80 h-[32rem] border border-white/5 rounded bg-carbon-900 shadow-2xl cursor-crosshair
+          flex flex-col items-center justify-center gap-4 transition-all duration-500 group relative overflow-hidden 
+          ${isDragging ? 'border-optic-accent bg-white/[0.02]' : 'hover:border-optic-accent/30'}
+        `}
+        onClick={handleClick}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onMouseMove={handleMouseMove}
+        onMouseLeave={() => { setHoverPos(null); handleDragLeave(); }}
       >
-        <motion.div
-          onDrop={handleDrop}
-          onDragOver={(e) => e.preventDefault()}
-          onClick={() => !image && fileInputRef.current?.click()}
-          onMouseEnter={() => setIsHovered(true)}
-          onMouseLeave={() => setIsHovered(false)}
-          style={{ borderRadius }}
-          className={`relative overflow-hidden border-2 transition-all cursor-pointer ${
-            isDraggingGlobal
-              ? 'border-blue-400 bg-blue-50 shadow-2xl shadow-blue-200/50'
-              : image
-              ? 'border-gray-200 bg-white shadow-lg'
-              : 'border-dashed border-gray-300 bg-gray-50/50 hover:border-gray-400 hover:bg-gray-100/50 shadow-sm hover:shadow-md'
-          }`}
-        >
-          <div className="aspect-[4/3] flex items-center justify-center p-8">
-            {image ? (
-              <div className="relative w-full h-full group">
-                <img
-                  src={image}
-                  alt="Uploaded"
-                  className="w-full h-full object-cover rounded-lg"
-                />
-                
-                {/* Hover overlay with expanded info */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/0 to-black/0 opacity-0 group-hover:opacity-100 transition-all duration-300 rounded-lg">
-                  {/* Expanded info at bottom */}
-                  <AnimatePresence>
-                    {isHovered && (
-                      <motion.div
-                        initial={{ y: 20, opacity: 0 }}
-                        animate={{ y: 0, opacity: 1 }}
-                        exit={{ y: 20, opacity: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="absolute bottom-4 left-4 right-4 space-y-2"
-                      >
-                        <div className="flex items-center gap-2 px-3 py-2 bg-white/90 backdrop-blur-md rounded-lg text-sm">
-                          <Info className="w-4 h-4 text-blue-600" />
-                          <span className="text-gray-900">{title}</span>
-                        </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div className="px-3 py-2 bg-white/90 backdrop-blur-md rounded-lg text-xs">
-                            <span className="text-gray-600">格式:</span>
-                            <span className="ml-1 text-gray-900">JPG/PNG</span>
-                          </div>
-                          <div className="px-3 py-2 bg-white/90 backdrop-blur-md rounded-lg text-xs">
-                            <span className="text-gray-600">状态:</span>
-                            <span className="ml-1 text-green-600">✓ 已上传</span>
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                  
-                  {/* Remove button */}
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <motion.button
-                      initial={{ opacity: 0, scale: 0.8 }}
-                      whileHover={{ scale: 1.1, opacity: 1 }}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRemove();
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-3 bg-white rounded-full text-red-500 hover:bg-red-500 hover:text-white transition-all duration-200 shadow-lg"
-                    >
-                      <X className="w-5 h-5" />
-                    </motion.button>
-                  </div>
-                </div>
-                
-                {/* Success indicator */}
-                <div className="absolute top-3 right-3 p-2 bg-green-500 rounded-full shadow-lg">
-                  <Check className="w-4 h-4 text-white" />
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col items-center justify-center text-center space-y-4">
-                <motion.div
-                  animate={{
-                    y: isDraggingGlobal ? -8 : isHovered ? -4 : 0,
-                    scale: isDraggingGlobal ? 1.15 : isHovered ? 1.05 : 1,
-                  }}
-                  transition={{ type: 'spring', stiffness: 300, damping: 25 }}
+         <input 
+            type="file" 
+            ref={inputRef} 
+            className="hidden" 
+            accept="image/*"
+            onChange={(e) => e.target.files?.[0] && onFileSelect(e.target.files[0])}
+         />
+         
+         {imageSrc ? (
+           <>
+             <img 
+                ref={imgRef}
+                src={imageSrc} 
+                onLoad={handleImageLoad}
+                className="absolute inset-0 w-full h-full object-cover opacity-100 transition-all duration-200" 
+                crossOrigin="anonymous"
+             />
+             
+             <FalseColorOverlay 
+                imageSrc={imageSrc} 
+                isVisible={isFalseColorActive}
+                width={320}
+                height={512}
+             />
+             
+             {/* Gradient Overlay - Hide when inspecting to see clear colors */}
+             <div className={`absolute inset-0 bg-gradient-to-t from-carbon-950 to-transparent pointer-events-none transition-opacity duration-200 ${hoverPos ? 'opacity-0' : 'opacity-90'}`}></div>
+             
+             {/* SCANNING EFFECT */}
+             {isScanning && (
+                 <div className="absolute inset-0 z-40 pointer-events-none overflow-hidden rounded bg-optic-accent/5">
+                     {/* Grid */}
+                     <div className="absolute inset-0 opacity-20" style={{ 
+                         backgroundImage: 'linear-gradient(0deg, transparent 24%, #007AFF 25%, #007AFF 26%, transparent 27%, transparent 74%, #007AFF 75%, #007AFF 76%, transparent 77%, transparent), linear-gradient(90deg, transparent 24%, #007AFF 25%, #007AFF 26%, transparent 27%, transparent 74%, #007AFF 75%, #007AFF 76%, transparent 77%, transparent)',
+                         backgroundSize: '50px 50px'
+                     }}></div>
+                     
+                     {/* Scanning Line */}
+                     <motion.div 
+                        className="absolute left-0 right-0 h-1 bg-optic-accent shadow-[0_0_20px_#007AFF,0_0_10px_white]"
+                        animate={{ top: ['0%', '100%', '0%'] }}
+                        transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                     />
+                     
+                     {/* Data Noise */}
+                     <div className="absolute bottom-10 left-4 text-[10px] font-mono text-optic-accent opacity-70">
+                         <div>{t('upload.wavelength')}: {Math.random().toFixed(4)}nm</div>
+                         <div>{t('upload.flux')}</div>
+                     </div>
+                 </div>
+             )}
+
+             {/* MAGNIFIER & INSPECTOR */}
+             {hoverPos && colorInfo && !isFalseColorActive && (
+                <div 
+                    className="absolute z-50 pointer-events-none flex flex-col items-center gap-2"
+                    style={{ 
+                        left: hoverPos.x, 
+                        top: hoverPos.y,
+                        transform: 'translate(-50%, -120%)' 
+                    }}
                 >
-                  <div className={`p-5 rounded-2xl transition-all duration-300 ${
-                    isDraggingGlobal 
-                      ? 'bg-blue-100' 
-                      : 'bg-gray-100 group-hover:bg-gray-200'
-                  }`}>
-                    <Upload className={`w-10 h-10 transition-colors duration-300 ${
-                      isDraggingGlobal ? 'text-blue-500' : 'text-gray-400'
-                    }`} />
-                  </div>
-                </motion.div>
-                
-                <div className="space-y-2">
-                  <h4 className="text-gray-900">{title}</h4>
-                  <p className="text-gray-500 text-sm max-w-xs">{description}</p>
-                  
-                  {/* Basic format info */}
-                  <div className="pt-2">
-                    <span className="inline-flex items-center gap-2 px-3 py-1.5 bg-white border border-gray-200 rounded-lg text-xs text-gray-600">
-                      <ImageIcon className="w-3.5 h-3.5" />
-                      JPG, PNG, WEBP
-                    </span>
-                  </div>
-                  
-                  {/* Expanded tips on hover */}
-                  <AnimatePresence>
-                    {isHovered && !isDraggingGlobal && (
-                      <motion.div
-                        initial={{ height: 0, opacity: 0, marginTop: 0 }}
-                        animate={{ height: 'auto', opacity: 1, marginTop: 12 }}
-                        exit={{ height: 0, opacity: 0, marginTop: 0 }}
-                        transition={{ duration: 0.3 }}
-                        className="overflow-hidden"
-                      >
-                        <motion.div
-                          initial={{ y: -10 }}
-                          animate={{ y: 0 }}
-                          exit={{ y: -10 }}
-                          className="space-y-2 pt-3 border-t border-gray-200"
-                        >
-                          <div className="text-xs text-gray-600 space-y-1.5">
-                            <div className="flex items-center gap-2 justify-center">
-                              <Check className="w-3.5 h-3.5 text-green-600" />
-                              <span>支持拖拽上传</span>
-                            </div>
-                          </div>
-                        </motion.div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
+                    {/* Lens */}
+                    <div className="w-24 h-24 rounded-full border-2 border-white/20 bg-carbon-950/50 backdrop-blur-xl overflow-hidden relative shadow-2xl flex items-center justify-center">
+                         <div className="absolute inset-0" style={{ backgroundColor: colorInfo.hex }}></div>
+                         <div className="w-full h-px bg-white/50 absolute top-1/2"></div>
+                         <div className="h-full w-px bg-white/50 absolute left-1/2"></div>
+                    </div>
+
+                    {/* Data Panel */}
+                    <div className="bg-black/80 border border-white/10 backdrop-blur rounded p-2 text-[9px] font-mono min-w-[100px]">
+                        <div className="flex justify-between gap-4 mb-1">
+                            <span className="text-gray-400">HEX</span>
+                            <span className="text-optic-accent font-bold">{colorInfo.hex}</span>
+                        </div>
+                        <div className="flex justify-between gap-4">
+                            <span className="text-gray-400">RGB</span>
+                            <span className="text-white">{colorInfo.r} {colorInfo.g} {colorInfo.b}</span>
+                        </div>
+                    </div>
                 </div>
-              </div>
-            )}
-          </div>
-        </motion.div>
+             )}
 
-        {/* Magnetic glow effect */}
-        <motion.div
-          className="absolute inset-0 rounded-2xl pointer-events-none"
-          animate={{
-            boxShadow: isDraggingGlobal
-              ? '0 0 0 3px rgba(59, 130, 246, 0.1), 0 20px 60px -15px rgba(59, 130, 246, 0.3)'
-              : '0 0 0 0px rgba(59, 130, 246, 0)',
-          }}
-          transition={{ duration: 0.3 }}
-        />
-      </motion.div>
+           </>
+         ) : (
+           <div className="w-16 h-16 rounded-full border border-white/10 flex items-center justify-center text-white/20 group-hover:text-optic-accent group-hover:border-optic-accent/50 transition-all">
+              <span className="text-2xl">+</span>
+           </div>
+         )}
+         
+         {!imageSrc && (
+            <div className="relative z-10 px-6 py-2 font-mono text-[9px] text-white tracking-widest border border-white/10 bg-carbon-950/80 backdrop-blur rounded group-hover:text-optic-accent transition-colors">
+                {label.toUpperCase()}
+            </div>
+         )}
+      </div>
 
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        onChange={handleFileSelect}
-        className="hidden"
-      />
+      {/* Integrated Analysis Dashboard */}
+      {/* 【重要】分析工具面板：包含直方图、色彩雷达、AI 诊断 */}
+      {/* 色彩雷达和直方图都是前端实时计算，不使用硬编码模拟数据 */}
+      <div className={`transition-opacity duration-500 ${imageSrc ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+         <VisualAnalysisDashboard 
+           imageSrc={imageSrc}
+           isFalseColorActive={isFalseColorActive}
+           onToggleFalseColor={() => setIsFalseColorActive(!isFalseColorActive)}
+           histogramElement={<Histogram imageSrc={imageSrc} height={120} className="border-0 bg-transparent p-0" />}
+           analysisData={analysisData}
+           isAnalyzing={isAnalyzing}
+           onStartAnalysis={handleStartAnalysis}
+         />
+      </div>
     </div>
   );
-}
+};

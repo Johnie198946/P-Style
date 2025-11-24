@@ -3,9 +3,11 @@
 根据永久化存储方案第 10 节实现
 定时清理过期数据和归档历史数据
 """
+import copy
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 from sqlalchemy.orm import Session
+from sqlalchemy.orm.attributes import flag_modified  # 用于标记 JSON 字段已修改
 from sqlalchemy import and_, or_
 from loguru import logger
 
@@ -67,11 +69,20 @@ class ArchiveService:
                 task.target_image_data = None  # 归档目标图（已迁移到对象存储）
                 task.feasibility_result = None  # 归档可行性结果
                 
-                # 标记为已归档（在 extra_data 中记录）
+                # 标记为已归档（在 structured_result 中记录）
+                # 【关键修复】修改 JSON 字段时必须使用 flag_modified 标记，确保 SQLAlchemy 能检测到变更
+                # 这是 SQLAlchemy 的 JSON 字段特性：直接修改嵌套字典时，需要使用 flag_modified 标记
                 if not task.structured_result:
                     task.structured_result = {}
-                task.structured_result["archived"] = True
-                task.structured_result["archived_at"] = datetime.utcnow().isoformat()
+                    flag_modified(task, "structured_result")  # 标记 JSON 字段已修改
+                
+                # 【关键修复】使用深拷贝修改嵌套字典，然后标记为已修改
+                # 这样可以确保 SQLAlchemy 能正确检测到变更，避免 sqlite3.OperationError
+                structured_result_copy = copy.deepcopy(task.structured_result)
+                structured_result_copy["archived"] = True
+                structured_result_copy["archived_at"] = datetime.utcnow().isoformat()
+                task.structured_result = structured_result_copy
+                flag_modified(task, "structured_result")  # 标记 JSON 字段已修改
                 
                 archived_count += 1
             except Exception as e:
@@ -116,16 +127,20 @@ class ArchiveService:
         for upload in old_uploads:
             try:
                 # 删除对象存储中的图片（如果 URL 存在）
+                # 【重要】delete_image 方法会处理对象存储服务未运行的情况，不会抛出异常
+                # 如果删除失败（如 MinIO 未运行），会记录警告但不影响数据库记录删除
                 if upload.source_image_url and not upload.source_image_url.startswith("data:"):
-                    storage_service.delete_image(upload.source_image_url)
+                    if not storage_service.delete_image(upload.source_image_url):
+                        logger.warning(f"删除源图失败（可能对象存储服务未运行）: {upload.source_image_url}")
                 if upload.target_image_url and not upload.target_image_url.startswith("data:"):
-                    storage_service.delete_image(upload.target_image_url)
+                    if not storage_service.delete_image(upload.target_image_url):
+                        logger.warning(f"删除目标图失败（可能对象存储服务未运行）: {upload.target_image_url}")
                 
-                # 删除数据库记录
+                # 删除数据库记录（即使对象存储删除失败，也继续删除数据库记录）
                 db.delete(upload)
                 deleted_count += 1
             except Exception as e:
-                logger.error(f"删除上传记录失败: {upload.id}, 错误: {e}")
+                logger.error(f"删除上传记录失败: {upload.id}, 错误: {type(e).__name__}: {str(e)}")
         
         if deleted_count > 0:
             db.commit()

@@ -191,16 +191,23 @@ async def send_verification_code(
                 message="验证码已发送到您的邮箱",
             )
     except ValueError as e:
-        # ValueError 通常表示业务逻辑错误（如邮箱已注册、发送过于频繁等）
+        # ValueError 通常表示业务逻辑错误（如邮箱已注册、邮箱未注册、发送过于频繁等）
         error_msg = str(e)
         # 根据错误消息判断错误类型，返回更准确的错误码
         if "邮箱已注册" in error_msg:
             raise error_response(ErrorCode.EMAIL_ALREADY_REGISTERED, error_msg)
+        elif "邮箱未注册" in error_msg:
+            # 【重要】登录模式下，邮箱未注册应该返回 EMAIL_NOT_REGISTERED 错误码
+            # 前端可以根据此错误码提示用户切换到注册模式
+            raise error_response(ErrorCode.EMAIL_NOT_REGISTERED, error_msg)
         elif "发送过于频繁" in error_msg:
             raise error_response(ErrorCode.SEND_CODE_TOO_FREQUENT, error_msg)
         elif "邮件发送失败" in error_msg:
             # 邮件发送失败可能是配置问题或服务问题，返回内部错误
             raise error_response(ErrorCode.EMAIL_SEND_FAILED, error_msg)
+        elif "已被禁用" in error_msg:
+            # 账号被禁用
+            raise error_response(ErrorCode.AUTH_USER_DISABLED, error_msg)
         else:
             raise error_response(ErrorCode.INVALID_REQUEST, error_msg)
     except Exception as e:

@@ -73,6 +73,7 @@ storage/
 !顶层设计文档.md
 !注册登录与权限设计方案.md
 !永久化存储方案.md
+!风格模拟功能方案.md
 
 # Duplicate files
 * 2.*

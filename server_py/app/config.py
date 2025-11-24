@@ -47,7 +47,8 @@ class Settings(BaseSettings):
     # ========== Gemini API 配置 ==========
     GEMINI_API_KEY: str = ""  # Gemini API Key（必须通过环境变量配置）
     GEMINI_MODEL: str = "gemini-3-pro-preview"  # Part1/Part2 使用的模型（已迁移到 Gemini 3.0）
-    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash-image"  # Part3 风格模拟使用的模型（保持不变，Gemini 3.0 不支持图片分割功能）
+    GEMINI_FLASH_MODEL: str = "gemini-2.5-flash-image"  # Part3 风格模拟使用的回退模型（快速生成，1024 像素分辨率）
+    GEMINI_IMAGE_MODEL: str = "gemini-3-pro-image-preview"  # Part3 风格模拟使用的模型（Gemini 3 Pro 图片生成，支持 4K 输出）
     GEMINI_TIMEOUT_MS: int = 120000  # Gemini API 调用超时时间（毫秒），默认 120 秒
 
     # ========== 代理配置（ClashX） ==========

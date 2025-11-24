@@ -1,4 +1,9 @@
 
+  /**
+   * Vite 配置文件
+   * 根据开发方案要求，前端必须运行在 3001 端口
+   * 后端运行在 8081 端口
+   */
   import { defineConfig } from 'vite';
   import react from '@vitejs/plugin-react-swc';
   import path from 'path';
@@ -14,8 +19,11 @@
         'react-resizable-panels@2.1.7': 'react-resizable-panels',
         'react-hook-form@7.55.0': 'react-hook-form',
         'react-day-picker@8.10.1': 'react-day-picker',
+        'next-themes@0.4.6': 'next-themes',
         'lucide-react@0.487.0': 'lucide-react',
         'input-otp@1.4.2': 'input-otp',
+        'figma:asset/b1a4e0bc3cae8d9830d0fa8f47636221ea18acba.png': path.resolve(__dirname, './src/assets/b1a4e0bc3cae8d9830d0fa8f47636221ea18acba.png'),
+        'figma:asset/68313abe5754991533fc3928582a330c901011ff.png': path.resolve(__dirname, './src/assets/68313abe5754991533fc3928582a330c901011ff.png'),
         'embla-carousel-react@8.6.0': 'embla-carousel-react',
         'cmdk@1.1.1': 'cmdk',
         'class-variance-authority@0.7.1': 'class-variance-authority',
@@ -53,7 +61,7 @@
       outDir: 'build',
     },
     server: {
-      port: 3001,  // 根据开发方案第 0 节，前端必须运行在 3001 端口
-      open: true,
+      port: 3001, // 【强制要求】根据开发方案第 78 行，前端端口必须为 3001
+      open: true, // 自动在浏览器中打开
     },
   });

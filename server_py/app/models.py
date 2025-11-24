@@ -86,6 +86,7 @@ class AnalysisTask(Base):
     part2_completed = Column(Boolean, default=False, nullable=False)  # Part2 是否完成
     feasibility_result = Column(JSON, nullable=True)  # 可行性评估结果（第 26 节 JSON 结构）
     status = Column(String(20), default="pending", nullable=False)  # 任务状态（pending/part1_completed/completed/failed）
+    status_reason = Column(Text, nullable=True)  # 任务状态原因（可选，通常用于失败时记录错误信息）
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 创建时间
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 更新时间
 

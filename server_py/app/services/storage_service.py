@@ -35,10 +35,17 @@ class StorageService:
             logger.warning(f"未知的存储类型: {self.storage_type}，使用本地文件系统")
 
     def _init_minio(self):
-        """初始化 MinIO 客户端（开发环境）"""
+        """
+        初始化 MinIO 客户端（开发环境）
+        
+        注意：
+        - 如果 MinIO 服务未运行，初始化会失败，`self._client` 会被设置为 `None`
+        - 这不会导致应用启动失败，但对象存储功能将不可用，会自动回退到 Base64 存储
+        """
         try:
             from minio import Minio
             from minio.error import S3Error
+            import socket
             
             endpoint = getattr(settings, "OSS_ENDPOINT", "localhost:9000")
             access_key = getattr(settings, "OSS_ACCESS_KEY_ID", "minioadmin")
@@ -46,25 +53,46 @@ class StorageService:
             secure = endpoint.startswith("https://")
             endpoint = endpoint.replace("http://", "").replace("https://", "")
             
-            self._client = Minio(
-                endpoint,
-                access_key=access_key,
-                secret_key=secret_key,
-                secure=secure
-            )
-            self.bucket_name = getattr(settings, "OSS_BUCKET_NAME", "photostyle")
+            # 【重要】设置 socket 超时，防止 MinIO 连接失败时一直阻塞
+            # 注意：MinIO Python SDK 的 `bucket_exists()` 和 `make_bucket()` 方法本身不支持超时参数
+            # 但可以通过设置 socket 默认超时来控制
+            original_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(5)  # 设置 5 秒超时（初始化时使用较短超时，避免启动阻塞）
             
-            # 确保存储桶存在
-            if not self._client.bucket_exists(self.bucket_name):
-                self._client.make_bucket(self.bucket_name)
-                logger.info(f"创建 MinIO 存储桶: {self.bucket_name}")
-            
-            logger.info(f"MinIO 客户端初始化成功: {endpoint}")
+            try:
+                self._client = Minio(
+                    endpoint,
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    secure=secure
+                )
+                self.bucket_name = getattr(settings, "OSS_BUCKET_NAME", "photostyle")
+                
+                # 【重要】确保存储桶存在（如果 MinIO 服务未运行，这里会超时或抛出异常）
+                # 使用 try-except 捕获异常，避免初始化失败导致应用无法启动
+                try:
+                    if not self._client.bucket_exists(self.bucket_name):
+                        self._client.make_bucket(self.bucket_name)
+                        logger.info(f"创建 MinIO 存储桶: {self.bucket_name}")
+                except (socket.timeout, Exception) as e:
+                    # MinIO 连接失败或超时，记录错误但不抛出异常
+                    logger.error(f"MinIO 存储桶检查/创建失败（MinIO 服务可能未运行）: {type(e).__name__}: {str(e)}")
+                    logger.warning("MinIO 客户端初始化失败，将回退到 Base64 存储模式")
+                    self._client = None  # 设置为 None，后续上传时会回退到 Base64
+                    return  # 提前返回，不继续执行
+                
+                logger.info(f"MinIO 客户端初始化成功: {endpoint}")
+            finally:
+                # 恢复原始超时设置
+                socket.setdefaulttimeout(original_timeout)
         except ImportError:
             logger.error("MinIO 客户端未安装，请运行: pip install minio")
+            logger.warning("MinIO 客户端未安装，将回退到 Base64 存储模式")
             self._client = None
         except Exception as e:
-            logger.error(f"MinIO 初始化失败: {e}")
+            # 【重要】捕获所有异常，避免初始化失败导致应用无法启动
+            logger.error(f"MinIO 初始化失败: {type(e).__name__}: {str(e)}")
+            logger.warning("MinIO 初始化失败，将回退到 Base64 存储模式")
             self._client = None
 
     def _init_aliyun_oss(self):
@@ -134,21 +162,22 @@ class StorageService:
         file_name = f"{uuid.uuid4()}{file_ext}"
         
         # 构建存储路径（根据永久化存储方案第 8 节）
+        # 注意：开发方案中的路径格式是示例（如 source.jpg），实际实现使用 UUID 作为文件名，避免冲突
         if image_type == "avatar":
-            # 用户头像：avatars/{user_id}/avatar.jpg
+            # 用户头像：avatars/{user_id}/{uuid}.jpg（使用 UUID 避免冲突）
             if not user_id:
                 raise ValueError("上传头像需要提供 user_id")
             object_key = f"avatars/{user_id}/{file_name}"
         elif image_type in ["source", "target"]:
-            # 上传图片：uploads/{user_id}/{task_id}/source.jpg
+            # 上传图片：uploads/{user_id}/{task_id}/{image_type}-{uuid}.jpg（使用 UUID 避免同一任务多次上传时覆盖）
             if not user_id or not task_id:
                 raise ValueError("上传源图/目标图需要提供 user_id 和 task_id")
-            object_key = f"uploads/{user_id}/{task_id}/{image_type}{file_ext}"
+            object_key = f"uploads/{user_id}/{task_id}/{image_type}-{file_name}"
         elif image_type == "preview":
-            # 风格模拟预览图：results/{task_id}/preview.jpg
+            # 风格模拟预览图：results/{task_id}/preview-{uuid}.jpg（使用 UUID 避免同一任务多次生成时覆盖）
             if not task_id:
                 raise ValueError("上传预览图需要提供 task_id")
-            object_key = f"results/{task_id}/preview{file_ext}"
+            object_key = f"results/{task_id}/preview-{file_name}"
         else:
             raise ValueError(f"未知的图片类型: {image_type}")
         
@@ -256,8 +285,17 @@ class StorageService:
         
         Returns:
             bool: 是否删除成功
+        
+        注意：
+        - 如果对象存储服务未运行（如 MinIO），会记录警告但不抛出异常
+        - 对于 Base64 格式的 URL（data:image/...），直接返回 True（无需删除）
         """
         try:
+            # Base64 格式的 URL 无需删除（存储在数据库中）
+            if url.startswith("data:"):
+                logger.debug(f"跳过 Base64 格式的 URL 删除: {url[:50]}...")
+                return True
+            
             # 从 URL 中提取 object_key
             if "/storage/" in url:
                 # 本地文件系统
@@ -265,19 +303,46 @@ class StorageService:
                 file_path = self.storage_path / object_key
                 if file_path.exists():
                     file_path.unlink()
+                    logger.info(f"删除本地文件成功: {object_key}")
                     return True
+                else:
+                    logger.warning(f"本地文件不存在: {object_key}")
+                    return False
             elif self.bucket_name in url:
                 # MinIO 或 OSS
                 object_key = url.split(f"{self.bucket_name}/")[-1]
-                if self.storage_type == "minio" and self._client:
-                    self._client.remove_object(self.bucket_name, object_key)
-                    return True
-                elif self.storage_type == "aliyun_oss" and self._client:
-                    self._client.delete_object(object_key)
-                    return True
-            return False
+                
+                # 【重要】检查对象存储客户端是否可用
+                if self.storage_type == "minio":
+                    if not self._client:
+                        logger.warning(f"MinIO 客户端未初始化，无法删除图片: {url}")
+                        return False
+                    try:
+                        self._client.remove_object(self.bucket_name, object_key)
+                        logger.info(f"删除 MinIO 图片成功: {object_key}")
+                        return True
+                    except Exception as e:
+                        logger.error(f"删除 MinIO 图片失败: {object_key}, 错误: {e}")
+                        return False
+                elif self.storage_type == "aliyun_oss":
+                    if not self._client:
+                        logger.warning(f"阿里云 OSS 客户端未初始化，无法删除图片: {url}")
+                        return False
+                    try:
+                        self._client.delete_object(object_key)
+                        logger.info(f"删除阿里云 OSS 图片成功: {object_key}")
+                        return True
+                    except Exception as e:
+                        logger.error(f"删除阿里云 OSS 图片失败: {object_key}, 错误: {e}")
+                        return False
+                else:
+                    logger.warning(f"未知的存储类型: {self.storage_type}，无法删除图片: {url}")
+                    return False
+            else:
+                logger.warning(f"无法识别图片 URL 格式: {url}")
+                return False
         except Exception as e:
-            logger.error(f"删除图片失败: {url}, 错误: {e}")
+            logger.error(f"删除图片失败: {url}, 错误: {type(e).__name__}: {str(e)}")
             return False
 
     @staticmethod

@@ -410,16 +410,25 @@ class AnalysisFormatter:
                     logger.warning(f"limiting_factors 类型异常: {type(limiting_factors)}, 转换为空数组")
                     limiting_factors = []
                 
-                structured["sections"]["photoReview"]["feasibility"] = {
-                    "conversion_feasibility": {
-                        "can_transform": can_transform,  # 布尔值，不是对象
-                        "difficulty": str(difficulty) if difficulty else "未知",  # 字符串
-                        "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0,  # 数字
-                        "limiting_factors": limiting_factors,  # 数组或字符串
-                        "recommendation": str(explanation) if explanation else "",  # 字符串
-                    },
-                    "feasibilityDescription": str(explanation) if explanation else "",  # 字符串
-                }
+                # 【重要】根据开发方案第 24 节，feasibility 应该放在 structured 中
+                # 但为了向后兼容，也在 photoReview 顶层添加 feasibilityDescription
+                # 注意：structured 中的 feasibility 已经由 _format_photo_review 填充，这里只需要在顶层添加 feasibilityDescription
+                if "structured" in structured["sections"]["photoReview"]:
+                    # 确保 structured 中的 feasibility 已正确填充（由 _format_photo_review 处理）
+                    # 这里只需要在顶层添加 feasibilityDescription 以便向后兼容
+                    structured["sections"]["photoReview"]["feasibilityDescription"] = str(explanation) if explanation else ""
+                else:
+                    # 如果 structured 不存在，直接添加 feasibility（向后兼容）
+                    structured["sections"]["photoReview"]["feasibility"] = {
+                        "conversion_feasibility": {
+                            "can_transform": can_transform,  # 布尔值，不是对象
+                            "difficulty": str(difficulty) if difficulty else "未知",  # 字符串
+                            "confidence": float(confidence) if isinstance(confidence, (int, float)) else 0.0,  # 数字
+                            "limiting_factors": limiting_factors,  # 数组或字符串
+                            "recommendation": str(explanation) if explanation else "",  # 字符串
+                        },
+                        "feasibilityDescription": str(explanation) if explanation else "",  # 字符串
+                    }
             else:
                 # 如果没有 feasibility_result，记录警告
                 logger.warning("feasibility_result 为空，不填充可行性信息")
@@ -458,6 +467,7 @@ class AnalysisFormatter:
             # 为每个格式化方法添加异常处理，确保单个方法失败不会导致整个流程崩溃
             try:
                 lightroom_result = self._format_lightroom(raw_data)
+                logger.info(f"【format_part2】_format_lightroom 成功: has structured = {bool(lightroom_result.get('structured') if isinstance(lightroom_result, dict) else False)}, panels count = {len(lightroom_result.get('structured', {}).get('panels', [])) if isinstance(lightroom_result, dict) and isinstance(lightroom_result.get('structured'), dict) else 0}")
             except Exception as e:
                 logger.error(f"_format_lightroom 失败: {e}", exc_info=True)
                 # 返回空结构，避免整个流程失败
@@ -471,9 +481,11 @@ class AnalysisFormatter:
                         "localAdjustments": [],
                     },
                 }
+                logger.warning(f"【format_part2】_format_lightroom 使用空结构兜底")
             
             try:
                 photoshop_result = self._format_photoshop(raw_data)
+                logger.info(f"【format_part2】_format_photoshop 成功: has structured = {bool(photoshop_result.get('structured') if isinstance(photoshop_result, dict) else False)}, steps count = {len(photoshop_result.get('structured', {}).get('steps', [])) if isinstance(photoshop_result, dict) and isinstance(photoshop_result.get('structured'), dict) else 0}")
             except Exception as e:
                 logger.error(f"_format_photoshop 失败: {e}", exc_info=True)
                 # 返回空结构，避免整个流程失败
@@ -483,9 +495,11 @@ class AnalysisFormatter:
                         "steps": [],
                     },
                 }
+                logger.warning(f"【format_part2】_format_photoshop 使用空结构兜底")
             
             try:
                 color_result = self._format_color_part2(raw_data)
+                logger.info(f"【format_part2】_format_color_part2 成功: has structured = {bool(color_result.get('structured') if isinstance(color_result, dict) else False)}, structured keys = {list(color_result.get('structured', {}).keys()) if isinstance(color_result, dict) and isinstance(color_result.get('structured'), dict) else []}")
             except Exception as e:
                 logger.error(f"_format_color_part2 失败: {e}", exc_info=True)
                 # 返回空结构，避免整个流程失败
@@ -506,7 +520,13 @@ class AnalysisFormatter:
                         "hsl": [],
                     },
                 }
+                logger.warning(f"【format_part2】_format_color_part2 使用空结构兜底")
 
+            # 【日志记录】记录格式化结果
+            logger.info(f"【format_part2】格式化结果: lightroom_result keys = {list(lightroom_result.keys()) if isinstance(lightroom_result, dict) else 'not dict'}, has structured = {bool(lightroom_result.get('structured') if isinstance(lightroom_result, dict) else False)}")
+            logger.info(f"【format_part2】格式化结果: photoshop_result keys = {list(photoshop_result.keys()) if isinstance(photoshop_result, dict) else 'not dict'}, has structured = {bool(photoshop_result.get('structured') if isinstance(photoshop_result, dict) else False)}")
+            logger.info(f"【format_part2】格式化结果: color_result keys = {list(color_result.keys()) if isinstance(color_result, dict) else 'not dict'}, has structured = {bool(color_result.get('structured') if isinstance(color_result, dict) else False)}")
+            
             structured = {
                 "protocolVersion": self.PROTOCOL_VERSION,
                 "stage": "part2",
@@ -520,17 +540,63 @@ class AnalysisFormatter:
                     "color": color_result,
                 },
             }
+            
+            # 【日志记录】记录构建的 structured 结构
+            logger.info(f"【format_part2】构建的 structured sections keys: {list(structured.get('sections', {}).keys())}")
+            logger.debug(f"【format_part2】构建的 structured 完整结构: {json.dumps(structured, ensure_ascii=False, indent=2)[:1000]}...")  # 只记录前 1000 字符
 
             # 使用 Pydantic Schema 验证（根据开发方案第 14 节）
             try:
+                # 【调试日志】记录验证前的 lightroom panels 数据
+                if "sections" in structured and "lightroom" in structured["sections"]:
+                    lightroom_section = structured["sections"]["lightroom"]
+                    if "structured" in lightroom_section:
+                        lightroom_structured = lightroom_section["structured"]
+                        if "panels" in lightroom_structured:
+                            panels_before = lightroom_structured["panels"]
+                            logger.info(f"【format_part2】验证前 lightroom panels 数量: {len(panels_before) if isinstance(panels_before, list) else 'not list'}")
+                            if isinstance(panels_before, list) and len(panels_before) > 0:
+                                first_panel_before = panels_before[0]
+                                logger.debug(f"【format_part2】验证前第一个 panel: title={first_panel_before.get('title')}, params_count={len(first_panel_before.get('params', []))}")
+                
                 validated = validate_part2_response(structured)
+                
+                # 【调试日志】记录验证后的 lightroom panels 数据
+                if "sections" in validated and "lightroom" in validated["sections"]:
+                    lightroom_section = validated["sections"]["lightroom"]
+                    if "structured" in lightroom_section:
+                        lightroom_structured = lightroom_section["structured"]
+                        if "panels" in lightroom_structured:
+                            panels_after = lightroom_structured["panels"]
+                            logger.info(f"【format_part2】验证后 lightroom panels 数量: {len(panels_after) if isinstance(panels_after, list) else 'not list'}")
+                            if isinstance(panels_after, list) and len(panels_after) > 0:
+                                first_panel_after = panels_after[0]
+                                has_content = bool(first_panel_after.get("title") or first_panel_after.get("description") or first_panel_after.get("params"))
+                                logger.debug(f"【format_part2】验证后第一个 panel: title={first_panel_after.get('title')}, params_count={len(first_panel_after.get('params', []))}, has_content={has_content}")
+                                if not has_content:
+                                    logger.error(f"【format_part2】❌ 验证后 panels 内容为空！第一个 panel: {json.dumps(first_panel_after, ensure_ascii=False)[:200]}")
+                
+                # 【日志记录】记录验证后的结构
+                validated_sections_keys = list(validated.get("sections", {}).keys()) if isinstance(validated, dict) else []
+                logger.info(f"【format_part2】Schema 验证成功, validated sections keys: {validated_sections_keys}")
+                
                 # 验证并修复缺失字段
                 self._validate_and_fix(validated)
+                
+                # 【日志记录】记录修复后的结构
+                fixed_sections_keys = list(validated.get("sections", {}).keys()) if isinstance(validated, dict) else []
+                logger.info(f"【format_part2】修复后 sections keys: {fixed_sections_keys}")
+                
                 return validated
             except Exception as schema_error:
-                logger.warning(f"Part2 Schema 验证失败，使用兜底逻辑: {schema_error}")
+                logger.warning(f"Part2 Schema 验证失败，使用兜底逻辑: {schema_error}", exc_info=True)
                 # 验证并修复缺失字段
                 self._validate_and_fix(structured)
+                
+                # 【日志记录】记录兜底逻辑后的结构
+                fallback_sections_keys = list(structured.get("sections", {}).keys()) if isinstance(structured, dict) else []
+                logger.info(f"【format_part2】兜底逻辑后 sections keys: {fallback_sections_keys}")
+                
                 return structured
 
         except Exception as e:
@@ -565,35 +631,86 @@ class AnalysisFormatter:
             parameter_comparison_table = module_1.get("parameter_comparison_table", [])
             style_summary = module_1.get("style_summary", "")
             feasibility_assessment = module_1.get("feasibility_assessment", {})
+            # 【新增】提取风格分类字段（可选，保持向后兼容）
+            style_classification = module_1.get("style_classification", {})
+            master_archetype = ""
+            visual_signature = ""
+            if isinstance(style_classification, dict):
+                master_archetype = style_classification.get("master_archetype", "")
+                visual_signature = style_classification.get("visual_signature", "")
             
-            # 提取直方图数据（新结构）
+            # 【调试日志】记录提取的字段值（只记录前100个字符，避免日志过长）
+            logger.debug(f"_format_photo_review (新结构): comprehensive_review = {comprehensive_review[:100] if comprehensive_review else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): visual_subject_analysis = {visual_subject_analysis[:100] if visual_subject_analysis else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): focus_exposure_analysis = {focus_exposure_analysis[:100] if focus_exposure_analysis else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): emotion = {emotion[:100] if emotion else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): pros_evaluation = {pros_evaluation[:100] if pros_evaluation else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): color_depth_analysis type = {type(color_depth_analysis)}, is_dict = {isinstance(color_depth_analysis, dict)}")
+            
+            # 提取直方图数据（兼容新旧两种结构）
             histogram_data = {}
             if isinstance(color_depth_analysis, dict):
                 simulated_histogram = color_depth_analysis.get("simulated_histogram_data", {})
                 if isinstance(simulated_histogram, dict):
-                    # 提取 reference 和 user 两个字段
-                    reference_hist = simulated_histogram.get("reference", {})
-                    user_hist = simulated_histogram.get("user", {})
-                    
-                    if reference_hist:
-                        histogram_data["reference"] = {
-                            "description": reference_hist.get("description", ""),
-                            "data_points": reference_hist.get("data_points", [])
-                        }
-                    
-                    if user_hist:
-                        histogram_data["user"] = {
-                            "description": user_hist.get("description", ""),
-                            "data_points": user_hist.get("data_points", [])
-                        }
+                    # 检查是新结构（只有 description 和 data_points）还是旧结构（有 reference 和 user）
+                    if "reference" in simulated_histogram or "user" in simulated_histogram:
+                        # 旧结构：有 reference 和 user 两个字段
+                        reference_hist = simulated_histogram.get("reference", {})
+                        user_hist = simulated_histogram.get("user", {})
+                        
+                        if reference_hist:
+                            histogram_data["reference"] = {
+                                "description": reference_hist.get("description", ""),
+                                "data_points": reference_hist.get("data_points", [])
+                            }
+                        
+                        if user_hist:
+                            histogram_data["user"] = {
+                                "description": user_hist.get("description", ""),
+                                "data_points": user_hist.get("data_points", [])
+                            }
+                    else:
+                        # 新结构：只有 description 和 data_points（作为参考图的直方图）
+                        description = simulated_histogram.get("description", "")
+                        data_points = simulated_histogram.get("data_points", [])
+                        if description or data_points:
+                            histogram_data["reference"] = {
+                                "description": description,
+                                "data_points": data_points
+                            }
+                            logger.info("使用新 Prompt 结构的直方图数据（单一结构）")
             
             # 构建 colorDepth 维度，包含直方图数据
+            # 注意：color_depth_analysis 可能是字符串（自然语言）或字典（包含 text、saturation_strategy、tonal_intent 和 simulated_histogram_data）
+            color_depth_text = ""
+            saturation_strategy = ""  # 【新增】饱和度策略
+            tonal_intent = ""  # 【新增】影调意图
+            if isinstance(color_depth_analysis, dict):
+                color_depth_text = color_depth_analysis.get("text", "")
+                saturation_strategy = color_depth_analysis.get("saturation_strategy", "")  # 【新增】提取饱和度策略
+                tonal_intent = color_depth_analysis.get("tonal_intent", "")  # 【新增】提取影调意图
+            elif isinstance(color_depth_analysis, str):
+                color_depth_text = color_depth_analysis
+            
+            # 构建 colorDepth 维度，包含直方图数据
+            # 注意：根据新 Prompt 结构，color_depth_analysis 是自然语言输出，不做表格对比
             color_depth_dimension = {
                 "title": "色彩与景深",
-                "description": color_depth_analysis.get("text", "") if isinstance(color_depth_analysis, dict) else str(color_depth_analysis)
+                "referenceDescription": color_depth_text if color_depth_text else "",  # 使用自然语言描述，不做表格对比
+                "userDescription": ""  # 新结构中没有用户图描述，留空
             }
+            # 【新增】如果有饱和度策略和影调意图，添加到 colorDepth 维度（可选字段，保持向后兼容）
+            if saturation_strategy:
+                color_depth_dimension["saturationStrategy"] = saturation_strategy
+            if tonal_intent:
+                color_depth_dimension["tonalIntent"] = tonal_intent
+            # 如果有直方图数据，添加到 colorDepth 维度
             if histogram_data:
                 color_depth_dimension["histogramData"] = histogram_data
+            
+            # 【调试日志】记录 colorDepth 维度构建结果
+            logger.debug(f"_format_photo_review (新结构): colorDepth.referenceDescription = {color_depth_text[:50] if color_depth_text else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): colorDepth.histogramData = {'存在' if histogram_data else '不存在'}")
             
             # 转换 parameter_comparison_table 格式
             comparison_table = []
@@ -606,7 +723,43 @@ class AnalysisFormatter:
                             "user": item.get("user_feature", "")
                         })
             
-            return {
+            # 提取 feasibility_assessment 数据
+            feasibility_data = {}
+            if isinstance(feasibility_assessment, dict):
+                score = feasibility_assessment.get("score", 0)
+                level = feasibility_assessment.get("level", "")
+                can_transform = feasibility_assessment.get("can_transform", None)  # 优先使用 Gemini 输出的字段
+                limitations = feasibility_assessment.get("limitations", [])
+                recommendation = feasibility_assessment.get("recommendation", "")
+                confidence = feasibility_assessment.get("confidence", "")
+                
+                # 如果 Gemini 没有输出 can_transform，根据 score 计算
+                if can_transform is None:
+                    can_transform = float(score) > 0.3 if isinstance(score, (int, float)) else False
+                
+                # 转换 confidence 字符串为数字（如果提供）
+                confidence_score = float(score) if isinstance(score, (int, float)) else 0.0
+                if isinstance(confidence, str):
+                    if "高" in confidence or "high" in confidence.lower():
+                        confidence_score = max(confidence_score, 0.8)
+                    elif "中" in confidence or "medium" in confidence.lower():
+                        confidence_score = max(confidence_score, 0.5)
+                    elif "低" in confidence or "low" in confidence.lower():
+                        confidence_score = max(confidence_score, 0.3)
+                
+                feasibility_data = {
+                    "conversion_feasibility": {
+                        "can_transform": bool(can_transform),
+                        "difficulty": str(level) if level else "未知",
+                        "confidence": confidence_score,
+                        "limiting_factors": limitations if isinstance(limitations, (list, str)) else [],
+                        "recommendation": str(recommendation) if recommendation else "",
+                    },
+                    "feasibilityDescription": str(recommendation) if recommendation else "",
+                }
+            
+            # 构建返回结构
+            returned = {
                 "naturalLanguage": {
                     "summary": comprehensive_review,
                     "highlights": pros_evaluation,
@@ -618,39 +771,65 @@ class AnalysisFormatter:
                     "dimensions": {
                         "visualGuidance": {
                             "title": "视觉引导与主体",
-                            "referenceDescription": visual_subject_analysis,
-                            "userDescription": ""
+                            "referenceDescription": visual_subject_analysis if visual_subject_analysis else "",  # 自然语言，不做表格对比
+                            "userDescription": ""  # 新结构中没有用户图描述，留空
                         },
                         "focusExposure": {
                             "title": "焦点与曝光",
-                            "description": focus_exposure_analysis
+                            "referenceDescription": focus_exposure_analysis if focus_exposure_analysis else "",  # 自然语言，不做表格对比
+                            "userDescription": ""  # 新结构中没有用户图描述，留空
                         },
                         "colorDepth": color_depth_dimension,  # 包含直方图数据
+                        # 【重要】composition、technicalDetails、equipment 在新 Prompt 结构中不存在
+                        # 为了保持前端兼容性，使用 referenceDescription 字段（与前端检查逻辑一致）
+                        # 前端检查：dimension.referenceDescription || dimension.userDescription || dimension.description
                         "composition": {
                             "title": "构图",
-                            "description": ""
+                            "referenceDescription": "",  # 新结构中不存在，留空（前端会跳过空内容）
+                            "userDescription": ""
                         },
                         "technicalDetails": {
                             "title": "技术细节",
-                            "description": ""
+                            "referenceDescription": "",  # 新结构中不存在，留空（前端会跳过空内容）
+                            "userDescription": ""
                         },
                         "equipment": {
                             "title": "设备",
-                            "description": ""
+                            "referenceDescription": "",  # 新结构中不存在，留空（前端会跳过空内容）
+                            "userDescription": ""
                         },
                         "colorEmotion": {
                             "title": "色彩与情感",
-                            "description": emotion
+                            "referenceDescription": emotion if emotion else "",  # 自然语言，不做表格对比
+                            "userDescription": ""  # 新结构中没有用户图描述，留空
                         },
                         "advantages": {
-                            "title": "优点",
-                            "description": pros_evaluation
+                            "title": "优点评价",
+                            "referenceDescription": pros_evaluation if pros_evaluation else "",  # 自然语言，不做表格对比
+                            "userDescription": ""  # 新结构中没有用户图描述，留空
                         },
                     },
                     "comparisonTable": comparison_table,
                     "photographerStyleSummary": style_summary,
+                    "feasibility": feasibility_data if feasibility_data else None,  # 添加可行性评估数据
+                    # 【新增】风格分类字段（可选，保持向后兼容）
+                    "styleClassification": {
+                        "masterArchetype": master_archetype,
+                        "visualSignature": visual_signature
+                    } if (master_archetype or visual_signature) else None,
                 },
             }
+            
+            # 【调试日志】记录返回的 dimensions 结构
+            dimensions_dict = returned.get('structured', {}).get('dimensions', {})
+            logger.debug(f"_format_photo_review (新结构): 返回的 dimensions keys = {list(dimensions_dict.keys())}")
+            logger.debug(f"_format_photo_review (新结构): visualGuidance.referenceDescription = {dimensions_dict.get('visualGuidance', {}).get('referenceDescription', '')[:50] if dimensions_dict.get('visualGuidance', {}).get('referenceDescription') else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): focusExposure.referenceDescription = {dimensions_dict.get('focusExposure', {}).get('referenceDescription', '')[:50] if dimensions_dict.get('focusExposure', {}).get('referenceDescription') else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): colorDepth.referenceDescription = {dimensions_dict.get('colorDepth', {}).get('referenceDescription', '')[:50] if dimensions_dict.get('colorDepth', {}).get('referenceDescription') else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): colorEmotion.referenceDescription = {dimensions_dict.get('colorEmotion', {}).get('referenceDescription', '')[:50] if dimensions_dict.get('colorEmotion', {}).get('referenceDescription') else 'empty'}...")
+            logger.debug(f"_format_photo_review (新结构): advantages.referenceDescription = {dimensions_dict.get('advantages', {}).get('referenceDescription', '')[:50] if dimensions_dict.get('advantages', {}).get('referenceDescription') else 'empty'}...")
+            
+            return returned
         
         # 使用旧结构（向后兼容）
         logger.info("使用旧 Prompt 结构 (professional_evaluation)")
@@ -931,7 +1110,7 @@ class AnalysisFormatter:
             }
             
             # 如果有色调曲线数据，添加到 structured
-            if tone_curves_data.get("points_rgb") or tone_curves_data.get("points_red"):
+            if tone_curves_data and (tone_curves_data.get("points_rgb") or tone_curves_data.get("points_red")):
                 structured["toneCurves"] = tone_curves_data
             
             return {
@@ -993,68 +1172,1300 @@ class AnalysisFormatter:
         }
 
     def _format_lightroom(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """格式化 Lightroom 参数（Part2）"""
-        lr = raw.get("lightroom", {})
-
-        # 确保所有滑块都是字符串格式
+        """
+        格式化 Lightroom 参数（Part2）
+        
+        支持两种数据结构：
+        1. 新结构（当前使用）：lightroom_workflow.basic_panel、presence、color_settings、tone_curve
+        2. 旧结构（向后兼容）：lightroom、lightroom_panels
+        """
+        # 辅助函数：确保值为字符串格式（带正负号）
         def ensure_string(value, default="+0"):
+            """将数值转换为字符串格式，带正负号"""
             if value is None:
                 return default
             if isinstance(value, (int, float)):
                 sign = "+" if value >= 0 else ""
                 return f"{sign}{value}"
             return str(value)
-
-        panels = raw.get("lightroom_panels", [])
-        if not panels:
-            # 如果没有 panels，从 lightroom 对象构建
-            panels = [
-                {
+        
+        # 辅助函数：从范围字符串中提取数值（如 "+0.50 ~ +0.80" -> "+0.50"）
+        def extract_range_value(range_str: str, default="+0") -> str:
+            """从范围字符串中提取第一个值作为默认值"""
+            if not range_str or not isinstance(range_str, str):
+                return default
+            # 匹配范围格式，如 "+0.50 ~ +0.80" 或 "+10 ~ +15"
+            match = range_str.strip().split("~")[0].strip()
+            return match if match else default
+        
+        # 辅助函数：将英文参数名转换为中文名称（根据开发方案，前端需要显示中文名称）
+        def get_param_name_cn(param_name_en: str) -> str:
+            """将英文参数名转换为中文名称"""
+            param_name_map = {
+                # 基础调整
+                "exposure": "曝光",
+                "contrast": "对比度",
+                "highlights": "高光",
+                "shadows": "阴影",
+                "whites": "白色色阶",
+                "blacks": "黑色色阶",
+                # 存在感
+                "texture": "纹理",
+                "clarity": "清晰度",
+                "dehaze": "去雾",
+                # 颜色设置
+                "saturation": "饱和度",
+                "vibrance": "自然饱和度",
+            }
+            return param_name_map.get(param_name_en, param_name_en)
+        
+        # 优先使用新结构（lightroom_workflow）
+        lr_workflow = raw.get("lightroom_workflow", {})
+        
+        # 【日志记录】记录 raw 数据中是否存在 lightroom_workflow
+        logger.info(f"【_format_lightroom】raw 数据 keys: {list(raw.keys()) if isinstance(raw, dict) else 'not dict'}")
+        logger.info(f"【_format_lightroom】是否存在 lightroom_workflow: {bool(lr_workflow)}, lightroom_workflow keys: {list(lr_workflow.keys()) if isinstance(lr_workflow, dict) else 'not dict'}")
+        
+        if lr_workflow:
+            # 【新结构】使用 lightroom_workflow
+            logger.info("【_format_lightroom】使用新 Part2 Prompt 结构 (lightroom_workflow)")
+            
+            # 1. 基础面板（basic_panel）
+            basic_panel = lr_workflow.get("basic_panel", {})
+            logger.info(f"【_format_lightroom】basic_panel keys: {list(basic_panel.keys()) if isinstance(basic_panel, dict) else 'not dict'}")
+            basic_params = []
+            
+            # 【更新】基础面板参数列表：包含原有的6个参数，以及新增的 texture、clarity、dehaze、saturation、vibrance（如果存在）
+            basic_panel_param_names = ["exposure", "contrast", "highlights", "shadows", "whites", "blacks"]
+            # 【新增】检查 basic_panel 中是否包含新字段（texture、clarity、dehaze、saturation、vibrance）
+            # 如果存在，则从 basic_panel 提取；如果不存在，则从 presence 和 color_settings 提取（向后兼容）
+            extended_basic_params = ["texture", "clarity", "dehaze", "saturation", "vibrance"]
+            for param_name in extended_basic_params:
+                if param_name in basic_panel:
+                    basic_panel_param_names.append(param_name)
+                    logger.info(f"【_format_lightroom】检测到 basic_panel 中包含 {param_name} 字段，将从 basic_panel 提取")
+            
+            for param_name in basic_panel_param_names:
+                param_obj = basic_panel.get(param_name, {})
+                if isinstance(param_obj, dict):
+                    param_val = param_obj.get("val", "+0")
+                    param_reason = param_obj.get("reason", "")
+                    # 从范围字符串中提取值
+                    param_value = extract_range_value(param_val, "+0")
+                    # 【重要修复】将英文参数名转换为中文名称，确保前端显示中文
+                    param_name_cn = get_param_name_cn(param_name)
+                    basic_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": param_value,
+                        "purpose": param_reason if param_reason else None,
+                        "reason": param_reason if param_reason else None,  # 同时提供 reason 字段，兼容前端
+                    })
+                else:
+                    # 向后兼容：如果直接是字符串值
+                    param_name_cn = get_param_name_cn(param_name)
+                    basic_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": ensure_string(param_obj, "+0"),
+                    })
+            
+            logger.info(f"【_format_lightroom】basic_params 数量: {len(basic_params)}")
+            
+            # 2. 存在感面板（presence）- 向后兼容：如果 basic_panel 中没有这些字段，则从 presence 提取
+            presence = lr_workflow.get("presence", {})
+            logger.info(f"【_format_lightroom】presence keys: {list(presence.keys()) if isinstance(presence, dict) else 'not dict'}")
+            presence_params = []
+            
+            for param_name in ["texture", "clarity", "dehaze"]:
+                # 【更新】优先从 basic_panel 提取，如果不存在则从 presence 提取（向后兼容）
+                if param_name in basic_panel:
+                    logger.debug(f"【_format_lightroom】{param_name} 已从 basic_panel 提取，跳过 presence")
+                    continue
+                param_obj = presence.get(param_name, {})
+                if isinstance(param_obj, dict):
+                    param_val = param_obj.get("val", "+0")
+                    param_reason = param_obj.get("reason", "")
+                    param_value = extract_range_value(param_val, "+0")
+                    # 【重要修复】将英文参数名转换为中文名称
+                    param_name_cn = get_param_name_cn(param_name)
+                    presence_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": param_value,
+                        "purpose": param_reason if param_reason else None,
+                        "reason": param_reason if param_reason else None,  # 同时提供 reason 字段，兼容前端
+                    })
+                else:
+                    param_name_cn = get_param_name_cn(param_name)
+                    presence_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": ensure_string(param_obj, "+0"),
+                    })
+            
+            logger.info(f"【_format_lightroom】presence_params 数量: {len(presence_params)}")
+            
+            # 3. 颜色设置（color_settings）- 向后兼容：如果 basic_panel 中没有这些字段，则从 color_settings 提取
+            color_settings = lr_workflow.get("color_settings", {})
+            logger.info(f"【_format_lightroom】color_settings keys: {list(color_settings.keys()) if isinstance(color_settings, dict) else 'not dict'}")
+            color_params = []
+            
+            for param_name in ["saturation", "vibrance"]:
+                # 【更新】优先从 basic_panel 提取，如果不存在则从 color_settings 提取（向后兼容）
+                if param_name in basic_panel:
+                    logger.debug(f"【_format_lightroom】{param_name} 已从 basic_panel 提取，跳过 color_settings")
+                    continue
+                param_obj = color_settings.get(param_name, {})
+                if isinstance(param_obj, dict):
+                    param_val = param_obj.get("val", "+0")
+                    param_reason = param_obj.get("reason", "")
+                    param_value = extract_range_value(param_val, "+0")
+                    # 【重要修复】将英文参数名转换为中文名称
+                    param_name_cn = get_param_name_cn(param_name)
+                    color_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": param_value,
+                        "purpose": param_reason if param_reason else None,
+                        "reason": param_reason if param_reason else None,  # 同时提供 reason 字段，兼容前端
+                    })
+                else:
+                    param_name_cn = get_param_name_cn(param_name)
+                    color_params.append({
+                        "name": param_name_cn,  # 使用中文名称
+                        "value": ensure_string(param_obj, "+0"),
+                    })
+            
+            logger.info(f"【_format_lightroom】color_params 数量: {len(color_params)}")
+            
+            # 4. 色调曲线（tone_curve）
+            tone_curve_obj = lr_workflow.get("tone_curve", {})
+            tone_curve_points = tone_curve_obj.get("rgb_points", [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]])
+            rgb_curves = {
+                "red": tone_curve_obj.get("red_channel", []),
+                "green": tone_curve_obj.get("green_channel", []),
+                "blue": tone_curve_obj.get("blue_channel", []),
+            }
+            
+            # 5. 分离色调（split_toning_detail）
+            split_toning = lr_workflow.get("split_toning_detail", {})
+            color_grading = {}
+            if split_toning:
+                # 辅助函数：从字符串中提取数字（如 "35°" -> 35）
+                def extract_number(value: any) -> int:
+                    """从字符串或数字中提取整数值"""
+                    if isinstance(value, (int, float)):
+                        return int(value)
+                    if isinstance(value, str):
+                        # 匹配数字，如 "35°" -> 35
+                        match = value.replace("°", "").replace("h", "").replace("s", "").strip()
+                        try:
+                            return int(float(match))
+                        except:
+                            return 0
+                    return 0
+                
+                highlights = split_toning.get("highlights", {})
+                shadows = split_toning.get("shadows", {})
+                balance = split_toning.get("balance", {})
+                
+                color_grading = {
+                    "highlights": {
+                        "hue": extract_number(highlights.get("h", 0)) if isinstance(highlights, dict) else 0,
+                        "saturation": extract_number(highlights.get("s", 0)) if isinstance(highlights, dict) else 0,
+                    },
+                    "midtones": {
+                        "hue": 0,
+                        "saturation": 0,
+                    },
+                    "shadows": {
+                        "hue": extract_number(shadows.get("h", 0)) if isinstance(shadows, dict) else 0,
+                        "saturation": extract_number(shadows.get("s", 0)) if isinstance(shadows, dict) else 0,
+                    },
+                    "balance": extract_number(balance.get("val", "0")) if isinstance(balance, dict) else 0,
+                }
+            
+            # 构建 panels 数组
+            # 【重要修复】问题2：确保 panels 数组始终有数据，即使某个面板为空
+            # 原因：如果 basic_params、presence_params、color_params 都为空，panels 会是空数组，导致前端显示无数据
+            # 解决方案：即使参数为空，也创建对应的面板（使用默认值），确保前端能显示面板结构
+            panels = []
+            
+            # 1. 基础调整面板（即使 basic_params 为空，也创建面板）
+            if basic_params:
+                panels.append({
+                    "title": "基础调整",
+                    "description": "基础曝光和对比度调整",
+                    "params": basic_params,
+                })
+            else:
+                # 如果 basic_params 为空，创建默认面板（使用默认值 "+0"）
+                logger.warning("【_format_lightroom】basic_params 为空，创建默认基础调整面板")
+                panels.append({
                     "title": "基础调整",
                     "description": "基础曝光和对比度调整",
                     "params": [
-                        {"name": "exposure", "value": ensure_string(lr.get("exposure"))},
-                        {"name": "contrast", "value": ensure_string(lr.get("contrast"))},
-                        {"name": "highlights", "value": ensure_string(lr.get("highlights"))},
-                        {"name": "shadows", "value": ensure_string(lr.get("shadows"))},
+                        {"name": "exposure", "value": "+0"},
+                        {"name": "contrast", "value": "+0"},
+                        {"name": "highlights", "value": "+0"},
+                        {"name": "shadows", "value": "+0"},
+                        {"name": "whites", "value": "+0"},
+                        {"name": "blacks", "value": "+0"},
                     ],
-                }
-            ]
+                })
+            
+            # 2. 存在感面板（即使 presence_params 为空，也创建面板）
+            if presence_params:
+                panels.append({
+                    "title": "存在感",
+                    "description": "纹理、清晰度和去雾调整",
+                    "params": presence_params,
+                })
+            else:
+                # 如果 presence_params 为空，创建默认面板
+                logger.warning("【_format_lightroom】presence_params 为空，创建默认存在感面板")
+                panels.append({
+                    "title": "存在感",
+                    "description": "纹理、清晰度和去雾调整",
+                    "params": [
+                        {"name": "texture", "value": "+0"},
+                        {"name": "clarity", "value": "+0"},
+                        {"name": "dehaze", "value": "+0"},
+                    ],
+                })
+            
+            # 3. 色彩调整面板（即使 color_params 为空，也创建面板）
+            # 【修复】根据设计规范，标题应为"色彩调整"而不是"颜色设置"
+            if color_params:
+                panels.append({
+                    "title": "色彩调整",
+                    "description": "饱和度和自然饱和度调整",
+                    "params": color_params,
+                })
+            else:
+                # 如果 color_params 为空，创建默认面板
+                logger.warning("【_format_lightroom】color_params 为空，创建默认色彩调整面板")
+                panels.append({
+                    "title": "色彩调整",
+                    "description": "饱和度和自然饱和度调整",
+                    "params": [
+                        {"name": "饱和度", "value": "+0"},
+                        {"name": "自然饱和度", "value": "+0"},
+                    ],
+                })
+            
+            # 4. HSL/颜色面板（从 color_science_scheme 或 lightroom.HSL 中提取）
+            # 【新增】根据设计规范，需要添加 HSL/颜色面板
+            hsl_params = []
+            color_scheme = raw.get("color_science_scheme", {})
+            hsl_12_colors = color_scheme.get("hsl_detailed_12_colors", {})
+            
+            # 颜色映射：12 色 -> 前端需要的 8 色
+            color_mapping = {
+                "red": "红",
+                "orange": "橙",
+                "yellow": "黄",
+                "yellow_green": "绿",
+                "green": "绿",
+                "green_cyan": "青",
+                "cyan": "青",
+                "cyan_blue": "蓝",
+                "blue": "蓝",
+                "blue_purple": "紫",
+                "purple": "紫",
+                "magenta": "洋红",
+            }
+            
+            # 前端需要的 8 种颜色
+            frontend_colors = ["红", "橙", "黄", "绿", "青", "蓝", "紫", "洋红"]
+            
+            for frontend_color in frontend_colors:
+                # 找到映射到该前端颜色的新结构颜色键
+                source_keys = [k for k, v in color_mapping.items() if v == frontend_color]
+                
+                # 优先使用第一个匹配的颜色数据
+                hsl_data = None
+                for key in source_keys:
+                    if key in hsl_12_colors:
+                        hsl_data = hsl_12_colors[key]
+                        break
+                
+                # 如果找到数据，添加到参数列表
+                if hsl_data and isinstance(hsl_data, dict):
+                    h_val = str(hsl_data.get("h", "0"))
+                    s_val = str(hsl_data.get("s", "0"))
+                    l_val = str(hsl_data.get("l", "0"))
+                    desc = hsl_data.get("desc", "")
+                    
+                    # 只有当至少有一个值不为 0 时才添加参数
+                    if h_val != "0" or s_val != "0" or l_val != "0":
+                        hsl_params.append({
+                            "name": f"{frontend_color}色相",
+                            "value": h_val,
+                            "reason": desc if desc else None,
+                        })
+                        hsl_params.append({
+                            "name": f"{frontend_color}饱和度",
+                            "value": s_val,
+                            "reason": desc if desc else None,
+                        })
+                        hsl_params.append({
+                            "name": f"{frontend_color}明度",
+                            "value": l_val,
+                            "reason": desc if desc else None,
+                        })
+            
+            # 如果新结构没有 HSL 数据，尝试从旧结构 lightroom.HSL 中提取
+            if not hsl_params:
+                lr_old = raw.get("lightroom", {})
+                hsl_raw = lr_old.get("HSL", {})
+                if hsl_raw:
+                    color_names = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
+                    color_names_cn = ["红", "橙", "黄", "绿", "青", "蓝", "紫", "洋红"]
+                    
+                    for en, cn in zip(color_names, color_names_cn):
+                        hsl_data = hsl_raw.get(en, {})
+                        if hsl_data:
+                            h_val = str(hsl_data.get("hue", 0))
+                            s_val = str(hsl_data.get("saturation", 0))
+                            l_val = str(hsl_data.get("luminance", 0))
+                            
+                            if h_val != "0" or s_val != "0" or l_val != "0":
+                                hsl_params.append({
+                                    "name": f"{cn}色相",
+                                    "value": h_val,
+                                })
+                                hsl_params.append({
+                                    "name": f"{cn}饱和度",
+                                    "value": s_val,
+                                })
+                                hsl_params.append({
+                                    "name": f"{cn}明度",
+                                    "value": l_val,
+                                })
+            
+            # 添加 HSL/颜色面板
+            if hsl_params:
+                panels.append({
+                    "title": "HSL/颜色",
+                    "description": "色相、饱和度和明度调整",
+                    "params": hsl_params,
+                })
+                logger.info(f"【_format_lightroom】HSL/颜色面板已创建，参数数量: {len(hsl_params)}")
+            else:
+                # 即使没有 HSL 数据，也创建空面板（使用默认值）
+                logger.warning("【_format_lightroom】HSL 数据为空，创建默认 HSL/颜色面板")
+                panels.append({
+                    "title": "HSL/颜色",
+                    "description": "色相、饱和度和明度调整",
+                    "params": [],
+                })
+            
+            # 5. 色调分离面板（从 split_toning_detail 中提取）
+            # 【新增】根据设计规范，需要添加色调分离面板
+            split_toning_params = []
+            if split_toning:
+                highlights = split_toning.get("highlights", {})
+                shadows = split_toning.get("shadows", {})
+                balance = split_toning.get("balance", {})
+                
+                # 辅助函数：从字符串中提取数字（如 "35°" -> 35）
+                def extract_number(value: any) -> int:
+                    """从字符串或数字中提取整数值"""
+                    if isinstance(value, (int, float)):
+                        return int(value)
+                    if isinstance(value, str):
+                        match = value.replace("°", "").replace("h", "").replace("s", "").strip()
+                        try:
+                            return int(float(match))
+                        except:
+                            return 0
+                    return 0
+                
+                if isinstance(highlights, dict):
+                    h_hue = extract_number(highlights.get("h", 0))
+                    h_sat = extract_number(highlights.get("s", 0))
+                    h_reason = highlights.get("reason", "")
+                    
+                    if h_hue != 0 or h_sat != 0:
+                        split_toning_params.append({
+                            "name": "高光色相",
+                            "value": str(h_hue),
+                            "reason": h_reason if h_reason else None,
+                        })
+                        split_toning_params.append({
+                            "name": "高光饱和度",
+                            "value": str(h_sat),
+                            "reason": h_reason if h_reason else None,
+                        })
+                
+                if isinstance(shadows, dict):
+                    s_hue = extract_number(shadows.get("h", 0))
+                    s_sat = extract_number(shadows.get("s", 0))
+                    s_reason = shadows.get("reason", "")
+                    
+                    if s_hue != 0 or s_sat != 0:
+                        split_toning_params.append({
+                            "name": "阴影色相",
+                            "value": str(s_hue),
+                            "reason": s_reason if s_reason else None,
+                        })
+                        split_toning_params.append({
+                            "name": "阴影饱和度",
+                            "value": str(s_sat),
+                            "reason": s_reason if s_reason else None,
+                        })
+                
+                if isinstance(balance, dict):
+                    bal_val = extract_number(balance.get("val", "0"))
+                    bal_reason = balance.get("reason", "")
+                    
+                    if bal_val != 0:
+                        split_toning_params.append({
+                            "name": "平衡",
+                            "value": str(bal_val),
+                            "reason": bal_reason if bal_reason else None,
+                        })
+            
+            # 添加色调分离面板
+            if split_toning_params:
+                panels.append({
+                    "title": "色调分离",
+                    "description": "高光和阴影的色调分离调整",
+                    "params": split_toning_params,
+                })
+                logger.info(f"【_format_lightroom】色调分离面板已创建，参数数量: {len(split_toning_params)}")
+            else:
+                # 即使没有色调分离数据，也创建空面板
+                logger.warning("【_format_lightroom】色调分离数据为空，创建默认色调分离面板")
+                panels.append({
+                    "title": "色调分离",
+                    "description": "高光和阴影的色调分离调整",
+                    "params": [],
+                })
+            
+            # 6. 色调曲线面板（从 tone_curve 中提取）
+            # 【新增】根据设计规范，需要添加色调曲线面板
+            # 【修复】问题1：确保RGB曲线数据正确传递
+            # 【修复】问题2：确保曲线点格式能被前端正确解析
+            curve_params = []
+            if tone_curve_obj:
+                curve_reason = tone_curve_obj.get("reason", "")
+                
+                # 如果有 RGB 曲线点，添加参数
+                # 【重要】RGB 曲线必须作为第一个参数，因为前端 parseCurveParams 会将包含 "rgb" 的参数解析到 luma 数组
+                if tone_curve_points and len(tone_curve_points) > 0:
+                    # 【修复】将曲线点转换为参数描述，格式："(x, y), (x, y), ..."
+                    # 前端 parseCurveParams 会解析这个格式，并拆分成多个点
+                    points_str = ", ".join([f"({p[0]}, {p[1]})" for p in tone_curve_points[:5]])  # 最多显示 5 个点
+                    curve_params.append({
+                        "name": "RGB 曲线",  # 【重要】名称必须包含 "RGB" 或 "rgb"，前端才能识别
+                        "value": points_str,  # 格式："(0, 0), (128, 125), (255, 255)"
+                        "reason": curve_reason if curve_reason else "色调曲线调整",
+                    })
+                    logger.info(f"【_format_lightroom】RGB 曲线已添加，点数: {len(tone_curve_points[:5])}, 值: {points_str}")
+                else:
+                    logger.warning("【_format_lightroom】RGB 曲线点为空，tone_curve_points = {tone_curve_points}")
+                
+                # 如果有红色通道曲线
+                if rgb_curves.get("red") and len(rgb_curves["red"]) > 0:
+                    red_points = rgb_curves["red"][:5]  # 最多显示 5 个点
+                    red_str = ", ".join([f"({p[0]}, {p[1]})" for p in red_points])
+                    curve_params.append({
+                        "name": "红色通道曲线",
+                        "value": red_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+                
+                # 如果有绿色通道曲线
+                if rgb_curves.get("green") and len(rgb_curves["green"]) > 0:
+                    green_points = rgb_curves["green"][:5]
+                    green_str = ", ".join([f"({p[0]}, {p[1]})" for p in green_points])
+                    curve_params.append({
+                        "name": "绿色通道曲线",
+                        "value": green_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+                
+                # 如果有蓝色通道曲线
+                if rgb_curves.get("blue") and len(rgb_curves["blue"]) > 0:
+                    blue_points = rgb_curves["blue"][:5]
+                    blue_str = ", ".join([f"({p[0]}, {p[1]})" for p in blue_points])
+                    curve_params.append({
+                        "name": "蓝色通道曲线",
+                        "value": blue_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+            
+            # 添加色调曲线面板
+            if curve_params:
+                panels.append({
+                    "title": "色调曲线",
+                    "description": "RGB 和单通道曲线调整",
+                    "params": curve_params,
+                })
+                logger.info(f"【_format_lightroom】色调曲线面板已创建，参数数量: {len(curve_params)}")
+            else:
+                # 即使没有曲线数据，也创建空面板
+                logger.warning("【_format_lightroom】色调曲线数据为空，创建默认色调曲线面板")
+                panels.append({
+                    "title": "色调曲线",
+                    "description": "RGB 和单通道曲线调整",
+                    "params": [],
+                })
+            
+            # 【修复】修正面板标题，使其符合设计规范
+            # 1. 基础调整 -> 基本面板
+            if panels and panels[0].get("title") == "基础调整":
+                panels[0]["title"] = "基本面板"
+                logger.info("【_format_lightroom】面板标题已修正：基础调整 -> 基本面板")
+            
+            # 2. 存在感 -> 细节与质感
+            if len(panels) > 1 and panels[1].get("title") == "存在感":
+                panels[1]["title"] = "细节与质感"
+                logger.info("【_format_lightroom】面板标题已修正：存在感 -> 细节与质感")
+            
+            # 【日志记录】记录构建的 panels 数量
+            logger.info(f"【_format_lightroom】构建的 panels 数量: {len(panels)}, taskId=unknown")
+            logger.info(f"【_format_lightroom】panels 标题列表: {[p.get('title') for p in panels]}")
+            
+            # 【详细日志】检查 panels 的内容，确保每个 panel 都有有效数据
+            for idx, panel in enumerate(panels):
+                has_title = bool(panel.get("title"))
+                has_description = bool(panel.get("description"))
+                has_params = bool(panel.get("params") and len(panel.get("params", [])) > 0)
+                logger.debug(f"【_format_lightroom】panel[{idx}]: title={has_title}, description={has_description}, params={has_params}, params_count={len(panel.get('params', []))}")
+                if not has_title or not has_params:
+                    logger.warning(f"【_format_lightroom】⚠️ panel[{idx}] 内容不完整: {json.dumps(panel, ensure_ascii=False)[:200]}")
+            
+            return {
+                "naturalLanguage": {
+                    "panelSummary": "",
+                    "localAdjustments": "",
+                },
+                "structured": {
+                    "panels": panels,
+                    "toneCurve": tone_curve_points,
+                    "rgbCurves": rgb_curves,
+                    "colorGrading": color_grading,
+                    "localAdjustments": raw.get("lightroom_local_adjustments", []),
+                },
+            }
+        else:
+            # 【旧结构】向后兼容：使用 lightroom 和 lightroom_panels
+            logger.info("【_format_lightroom】使用旧 Part2 Prompt 结构 (lightroom/lightroom_panels)")
+            
+            lr = raw.get("lightroom", {})
+            
+            panels = raw.get("lightroom_panels", [])
+            if not panels:
+                # 如果没有 panels，从 lightroom 对象构建
+                # 【修复】根据设计规范，创建 6 个面板
+                panels = []
+                
+                # 1. 基本面板
+                basic_params = []
+                for param_name in ["exposure", "contrast", "highlights", "shadows", "whites", "blacks"]:
+                    param_value = lr.get(param_name, "+0")
+                    param_name_cn = get_param_name_cn(param_name)
+                    basic_params.append({
+                        "name": param_name_cn,
+                        "value": ensure_string(param_value),
+                    })
+                panels.append({
+                    "title": "基本面板",
+                    "description": "基础曝光和对比度调整",
+                    "params": basic_params,
+                })
+                
+                # 2. 细节与质感
+                presence_params = []
+                for param_name in ["texture", "clarity", "dehaze"]:
+                    param_value = lr.get(param_name, "+0")
+                    param_name_cn = get_param_name_cn(param_name)
+                    presence_params.append({
+                        "name": param_name_cn,
+                        "value": ensure_string(param_value),
+                    })
+                panels.append({
+                    "title": "细节与质感",
+                    "description": "纹理、清晰度和去雾调整",
+                    "params": presence_params,
+                })
+                
+                # 3. 色彩调整
+                color_params = []
+                for param_name in ["saturation", "vibrance"]:
+                    param_value = lr.get(param_name, "+0")
+                    param_name_cn = get_param_name_cn(param_name)
+                    color_params.append({
+                        "name": param_name_cn,
+                        "value": ensure_string(param_value),
+                    })
+                panels.append({
+                    "title": "色彩调整",
+                    "description": "饱和度和自然饱和度调整",
+                    "params": color_params,
+                })
+                
+                # 4. HSL/颜色
+                hsl_params = []
+                hsl_raw = lr.get("HSL", {})
+                color_names = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
+                color_names_cn = ["红", "橙", "黄", "绿", "青", "蓝", "紫", "洋红"]
+                
+                for en, cn in zip(color_names, color_names_cn):
+                    hsl_data = hsl_raw.get(en, {})
+                    if hsl_data:
+                        h_val = str(hsl_data.get("hue", 0))
+                        s_val = str(hsl_data.get("saturation", 0))
+                        l_val = str(hsl_data.get("luminance", 0))
+                        
+                        if h_val != "0" or s_val != "0" or l_val != "0":
+                            hsl_params.append({
+                                "name": f"{cn}色相",
+                                "value": h_val,
+                            })
+                            hsl_params.append({
+                                "name": f"{cn}饱和度",
+                                "value": s_val,
+                            })
+                            hsl_params.append({
+                                "name": f"{cn}明度",
+                                "value": l_val,
+                            })
+                
+                panels.append({
+                    "title": "HSL/颜色",
+                    "description": "色相、饱和度和明度调整",
+                    "params": hsl_params,
+                })
+                
+                # 5. 色调分离
+                split_toning_params = []
+                color_grading_old = lr.get("color_grading", {})
+                if color_grading_old:
+                    highlights = color_grading_old.get("highlights", {})
+                    shadows = color_grading_old.get("shadows", {})
+                    balance = color_grading_old.get("balance", 0)
+                    
+                    if highlights:
+                        h_hue = highlights.get("hue", 0)
+                        h_sat = highlights.get("saturation", 0)
+                        if h_hue != 0 or h_sat != 0:
+                            split_toning_params.append({
+                                "name": "高光色相",
+                                "value": str(h_hue),
+                            })
+                            split_toning_params.append({
+                                "name": "高光饱和度",
+                                "value": str(h_sat),
+                            })
+                    
+                    if shadows:
+                        s_hue = shadows.get("hue", 0)
+                        s_sat = shadows.get("saturation", 0)
+                        if s_hue != 0 or s_sat != 0:
+                            split_toning_params.append({
+                                "name": "阴影色相",
+                                "value": str(s_hue),
+                            })
+                            split_toning_params.append({
+                                "name": "阴影饱和度",
+                                "value": str(s_sat),
+                            })
+                    
+                    if balance != 0:
+                        split_toning_params.append({
+                            "name": "平衡",
+                            "value": str(balance),
+                        })
+                
+                panels.append({
+                    "title": "色调分离",
+                    "description": "高光和阴影的色调分离调整",
+                    "params": split_toning_params,
+                })
+                
+                # 6. 色调曲线
+                curve_params = []
+                tone_curve_old = lr.get("tone_curve", [])
+                rgb_curves_old = lr.get("rgb_curves", {})
+                
+                if tone_curve_old and len(tone_curve_old) > 0:
+                    points_str = ", ".join([f"({p[0]}, {p[1]})" for p in tone_curve_old[:5]])
+                    curve_params.append({
+                        "name": "RGB 曲线",
+                        "value": points_str,
+                        "reason": "色调曲线调整",
+                    })
+                
+                if rgb_curves_old:
+                    for channel in ["red", "green", "blue"]:
+                        channel_curve = rgb_curves_old.get(channel, [])
+                        if channel_curve and len(channel_curve) > 0:
+                            channel_points = channel_curve[:5]
+                            channel_str = ", ".join([f"({p[0]}, {p[1]})" for p in channel_points])
+                            channel_name_cn = {"red": "红色", "green": "绿色", "blue": "蓝色"}.get(channel, channel)
+                            curve_params.append({
+                                "name": f"{channel_name_cn}通道曲线",
+                                "value": channel_str,
+                            })
+                
+                panels.append({
+                    "title": "色调曲线",
+                    "description": "RGB 和单通道曲线调整",
+                    "params": curve_params,
+                })
+                
+                logger.info(f"【_format_lightroom】旧结构：构建了 {len(panels)} 个面板")
+                logger.info(f"【_format_lightroom】旧结构：panels 标题列表: {[p.get('title') for p in panels]}")
 
-        return {
-            "naturalLanguage": {
-                "panelSummary": "",
-                "localAdjustments": "",
-            },
-            "structured": {
-                "panels": panels,
-                "toneCurve": lr.get("tone_curve", [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]]),
-                "rgbCurves": lr.get("rgb_curves", {}),
-                "colorGrading": lr.get("color_grading", {}),
-                "localAdjustments": raw.get("lightroom_local_adjustments", []),
-            },
-        }
+            return {
+                "naturalLanguage": {
+                    "panelSummary": "",
+                    "localAdjustments": "",
+                },
+                "structured": {
+                    "panels": panels,
+                    "toneCurve": lr.get("tone_curve", [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]]),
+                    "rgbCurves": lr.get("rgb_curves", {}),
+                    "colorGrading": lr.get("color_grading", {}),
+                    "localAdjustments": raw.get("lightroom_local_adjustments", []),
+                },
+            }
 
     def _format_photoshop(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """格式化 Photoshop 步骤（Part2）"""
-        ps = raw.get("photoshop", {})
-        steps = ps.get("steps", [])
-
-        return {
-            "naturalLanguage": {
+        """
+        格式化 Photoshop 步骤（Part2）
+        
+        支持两种数据结构：
+        1. 新结构（当前使用）：photoshop_workflow.logic_check、camera_raw_filter、ps_curves_adjustment、selective_color、local_dodge_burn、atmosphere_glow、details_sharpening、grain_texture、vignette、final_levels
+        2. 旧结构（向后兼容）：photoshop.steps
+        """
+        # 优先使用新结构（photoshop_workflow）
+        ps_workflow = raw.get("photoshop_workflow", {})
+        
+        if ps_workflow:
+            # 【新结构】使用 photoshop_workflow
+            logger.info("使用新 Part2 Prompt 结构 (photoshop_workflow)")
+            
+            steps = []
+            
+            # 1. Camera Raw 滤镜（camera_raw_filter）
+            camera_raw = ps_workflow.get("camera_raw_filter", {})
+            if camera_raw:
+                exposure_tweak = camera_raw.get("exposure_tweak", {})
+                contrast_tweak = camera_raw.get("contrast_tweak", {})
+                
+                if exposure_tweak or contrast_tweak:
+                    step_params = []
+                    if exposure_tweak:
+                        step_params.append({
+                            "name": "曝光微调",
+                            "value": exposure_tweak.get("val", "+0") if isinstance(exposure_tweak, dict) else str(exposure_tweak),
+                            "reason": exposure_tweak.get("reason", "") if isinstance(exposure_tweak, dict) else "",
+                        })
+                    if contrast_tweak:
+                        step_params.append({
+                            "name": "对比度微调",
+                            "value": contrast_tweak.get("val", "+0") if isinstance(contrast_tweak, dict) else str(contrast_tweak),
+                            "reason": contrast_tweak.get("reason", "") if isinstance(contrast_tweak, dict) else "",
+                        })
+                    
+                    steps.append({
+                        "title": "Camera Raw 滤镜",
+                        "description": "在 Photoshop 中打开 Camera Raw 滤镜进行微调",
+                        "params": step_params,
+                        "details": "",
+                    })
+            
+            # 2. PS 曲线调整（ps_curves_adjustment）
+            ps_curves = ps_workflow.get("ps_curves_adjustment", {})
+            if ps_curves:
+                # 【新增】解析 PS 曲线调整的参数（类似 Lightroom 的处理）
+                ps_curve_params = []
+                curve_reason = ps_curves.get("reason", "") if isinstance(ps_curves, dict) else ""
+                
+                # 提取 RGB 曲线点（如果存在）
+                # 支持多种可能的字段名：rgb_points, points_rgb, rgb_curve_points
+                rgb_points = (
+                    ps_curves.get("rgb_points", []) or
+                    ps_curves.get("points_rgb", []) or
+                    ps_curves.get("rgb_curve_points", [])
+                ) if isinstance(ps_curves, dict) else []
+                
+                if rgb_points and len(rgb_points) > 0:
+                    # 将曲线点转换为参数描述，格式："(x, y), (x, y), ..."
+                    points_str = ", ".join([f"({p[0]}, {p[1]})" for p in rgb_points[:5]])  # 最多显示 5 个点
+                    ps_curve_params.append({
+                        "name": "RGB 曲线",  # 【重要】名称必须包含 "RGB" 或 "rgb"，前端才能识别
+                        "value": points_str,  # 格式："(0, 0), (128, 125), (255, 255)"
+                        "reason": curve_reason if curve_reason else "RGB 曲线调整",
+                    })
+                    logger.info(f"【_format_photoshop】RGB 曲线已添加，点数: {len(rgb_points[:5])}, 值: {points_str}")
+                
+                # 提取红色通道曲线点（如果存在）
+                red_points = (
+                    ps_curves.get("red_channel", []) or
+                    ps_curves.get("points_red", []) or
+                    ps_curves.get("red_curve_points", [])
+                ) if isinstance(ps_curves, dict) else []
+                
+                if red_points and len(red_points) > 0:
+                    red_str = ", ".join([f"({p[0]}, {p[1]})" for p in red_points[:5]])
+                    ps_curve_params.append({
+                        "name": "红色通道曲线",
+                        "value": red_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+                    logger.info(f"【_format_photoshop】红色通道曲线已添加，点数: {len(red_points[:5])}, 值: {red_str}")
+                
+                # 提取绿色通道曲线点（如果存在）
+                green_points = (
+                    ps_curves.get("green_channel", []) or
+                    ps_curves.get("points_green", []) or
+                    ps_curves.get("green_curve_points", [])
+                ) if isinstance(ps_curves, dict) else []
+                
+                if green_points and len(green_points) > 0:
+                    green_str = ", ".join([f"({p[0]}, {p[1]})" for p in green_points[:5]])
+                    ps_curve_params.append({
+                        "name": "绿色通道曲线",
+                        "value": green_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+                    logger.info(f"【_format_photoshop】绿色通道曲线已添加，点数: {len(green_points[:5])}, 值: {green_str}")
+                
+                # 提取蓝色通道曲线点（如果存在）
+                blue_points = (
+                    ps_curves.get("blue_channel", []) or
+                    ps_curves.get("points_blue", []) or
+                    ps_curves.get("blue_curve_points", [])
+                ) if isinstance(ps_curves, dict) else []
+                
+                if blue_points and len(blue_points) > 0:
+                    blue_str = ", ".join([f"({p[0]}, {p[1]})" for p in blue_points[:5]])
+                    ps_curve_params.append({
+                        "name": "蓝色通道曲线",
+                        "value": blue_str,
+                        "reason": curve_reason if curve_reason else None,
+                    })
+                    logger.info(f"【_format_photoshop】蓝色通道曲线已添加，点数: {len(blue_points[:5])}, 值: {blue_str}")
+                
+                # 如果没有曲线点数据，但存在文本描述，仍然添加步骤（前端会显示提示）
+                if not ps_curve_params:
+                    logger.warning(f"【_format_photoshop】PS 曲线调整步骤已添加，但未检测到曲线点数据。ps_curves 内容: {ps_curves}")
+                
+                steps.append({
+                    "title": "曲线调整",
+                    "description": ps_curves.get("rgb_tweak", "") if isinstance(ps_curves, dict) else "",
+                    "params": ps_curve_params,  # 【修复】传递解析后的参数，而不是空数组
+                    "details": curve_reason,
+                })
+                logger.info(f"【_format_photoshop】PS 曲线调整步骤已添加，参数数量: {len(ps_curve_params)}")
+            
+            # 3. 可选颜色（selective_color）
+            selective_color = ps_workflow.get("selective_color", {})
+            if selective_color:
+                color_params = []
+                # 遍历所有颜色通道（red_cyan, red_magenta, yellow_magenta 等）
+                for key, value in selective_color.items():
+                    if key != "settings" and isinstance(value, dict):
+                        color_params.append({
+                            "name": key,
+                            "value": value.get("val", "0"),
+                            "reason": value.get("reason", ""),
+                        })
+                
+                if color_params:
+                    settings = selective_color.get("settings", "")
+                    steps.append({
+                        "title": "可选颜色",
+                        "description": "使用可选颜色调整特定颜色通道",
+                        "params": color_params,
+                        "details": settings if settings else "",
+                        "blendMode": "正常",
+                        "opacity": "100%",
+                    })
+            
+            # 4. 局部 Dodge & Burn（local_dodge_burn）
+            dodge_burn = ps_workflow.get("local_dodge_burn", {})
+            if dodge_burn:
+                steps.append({
+                    "title": "局部光影重塑",
+                    "description": dodge_burn.get("method", "") if isinstance(dodge_burn, dict) else "",
+                    "params": [
+                        {
+                            "name": "目标区域",
+                            "value": dodge_burn.get("target_area", "") if isinstance(dodge_burn, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "画笔设置",
+                            "value": dodge_burn.get("brush_settings", "") if isinstance(dodge_burn, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": dodge_burn.get("reason", "") if isinstance(dodge_burn, dict) else "",
+                })
+            
+            # 5. 氛围光晕（atmosphere_glow）
+            atmosphere_glow = ps_workflow.get("atmosphere_glow", {})
+            if atmosphere_glow:
+                steps.append({
+                    "title": "氛围光晕",
+                    "description": atmosphere_glow.get("method", "") if isinstance(atmosphere_glow, dict) else "",
+                    "params": [
+                        {
+                            "name": "步骤",
+                            "value": atmosphere_glow.get("steps", "") if isinstance(atmosphere_glow, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "不透明度",
+                            "value": atmosphere_glow.get("opacity", "") if isinstance(atmosphere_glow, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": atmosphere_glow.get("reason", "") if isinstance(atmosphere_glow, dict) else "",
+                })
+            
+            # 6. 细节锐化（details_sharpening）
+            sharpening = ps_workflow.get("details_sharpening", {})
+            if sharpening:
+                steps.append({
+                    "title": "细节锐化",
+                    "description": sharpening.get("method", "") if isinstance(sharpening, dict) else "",
+                    "params": [
+                        {
+                            "name": "半径",
+                            "value": sharpening.get("radius", "") if isinstance(sharpening, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "模式",
+                            "value": sharpening.get("mode", "") if isinstance(sharpening, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": sharpening.get("reason", "") if isinstance(sharpening, dict) else "",
+                })
+            
+            # 7. 颗粒纹理（grain_texture）
+            grain = ps_workflow.get("grain_texture", {})
+            if grain:
+                steps.append({
+                    "title": "颗粒纹理",
+                    "description": f"添加{grain.get('type', '')}颗粒" if isinstance(grain, dict) else "",
+                    "params": [
+                        {
+                            "name": "数量",
+                            "value": grain.get("amount", "") if isinstance(grain, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "大小",
+                            "value": grain.get("size", "") if isinstance(grain, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "粗糙度",
+                            "value": grain.get("roughness", "") if isinstance(grain, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": grain.get("reason", "") if isinstance(grain, dict) else "",
+                })
+            
+            # 8. 暗角（vignette）
+            vignette = ps_workflow.get("vignette", {})
+            if vignette:
+                steps.append({
+                    "title": "暗角",
+                    "description": "添加暗角效果",
+                    "params": [
+                        {
+                            "name": "数量",
+                            "value": vignette.get("amount", "") if isinstance(vignette, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "中点",
+                            "value": vignette.get("midpoint", "") if isinstance(vignette, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "圆度",
+                            "value": vignette.get("roundness", "") if isinstance(vignette, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "羽化",
+                            "value": vignette.get("feather", "") if isinstance(vignette, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": vignette.get("reason", "") if isinstance(vignette, dict) else "",
+                })
+            
+            # 9. 最终色阶（final_levels）
+            final_levels = ps_workflow.get("final_levels", {})
+            if final_levels:
+                steps.append({
+                    "title": "最终色阶",
+                    "description": "调整最终输出的黑白场",
+                    "params": [
+                        {
+                            "name": "输入黑色",
+                            "value": final_levels.get("input_black", "") if isinstance(final_levels, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "输入白色",
+                            "value": final_levels.get("input_white", "") if isinstance(final_levels, dict) else "",
+                            "reason": "",
+                        },
+                        {
+                            "name": "中点",
+                            "value": final_levels.get("midpoint", "") if isinstance(final_levels, dict) else "",
+                            "reason": "",
+                        },
+                    ],
+                    "details": final_levels.get("reason", "") if isinstance(final_levels, dict) else "",
+                })
+            
+            # 构建自然语言摘要
+            logic_check = ps_workflow.get("logic_check", "")
+            natural_language = {
                 "cameraRaw": "",
                 "colorGrading": "",
                 "gradientMap": "",
                 "localAdjustments": "",
-                "finalPolish": "",
-            },
-            "structured": {
-                "steps": steps,
-            },
-        }
+                "finalPolish": logic_check if logic_check else "",
+            }
+            
+            return {
+                "naturalLanguage": natural_language,
+                "structured": {
+                    "steps": steps,
+                },
+            }
+        else:
+            # 【旧结构】向后兼容：使用 photoshop.steps
+            logger.info("使用旧 Part2 Prompt 结构 (photoshop.steps)")
+            
+            ps = raw.get("photoshop", {})
+            steps = ps.get("steps", [])
+
+            return {
+                "naturalLanguage": {
+                    "cameraRaw": "",
+                    "colorGrading": "",
+                    "gradientMap": "",
+                    "localAdjustments": "",
+                    "finalPolish": "",
+                },
+                "structured": {
+                    "steps": steps,
+                },
+            }
 
     def _format_color_part2(self, raw: Dict[str, Any]) -> Dict[str, Any]:
-        """格式化色彩方案（Part2）"""
+        """
+        格式化色彩方案（Part2）
+        
+        支持两种数据结构：
+        1. 新结构（当前使用）：color_science_scheme.white_balance、color_grading_wheels、hsl_detailed_12_colors
+        2. 旧结构（向后兼容）：lightroom.temperature/tint、lightroom.color_grading、lightroom.HSL
+        
+        Args:
+            raw: Gemini 返回的原始 JSON 数据
+            
+        Returns:
+            标准化的色彩方案结构，包含 whiteBalance、grading、hsl 等字段
+        """
+        # 辅助函数：确保值为字符串格式（带正负号）
+        def ensure_string(value, default="+0"):
+            """将数值转换为字符串格式，带正负号"""
+            if value is None:
+                return default
+            if isinstance(value, (int, float)):
+                sign = "+" if value >= 0 else ""
+                return f"{sign}{value}"
+            return str(value)
+        
+        # 辅助函数：从范围字符串中提取数值（如 "+600 ~ +900" -> "+600"）
+        def extract_range_value(range_str: str, default="+0") -> str:
+            """从范围字符串中提取第一个值作为默认值"""
+            if not range_str or not isinstance(range_str, str):
+                return default
+            # 匹配范围格式，如 "+600 ~ +900" 或 "+10 ~ +15"
+            match = range_str.strip().split("~")[0].strip()
+            return match if match else default
+        
+        # 辅助函数：从字符串中提取数字（如 "35°" -> 35）
+        def extract_number(value: any) -> int:
+            """从字符串或数字中提取整数值"""
+            if isinstance(value, (int, float)):
+                return int(value)
+            if isinstance(value, str):
+                # 匹配数字，如 "35°" -> 35
+                match = value.replace("°", "").strip()
+                try:
+                    return int(float(match))
+                except:
+                    return 0
+            return 0
+        
+        # 优先使用新结构（color_science_scheme）
+        color_scheme = raw.get("color_science_scheme", {})
+        
+        if color_scheme:
+            # 【新结构】使用 color_science_scheme
+            logger.info("使用新 Part2 Prompt 结构 (color_science_scheme)")
+            
+            # 1. 白平衡（white_balance）
+            white_balance = color_scheme.get("white_balance", {})
+            temp_obj = white_balance.get("temperature", {})
+            tint_obj = white_balance.get("tint", {})
+            
+            temp_value = temp_obj.get("value", "+0") if isinstance(temp_obj, dict) else "+0"
+            temp_reason = temp_obj.get("reason", "") if isinstance(temp_obj, dict) else ""
+            tint_value = tint_obj.get("value", "+0") if isinstance(tint_obj, dict) else "+0"
+            tint_reason = tint_obj.get("reason", "") if isinstance(tint_obj, dict) else ""
+            
+            # 从范围字符串中提取值（如 "+600 ~ +900" -> "+600"）
+            temp_range = extract_range_value(temp_value, "+0")
+            tint_range = extract_range_value(tint_value, "+0")
+            
+            white_balance_result = {
+                "temp": {
+                    "range": temp_range,
+                    "note": temp_reason if temp_reason else None,
+                },
+                "tint": {
+                    "range": tint_range,
+                    "note": tint_reason if tint_reason else None,
+                },
+            }
+            
+            # 2. 色彩分级（color_grading_wheels）
+            color_grading_wheels = color_scheme.get("color_grading_wheels", {})
+            highlights = color_grading_wheels.get("highlights", {})
+            midtones = color_grading_wheels.get("midtones", {})
+            shadows = color_grading_wheels.get("shadows", {})
+            balance_str = color_grading_wheels.get("balance", "0")
+            
+            # 提取 balance 数值（如 "-20 (偏向阴影)" -> -20）
+            balance_value = 0
+            if isinstance(balance_str, str):
+                match = balance_str.strip().split("(")[0].strip()
+                try:
+                    balance_value = int(float(match))
+                except:
+                    balance_value = 0
+            elif isinstance(balance_str, (int, float)):
+                balance_value = int(balance_str)
+            
+            grading_result = {
+                "highlights": {
+                    "hue": extract_number(highlights.get("hue", 0)),
+                    "saturation": extract_number(highlights.get("saturation", 0)),
+                },
+                "midtones": {
+                    "hue": extract_number(midtones.get("hue", 0)),
+                    "saturation": extract_number(midtones.get("saturation", 0)),
+                },
+                "shadows": {
+                    "hue": extract_number(shadows.get("hue", 0)),
+                    "saturation": extract_number(shadows.get("saturation", 0)),
+                },
+                "balance": balance_value,
+            }
+            
+            # 3. HSL 12 色详细调整（hsl_detailed_12_colors）
+            hsl_12_colors = color_scheme.get("hsl_detailed_12_colors", {})
+            
+            # 颜色映射：新结构中的 12 色 -> 前端需要的 8 色
+            # 新结构：red, orange, yellow, yellow_green, green, green_cyan, cyan, cyan_blue, blue, blue_purple, purple, magenta
+            # 前端需要：红, 橙, 黄, 绿, 青, 蓝, 紫, 洋红
+            color_mapping = {
+                "red": "红",
+                "orange": "橙",
+                "yellow": "黄",
+                "yellow_green": "绿",  # yellow_green 映射到 绿
+                "green": "绿",
+                "green_cyan": "青",  # green_cyan 映射到 青
+                "cyan": "青",
+                "cyan_blue": "蓝",  # cyan_blue 映射到 蓝
+                "blue": "蓝",
+                "blue_purple": "紫",  # blue_purple 映射到 紫
+                "purple": "紫",
+                "magenta": "洋红",
+            }
+            
+            # 前端需要的 8 种颜色
+            frontend_colors = ["红", "橙", "黄", "绿", "青", "蓝", "紫", "洋红"]
+            hsl_list = []
+            
+            # 为每种前端颜色查找对应的新结构颜色数据
+            for frontend_color in frontend_colors:
+                # 找到映射到该前端颜色的新结构颜色键
+                source_keys = [k for k, v in color_mapping.items() if v == frontend_color]
+                
+                # 优先使用第一个匹配的颜色数据
+                hsl_data = None
+                for key in source_keys:
+                    if key in hsl_12_colors:
+                        hsl_data = hsl_12_colors[key]
+                        break
+                
+                # 如果找到数据，使用它；否则使用默认值
+                if hsl_data and isinstance(hsl_data, dict):
+                    hsl_list.append({
+                        "color": frontend_color,
+                        "hue": str(hsl_data.get("h", "0")),
+                        "saturation": str(hsl_data.get("s", "0")),
+                        "luminance": str(hsl_data.get("l", "0")),
+                        "note": hsl_data.get("desc", ""),
+                    })
+                else:
+                    # 如果没有找到数据，使用默认值
+                    hsl_list.append({
+                        "color": frontend_color,
+                        "hue": "0",
+                        "saturation": "0",
+                        "luminance": "0",
+                    })
+            
+            # 4. styleKey（从 phase_1_extraction 或 color_mapping 中提取）
+            phase_1_extraction = raw.get("phase_1_extraction", {})
+            # 【新增】优先使用 master_style_recap（流派识别），如果没有则使用 key_adjustment_strategy
+            master_style_recap = phase_1_extraction.get("master_style_recap", "")
+            style_key = phase_1_extraction.get("key_adjustment_strategy", "")
+            # 如果 master_style_recap 存在，优先使用它作为 styleKey
+            if master_style_recap:
+                style_key = master_style_recap
+            elif not style_key:
+                # 如果没有，尝试从旧结构的 color_mapping 中获取
+                color_mapping_old = raw.get("color_mapping", {})
+                style_key = color_mapping_old.get("suggested_LUT", "")
+            
+            return {
+                "naturalLanguage": {
+                    "styleKey": style_key,
+                    "whiteBalance": temp_reason + " " + tint_reason if temp_reason or tint_reason else "",
+                    "colorGrading": "",
+                    "hslAdjustments": "",
+                },
+                "structured": {
+                    "styleKey": style_key,
+                    "whiteBalance": white_balance_result,
+                    "grading": grading_result,
+                    "hsl": hsl_list,
+                },
+            }
+        else:
+            # 【旧结构】向后兼容：使用 lightroom 和 color_mapping
+            logger.info("使用旧 Part2 Prompt 结构 (lightroom/color_mapping)")
+            
         lr = raw.get("lightroom", {})
         color_mapping = raw.get("color_mapping", {})
 
@@ -1072,6 +2483,15 @@ class AnalysisFormatter:
                 "luminance": str(hsl_data.get("luminance", 0)),
             })
 
+            # 确保所有滑块都是字符串格式
+            def ensure_string(value, default="+0"):
+                if value is None:
+                    return default
+                if isinstance(value, (int, float)):
+                    sign = "+" if value >= 0 else ""
+                    return f"{sign}{value}"
+                return str(value)
+            
         return {
             "naturalLanguage": {
                 "styleKey": color_mapping.get("suggested_LUT", ""),

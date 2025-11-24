@@ -1,250 +1,115 @@
-import { useEffect, useRef, useState } from 'react';
-import { motion } from 'motion/react';
+import React, { useEffect, useState, useRef } from 'react';
+import { AreaChart, Area, ResponsiveContainer, XAxis, YAxis } from 'recharts';
 
 interface HistogramProps {
-  imageUrl?: string;
-  type?: 'source' | 'target';
+  imageSrc: string | null;
   className?: string;
+  height?: number;
+  color?: string;
 }
 
-export function Histogram({ imageUrl, type = 'target', className = '' }: HistogramProps) {
+export const Histogram = ({ imageSrc, className, height = 120, color = "#8884d8" }: HistogramProps) => {
+  const [data, setData] = useState<{ index: number; r: number; g: number; b: number; l: number }[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const [stats, setStats] = useState({
-    mean: 0,
-    shadows: 0,
-    midtones: 0,
-    highlights: 0,
-  });
 
   useEffect(() => {
-    if (!imageUrl || !canvasRef.current) return;
-
-    const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
+    if (!imageSrc) return;
 
     const img = new Image();
-    img.crossOrigin = 'anonymous';
-    
+    img.crossOrigin = "Anonymous"; // Enable CORS for external images
+    img.src = imageSrc;
+
     img.onload = () => {
-      // 创建临时画布来分析图像
-      const tempCanvas = document.createElement('canvas');
-      const tempCtx = tempCanvas.getContext('2d');
-      if (!tempCtx) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
 
-      tempCanvas.width = img.width;
-      tempCanvas.height = img.height;
-      tempCtx.drawImage(img, 0, 0);
+      const ctx = canvas.getContext('2d');
+      if (!ctx) return;
 
-      const imageData = tempCtx.getImageData(0, 0, img.width, img.height);
-      const data = imageData.data;
+      // Resize canvas to image size (or a smaller sample size for performance)
+      // Sampling at 400px width is usually enough for histograms and much faster
+      const scale = Math.min(1, 400 / img.width);
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
 
-      // 初始化直方图数据
-      const histogramR = new Array(256).fill(0);
-      const histogramG = new Array(256).fill(0);
-      const histogramB = new Array(256).fill(0);
-      const histogramLuma = new Array(256).fill(0);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-      // 计算直方图
-      for (let i = 0; i < data.length; i += 4) {
-        const r = data[i];
-        const g = data[i + 1];
-        const b = data[i + 2];
-        
-        histogramR[r]++;
-        histogramG[g]++;
-        histogramB[b]++;
-        
-        // 计算亮度 (使用感知亮度公式)
-        const luma = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-        histogramLuma[luma]++;
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const pixels = imageData.data;
+      
+      // Initialize bins
+      const rBins = new Array(256).fill(0);
+      const gBins = new Array(256).fill(0);
+      const bBins = new Array(256).fill(0);
+      const lBins = new Array(256).fill(0);
+
+      // Iterate pixels
+      for (let i = 0; i < pixels.length; i += 4) {
+        const r = pixels[i];
+        const g = pixels[i + 1];
+        const b = pixels[i + 2];
+        // Luminance formula: 0.299R + 0.587G + 0.114B
+        const l = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
+
+        rBins[r]++;
+        gBins[g]++;
+        bBins[b]++;
+        lBins[l]++;
       }
 
-      // 找到最大值用于归一化
-      const maxR = Math.max(...histogramR);
-      const maxG = Math.max(...histogramG);
-      const maxB = Math.max(...histogramB);
-      const maxLuma = Math.max(...histogramLuma);
+      // Normalize data for visualization
+      const max = Math.max(...lBins);
+      const histogramData = rBins.map((_, i) => ({
+        index: i,
+        r: rBins[i],
+        g: gBins[i],
+        b: bBins[i],
+        l: lBins[i],
+      }));
 
-      // 计算统计信息
-      const totalPixels = data.length / 4;
-      let sumLuma = 0;
-      let shadows = 0;
-      let midtones = 0;
-      let highlights = 0;
-
-      for (let i = 0; i < 256; i++) {
-        sumLuma += i * histogramLuma[i];
-        if (i < 85) shadows += histogramLuma[i];
-        else if (i < 170) midtones += histogramLuma[i];
-        else highlights += histogramLuma[i];
-      }
-
-      setStats({
-        mean: Math.round(sumLuma / totalPixels),
-        shadows: Math.round((shadows / totalPixels) * 100),
-        midtones: Math.round((midtones / totalPixels) * 100),
-        highlights: Math.round((highlights / totalPixels) * 100),
-      });
-
-      // 绘制直方图
-      const width = canvas.width;
-      const height = canvas.height;
-      
-      // 清空画布
-      ctx.fillStyle = '#1a1a1a';
-      ctx.fillRect(0, 0, width, height);
-
-      // 绘制网格线
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
-      ctx.lineWidth = 1;
-      
-      // 垂直网格线
-      for (let i = 0; i <= 4; i++) {
-        const x = (width / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, height);
-        ctx.stroke();
-      }
-      
-      // 水平网格线
-      for (let i = 0; i <= 4; i++) {
-        const y = (height / 4) * i;
-        ctx.beginPath();
-        ctx.moveTo(0, y);
-        ctx.lineTo(width, y);
-        ctx.stroke();
-      }
-
-      // 绘制RGB直方图
-      const drawChannel = (histogram: number[], max: number, color: string, opacity: number) => {
-        ctx.beginPath();
-        ctx.strokeStyle = color;
-        ctx.lineWidth = 1.5;
-        ctx.globalAlpha = opacity;
-
-        for (let i = 0; i < 256; i++) {
-          const x = (i / 256) * width;
-          const normalizedValue = histogram[i] / max;
-          const y = height - (normalizedValue * height * 0.9);
-          
-          if (i === 0) {
-            ctx.moveTo(x, y);
-          } else {
-            ctx.lineTo(x, y);
-          }
-        }
-        
-        ctx.stroke();
-        ctx.globalAlpha = 1;
-      };
-
-      // 绘制各个通道（从暗到亮叠加）
-      drawChannel(histogramB, maxB, '#3b82f6', 0.6); // 蓝色
-      drawChannel(histogramG, maxG, '#10b981', 0.6); // 绿色
-      drawChannel(histogramR, maxR, '#ef4444', 0.6); // 红色
-      
-      // 绘制亮度直方图（白色，半透明）
-      drawChannel(histogramLuma, maxLuma, '#ffffff', 0.4);
-
-      // 绘制阴影/高光分界线
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
-      ctx.setLineDash([4, 4]);
-      ctx.lineWidth = 1;
-      
-      // 阴影/中间调分界 (85/255)
-      const shadowMidBoundary = (85 / 256) * width;
-      ctx.beginPath();
-      ctx.moveTo(shadowMidBoundary, 0);
-      ctx.lineTo(shadowMidBoundary, height);
-      ctx.stroke();
-      
-      // 中间调/高光分界 (170/255)
-      const midHighBoundary = (170 / 256) * width;
-      ctx.beginPath();
-      ctx.moveTo(midHighBoundary, 0);
-      ctx.lineTo(midHighBoundary, height);
-      ctx.stroke();
-      
-      ctx.setLineDash([]);
+      setData(histogramData);
     };
+  }, [imageSrc]);
 
-    img.onerror = () => {
-      console.error('Failed to load image for histogram');
-    };
-
-    img.src = imageUrl;
-  }, [imageUrl]);
+  if (!imageSrc) return null;
 
   return (
-    <motion.div 
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      className={`bg-gradient-to-br from-gray-900 to-gray-800 rounded-xl p-4 border border-gray-700 ${className}`}
-    >
-      {/* 标题 */}
-      <div className="flex items-center justify-between mb-3">
-        <h5 className="text-white text-sm" style={{ fontWeight: 600 }}>
-          直方图分析
-          {type === 'source' && <span className="ml-2 text-xs text-blue-400">(源照片)</span>}
-          {type === 'target' && <span className="ml-2 text-xs text-purple-400">(目标照片)</span>}
-        </h5>
-        <div className="flex gap-3 text-xs">
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-red-500"></div>
-            <span className="text-gray-400">R</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-green-500"></div>
-            <span className="text-gray-400">G</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-blue-500"></div>
-            <span className="text-gray-400">B</span>
-          </div>
-          <div className="flex items-center gap-1">
-            <div className="w-3 h-3 rounded-full bg-white"></div>
-            <span className="text-gray-400">L</span>
-          </div>
-        </div>
+    <div className={`w-full bg-black/20 border border-white/10 rounded p-2 backdrop-blur-sm ${className}`}>
+      <canvas ref={canvasRef} className="hidden" />
+      <div style={{ height: height, width: '100%' }}>
+        <ResponsiveContainer width="100%" height="100%">
+          <AreaChart data={data}>
+            <defs>
+              <linearGradient id="colorL" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#ffffff" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#ffffff" stopOpacity={0}/>
+              </linearGradient>
+              <linearGradient id="colorR" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#ff0000" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#ff0000" stopOpacity={0}/>
+              </linearGradient>
+              <linearGradient id="colorG" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#00ff00" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#00ff00" stopOpacity={0}/>
+              </linearGradient>
+              <linearGradient id="colorB" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#0000ff" stopOpacity={0.3}/>
+                <stop offset="95%" stopColor="#0000ff" stopOpacity={0}/>
+              </linearGradient>
+            </defs>
+            {/* Combined Luminance View by default, could be toggleable */}
+            <Area type="monotone" dataKey="l" stroke="#ffffff" fillOpacity={1} fill="url(#colorL)" strokeWidth={1} isAnimationActive={false} />
+            <Area type="monotone" dataKey="r" stroke="#ff4d4d" fillOpacity={1} fill="url(#colorR)" strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
+            <Area type="monotone" dataKey="g" stroke="#4dff4d" fillOpacity={1} fill="url(#colorG)" strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
+            <Area type="monotone" dataKey="b" stroke="#4d4dff" fillOpacity={1} fill="url(#colorB)" strokeWidth={1} strokeOpacity={0.5} isAnimationActive={false} />
+          </AreaChart>
+        </ResponsiveContainer>
       </div>
-
-      {/* 画布 */}
-      <canvas
-        ref={canvasRef}
-        width={600}
-        height={160}
-        className="w-full h-auto rounded-lg"
-        style={{ imageRendering: 'crisp-edges' }}
-      />
-
-      {/* 统计信息 */}
-      <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
-        <div className="bg-gray-800/50 rounded-lg p-2 text-center border border-gray-700/50">
-          <div className="text-gray-400 mb-1">平均亮度</div>
-          <div className="text-white" style={{ fontWeight: 600 }}>{stats.mean}/255</div>
-        </div>
-        <div className="bg-gray-800/50 rounded-lg p-2 text-center border border-gray-700/50">
-          <div className="text-gray-400 mb-1">阴影</div>
-          <div className="text-white" style={{ fontWeight: 600 }}>{stats.shadows}%</div>
-        </div>
-        <div className="bg-gray-800/50 rounded-lg p-2 text-center border border-gray-700/50">
-          <div className="text-gray-400 mb-1">中间调</div>
-          <div className="text-white" style={{ fontWeight: 600 }}>{stats.midtones}%</div>
-        </div>
-        <div className="bg-gray-800/50 rounded-lg p-2 text-center border border-gray-700/50">
-          <div className="text-gray-400 mb-1">高光</div>
-          <div className="text-white" style={{ fontWeight: 600 }}>{stats.highlights}%</div>
-        </div>
+      <div className="flex justify-between px-2 mt-1">
+        <span className="text-[8px] font-mono text-gray-500">0</span>
+        <span className="text-[8px] font-mono text-gray-500">128</span>
+        <span className="text-[8px] font-mono text-gray-500">255</span>
       </div>
-
-      {/* 区域标签 */}
-      <div className="mt-2 flex justify-between text-xs text-gray-500 px-1">
-        <span>暗部 ◀</span>
-        <span>中间调</span>
-        <span>▶ 亮部</span>
-      </div>
-    </motion.div>
+    </div>
   );
-}
+};

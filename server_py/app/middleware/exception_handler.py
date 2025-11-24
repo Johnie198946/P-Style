@@ -21,7 +21,21 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
     
     Returns:
         JSONResponse: 统一格式的错误响应
+    
+    Note:
+        - HTTPException 通常由 HTTPBearer、业务逻辑等抛出
+        - 对于可行性评估接口，可能是认证失败（401/403）导致的
+        - 需要记录详细的错误信息，便于排查问题
     """
+    # 【重要】记录 HTTPException 的详细信息，特别是对于可行性评估接口
+    logger.error(f"【HTTPException】被捕获: 状态码={exc.status_code}, 详情={exc.detail}, 路径={request.url.path}")
+    
+    # 特殊处理：如果是可行性评估接口的认证错误，提供更详细的日志
+    if '/api/analyze/feasibility' in request.url.path:
+        if exc.status_code in [401, 403]:
+            logger.error(f"【HTTPException】可行性评估接口认证失败: 状态码={exc.status_code}")
+            logger.error(f"【HTTPException】Authorization 头: {request.headers.get('Authorization', '未提供')}")
+    
     # 如果 detail 已经是字典格式（使用 error_response 创建），直接使用
     if isinstance(exc.detail, dict) and "code" in exc.detail:
         return JSONResponse(

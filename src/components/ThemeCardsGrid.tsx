@@ -1,639 +1,583 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { motion, AnimatePresence, useMotionValue, useTransform, animate } from 'motion/react';
-import {
-  Camera,
-  Sun,
-  Palette,
-  Sliders,
-  Image as ImageIcon,
-  Sparkles,
-  ChevronRight,
-  Wand2,
-  ArrowRight,
-  ChevronLeft,
-  FileText,
-} from 'lucide-react';
-import { ThemeDetailModal } from './ThemeDetailModal';
-import { StyleSimulation } from './StyleSimulation';
-import { LoadingTransition } from './LoadingTransition';
-import { UserMenu } from './UserMenu';
-import { ColorCloningReport } from './ColorCloningReport';
-import { toast } from 'sonner';
+import { ReviewModal } from './modals/ReviewModal';
+import { LightingModal } from './modals/LightingModal';
+import { ColorModal } from './modals/ColorModal';
+import { LightroomModal } from './modals/LightroomModal';
+import { CompositionModal } from './modals/CompositionModal';
+import { PhotoshopModal } from './modals/PhotoshopModal';
+import { api } from '../src/lib/api';
+import { adaptBackendToFrontend } from '../src/lib/dataAdapter';
+import { toast } from 'sonner@2.0.3';
+import { Lock, Unlock, Cpu, Zap, Eye, Layers, Aperture, Activity, Hexagon, Terminal, Scan } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+import { useLanguage } from '../src/contexts/LanguageContext';
 
-interface ThemeCardsGridProps {
-  results: any;
-  sourceImageUrl: string;
-  targetImageUrl: string;
-  onBack: () => void;
-  taskId?: string;
-}
+// --- VFX COMPONENTS ---
 
-interface ThemeCard {
-  id: string;
-  title: string;
-  subtitle: string;
-  description: string;
-  icon: React.ReactNode;
-  color: string;
-  bgColor: string;
-}
+// 1. "Matrix Rain" Decryption Effect
+const MatrixDecryption = () => {
+  const canvasRef = useRef<HTMLCanvasElement>(null);
 
-const themeCards: ThemeCard[] = [
-  {
-    id: 'review',
-    title: '照片点评',
-    subtitle: '整体分析与专业评价',
-    description: '获取全面的照片质量评估',
-    icon: <Sparkles className="w-8 h-8" />,
-    color: 'text-amber-600',
-    bgColor: 'bg-gradient-to-br from-amber-50/80 to-orange-50/50',
-  },
-  {
-    id: 'composition',
-    title: '构图分析',
-    subtitle: '焦点布局与视觉引导',
-    description: '了解照片的构图技巧',
-    icon: <Camera className="w-8 h-8" />,
-    color: 'text-blue-600',
-    bgColor: 'bg-gradient-to-br from-blue-50/80 to-cyan-50/50',
-  },
-  {
-    id: 'lighting',
-    title: '光影参数',
-    subtitle: '曝光对比与明暗层次',
-    description: '掌握光影的运用方法',
-    icon: <Sun className="w-8 h-8" />,
-    color: 'text-orange-600',
-    bgColor: 'bg-gradient-to-br from-orange-50/80 to-yellow-50/50',
-  },
-  {
-    id: 'color',
-    title: '色彩方案',
-    subtitle: '色调饱和与色彩搭配',
-    description: '深入理解色彩处理',
-    icon: <Palette className="w-8 h-8" />,
-    color: 'text-purple-600',
-    bgColor: 'bg-gradient-to-br from-purple-50/80 to-pink-50/50',
-  },
-  {
-    id: 'lightroom',
-    title: 'Lightroom',
-    subtitle: 'Adobe LR 专业调整方案',
-    description: '完整的 Lightroom 参数',
-    icon: <Sliders className="w-8 h-8" />,
-    color: 'text-cyan-600',
-    bgColor: 'bg-gradient-to-br from-cyan-50/80 to-teal-50/50',
-  },
-  {
-    id: 'photoshop',
-    title: 'Photoshop',
-    subtitle: 'Adobe PS 后期处理方案',
-    description: '精细的 Photoshop 步骤',
-    icon: <ImageIcon className="w-8 h-8" />,
-    color: 'text-indigo-600',
-    bgColor: 'bg-gradient-to-br from-indigo-50/80 to-blue-50/50',
-  },
-];
-
-/**
- * 主题卡片网格组件
- * 展示分析结果的主题卡片，支持两阶段加载（Stage1: 基础分析，Stage2: 完整方案）
- * 根据开发方案第 14、16 节实现
- * 
- * @param results - Part1 分析结果（结构化数据）
- * @param sourceImageUrl - 源图 URL
- * @param targetImageUrl - 目标图 URL
- * @param onBack - 返回回调
- * @param taskId - 任务 ID（从 Part1 返回，用于 Part2 调用）
- */
-export function ThemeCardsGrid({ results, sourceImageUrl, targetImageUrl, onBack, taskId: propTaskId }: ThemeCardsGridProps) {
-  // 主题选择状态
-  const [selectedTheme, setSelectedTheme] = useState<string | null>(null);
-  // 卡片悬停状态
-  const [hoveredCard, setHoveredCard] = useState<string | null>(null);
-  // 风格模拟显示状态
-  const [showStyleSimulation, setShowStyleSimulation] = useState(false);
-  // 报告显示状态
-  const [showReport, setShowReport] = useState(false);
-  
-  // 两阶段加载状态（Stage1: 基础分析，Loading: Part2 处理中，Stage2: 完整方案）
-  const [showStage, setShowStage] = useState<'stage1' | 'loading' | 'stage2'>('stage1');
-  
-  // 水平滚动导航状态
-  const [activeNavIndex, setActiveNavIndex] = useState(0);
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const [canScrollLeft, setCanScrollLeft] = useState(false);
-  const [canScrollRight, setCanScrollRight] = useState(false);
-
-  // 获取 taskId：优先使用 props，其次从 results.meta.taskId 获取
-  const currentTaskId = propTaskId || results?.meta?.taskId || null;
-  
-  // Part2 分析结果状态
-  const [part2Results, setPart2Results] = useState<any>(null);
-
-  /**
-   * 处理卡片点击事件
-   * @param themeId - 主题 ID（review/composition/lighting/color/lightroom/photoshop）
-   */
-  const handleCardClick = (themeId: string) => {
-    setSelectedTheme(themeId);
-  };
-
-  /**
-   * 查看详细方案（触发 Part2 分析）
-   * 根据开发方案第 16 节：Part2 触发后应开始轮询任务状态
-   * 实现轮询机制：3 秒间隔，最大 2 分钟（40 次）
-   */
-  const handleViewDetailedPlan = async () => {
-    // 验证 taskId 是否存在
-    if (!currentTaskId) {
-      console.error('No taskId available for Part2 analysis');
-      toast.error('任务 ID 缺失，无法继续分析');
-      return;
-    }
-
-    // 切换到加载状态
-    setShowStage('loading');
-    
-    try {
-      const { analyzeApi } = await import('../lib/api');
-      
-      // 第一步：触发 Part2 分析（根据开发方案第 16 节，应快速返回 { status: 'processing' }）
-      await analyzeApi.part2(currentTaskId);
-      
-      // 第二步：开始轮询任务状态（3 秒间隔，最大 2 分钟 = 40 次）
-      const maxAttempts = 40;
-      const pollInterval = 3000; // 3 秒
-      let attempts = 0;
-      
-      const pollTask = async (): Promise<void> => {
-        attempts++;
-        
-        try {
-          const taskDetail = await analyzeApi.getTask(currentTaskId);
-          
-          // 检查任务状态
-          if (taskDetail.task.status === 'completed' || taskDetail.task.status === 'part2_completed') {
-            // 任务完成，合并结果
-            if (taskDetail.structuredResult) {
-              setPart2Results(taskDetail.structuredResult);
-              
-              // 合并 Part2 结果到 results（根据开发方案，Part2 结果应合并到现有 results）
-              if (results) {
-                results.sections = {
-                  ...results.sections,
-                  ...taskDetail.structuredResult.sections,
-                };
-              }
-            }
-            
-            // 切换到 Stage2，显示完整方案
-            setShowStage('stage2');
-            return;
-          }
-          
-          // 如果未完成且未超时，继续轮询
-          if (attempts < maxAttempts) {
-            setTimeout(pollTask, pollInterval);
-          } else {
-            // 超时
-            toast.error('分析超时，请稍后重试');
-            setShowStage('stage1');
-          }
-        } catch (error: any) {
-          console.error('Polling failed:', error);
-          // 如果轮询失败，尝试最后一次
-          if (attempts < maxAttempts) {
-            setTimeout(pollTask, pollInterval);
-          } else {
-            toast.error('分析失败，请重试');
-            setShowStage('stage1');
-          }
-        }
-      };
-      
-      // 开始第一次轮询（延迟 3 秒）
-      setTimeout(pollTask, pollInterval);
-      
-    } catch (error: any) {
-      console.error('Part2 trigger failed:', error);
-      // 使用 toast 替代 alert，提供更好的用户体验
-      if (error.message) {
-        toast.error(error.message);
-      } else {
-        toast.error('分析失败，请重试');
-      }
-      // 失败时回到 Stage1
-      setShowStage('stage1');
-    }
-  };
-
-  // Stage 1: First 3 cards (review, composition, lighting)
-  const stage1Cards = themeCards.slice(0, 3);
-  // Stage 2: All 6 cards
-  const stage2Cards = themeCards;
-
-  const displayCards = showStage === 'stage1' ? stage1Cards : stage2Cards;
-
-  /**
-   * 检查滚动位置，更新左右滚动按钮状态
-   */
-  const checkScrollButtons = () => {
-    if (scrollContainerRef.current) {
-      const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
-      setCanScrollLeft(scrollLeft > 0);
-      setCanScrollRight(scrollLeft < scrollWidth - clientWidth - 10);
-    }
-  };
-
-  // 监听窗口大小变化和卡片变化，更新滚动按钮状态
   useEffect(() => {
-    checkScrollButtons();
-    window.addEventListener('resize', checkScrollButtons);
-    return () => window.removeEventListener('resize', checkScrollButtons);
-  }, [displayCards]);
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
 
-  /**
-   * 水平滚动卡片容器
-   * @param direction - 滚动方向（left/right）
-   */
-  const scroll = (direction: 'left' | 'right') => {
-    if (scrollContainerRef.current) {
-      const scrollAmount = 200;
-      const newScrollLeft = scrollContainerRef.current.scrollLeft + (direction === 'right' ? scrollAmount : -scrollAmount);
-      scrollContainerRef.current.scrollTo({
-        left: newScrollLeft,
-        behavior: 'smooth'
-      });
-    }
-  };
+    canvas.width = canvas.parentElement?.clientWidth || 500;
+    canvas.height = canvas.parentElement?.clientHeight || 300;
 
-  /**
-   * 滚动到指定卡片
-   * @param index - 卡片索引
-   */
-  const scrollToCard = (index: number) => {
-    if (scrollContainerRef.current) {
-      const cardWidth = 200;
-      const gap = 12;
-      const scrollPosition = index * (cardWidth + gap);
-      scrollContainerRef.current.scrollTo({
-        left: scrollPosition,
-        behavior: 'smooth'
-      });
-      setActiveNavIndex(index);
-    }
+    const chars = '01XYZ$%#@&*';
+    const fontSize = 14;
+    const columns = canvas.width / fontSize;
+    const drops = Array(Math.floor(columns)).fill(1);
+
+    const draw = () => {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.1)'; // Fade out trail
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.fillStyle = '#007AFF'; // Blue text
+      ctx.font = `${fontSize}px monospace`;
+
+      for (let i = 0; i < drops.length; i++) {
+        const text = chars[Math.floor(Math.random() * chars.length)];
+        ctx.fillText(text, i * fontSize, drops[i] * fontSize);
+
+        if (drops[i] * fontSize > canvas.height && Math.random() > 0.975) {
+          drops[i] = 0;
+        }
+        drops[i]++;
+      }
+    };
+
+    const interval = setInterval(draw, 33);
+    return () => clearInterval(interval);
+  }, []);
+
+  return <canvas ref={canvasRef} className="absolute inset-0 opacity-30 mix-blend-screen pointer-events-none" />;
+};
+
+// 2. Holographic Scanner Line
+const ScannerLine = () => (
+  <motion.div 
+    initial={{ top: '0%', opacity: 0 }}
+    animate={{ top: '100%', opacity: [0, 1, 1, 0] }}
+    transition={{ duration: 1.5, ease: "linear" }}
+    className="absolute left-0 right-0 h-24 bg-gradient-to-b from-transparent via-blue-500/20 to-transparent z-50 pointer-events-none border-b border-blue-400/50 shadow-[0_0_20px_rgba(59,130,246,0.5)]"
+  />
+);
+
+// 3. Warp Drive Transition Overlay (ENHANCED)
+const WarpOverlay = () => {
+    // Generate more stars for density
+    const stars = [...Array(60)]; 
+    
+    return (
+        <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] pointer-events-none flex items-center justify-center bg-black overflow-hidden perspective-[1000px]"
+        >
+            {/* Central Singularity - Distorting Space */}
+            <motion.div 
+                initial={{ scale: 0, opacity: 0 }}
+                animate={{ 
+                    scale: [0, 0.5, 50], 
+                    opacity: [0, 1, 1],
+                }}
+                transition={{ duration: 1.5, times: [0, 0.5, 1], ease: "circIn" }}
+                className="absolute z-20 w-2 h-2 bg-white rounded-full shadow-[0_0_100px_rgba(255,255,255,1)]"
+            />
+            
+            {/* Speed Tunnel / Grid Effect */}
+             <div className="absolute inset-0 flex items-center justify-center">
+                {[...Array(5)].map((_, i) => (
+                    <motion.div
+                        key={`grid-${i}`}
+                        initial={{ scale: 0, opacity: 0, borderWidth: '1px' }}
+                        animate={{ 
+                            scale: 5, 
+                            opacity: [0, 0.5, 0],
+                            borderWidth: '20px'
+                        }}
+                        transition={{ 
+                            duration: 1, 
+                            delay: i * 0.1, 
+                            repeat: Infinity,
+                            ease: "easeIn"
+                        }}
+                        className="absolute w-64 h-36 border border-blue-500/30 rounded-lg"
+                    />
+                ))}
+            </div>
+
+            {/* Star Streaks */}
+            <div className="absolute inset-0 flex items-center justify-center">
+                 {stars.map((_, i) => {
+                     const angle = Math.random() * 360;
+                     const delay = Math.random() * 0.5;
+                     const duration = 0.5 + Math.random() * 0.5;
+                     
+                     return (
+                         <motion.div 
+                            key={i}
+                            initial={{ 
+                                x: 0, 
+                                y: 0, 
+                                scaleX: 0,
+                                width: 2,
+                                opacity: 0 
+                            }}
+                            animate={{ 
+                                scaleX: [0, 1, 50], // Stretch into lines
+                                translateX: [0, Math.cos(angle * Math.PI / 180) * 1000],
+                                translateY: [0, Math.sin(angle * Math.PI / 180) * 1000],
+                                opacity: [0, 1, 0],
+                            }}
+                            transition={{ 
+                                duration: duration, 
+                                delay: delay, 
+                                repeat: Infinity,
+                                ease: "easeIn" 
+                            }}
+                            className="absolute h-[2px] bg-blue-100 origin-left mix-blend-screen shadow-[0_0_10px_#fff]"
+                            style={{ 
+                                rotate: `${angle}deg`,
+                                width: `${100 + Math.random() * 200}px`
+                            }}
+                         />
+                     );
+                 })}
+            </div>
+            
+            {/* Chromatic Aberration Shake (Simulated via CSS Filters) */}
+            <motion.div 
+                animate={{ 
+                    filter: ["blur(0px)", "blur(2px) hue-rotate(90deg)", "blur(0px)"],
+                    scale: [1, 1.05, 1.5]
+                }}
+                transition={{ duration: 1.5, ease: "circIn" }}
+                className="absolute inset-0 bg-transparent mix-blend-overlay pointer-events-none"
+            />
+        </motion.div>
+    );
+};
+
+// Refined 3D Tilt Card
+const TiltCard = ({ children, onClick, locked, delay, index }: any) => {
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [rotation, setRotation] = useState({ x: 0, y: 0 });
+  const [isHovered, setIsHovered] = useState(false);
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!cardRef.current || locked) return;
+    const rect = cardRef.current.getBoundingClientRect();
+    const x = e.clientX - rect.left; 
+    const y = e.clientY - rect.top;
+    const centerX = rect.width / 2;
+    const centerY = rect.height / 2;
+    
+    const rotateY = ((x - centerX) / centerX) * 5; 
+    const rotateX = ((y - centerY) / centerY) * -5;
+
+    setRotation({ x: rotateX, y: rotateY });
   };
 
   return (
-    <>
-      {/* Loading Transition */}
-      <AnimatePresence>
-        {showStage === 'loading' && (
-          <LoadingTransition 
-            onComplete={() => setShowStage('stage2')}
-          />
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 50, scale: 0.9 }}
+      animate={{ opacity: locked ? 0.5 : 1, y: 0, scale: 1 }}
+      transition={{ duration: 0.6, delay: delay * 0.001, type: "spring", stiffness: 50 }}
+      className={`relative h-80 w-full perspective-1000 group z-10 ${locked ? 'cursor-not-allowed grayscale blur-[2px]' : 'cursor-pointer'}`}
+      onMouseEnter={() => !locked && setIsHovered(true)}
+      onMouseMove={handleMouseMove}
+      onMouseLeave={() => { setIsHovered(false); setRotation({ x: 0, y: 0 }); }}
+      onClick={!locked ? onClick : undefined}
+    >
+      <div 
+        ref={cardRef}
+        className={`
+            relative w-full h-full 
+            transition-transform duration-100 ease-linear 
+            bg-[#080808] border border-white/10 rounded-sm
+            overflow-hidden
+        `}
+        style={{
+          transformStyle: 'preserve-3d',
+          transform: isHovered 
+            ? `rotateX(${rotation.x}deg) rotateY(${rotation.y}deg) scale3d(1.02, 1.02, 1.02)`
+            : 'rotateX(0deg) rotateY(0deg) scale3d(1, 1, 1)',
+          boxShadow: isHovered 
+            ? '0 20px 50px -12px rgba(0, 0, 0, 0.9), 0 0 0 1px rgba(0, 122, 255, 0.4)' 
+            : '0 10px 30px -10px rgba(0, 0, 0, 0.8)'
+        }}
+      >
+        <div className="absolute inset-0 bg-gradient-to-b from-white/5 to-transparent pointer-events-none" />
+        <div className="relative z-20 h-full p-6 flex flex-col justify-between" style={{ transform: 'translateZ(20px)' }}>
+            {children}
+        </div>
+        <div 
+            className="absolute inset-0 pointer-events-none z-30 mix-blend-overlay transition-opacity duration-300"
+            style={{
+                opacity: isHovered ? 0.4 : 0,
+                background: `linear-gradient(105deg, transparent 40%, rgba(255,255,255,0.4) 45%, rgba(255,255,255,0.0) 50%)`,
+                transform: `translateX(${rotation.y * 2}%) translateZ(1px)`
+            }}
+        />
+        {!locked && (
+            <div className="absolute bottom-0 right-0 w-32 h-32 bg-blue-500/10 blur-2xl rounded-full -mr-10 -mb-10 z-0 pointer-events-none"></div>
         )}
+      </div>
+      <div className="absolute -bottom-8 left-1/2 -translate-x-1/2 w-px h-8 bg-white/10 z-0"></div>
+    </motion.div>
+  );
+};
+
+const CardContent = ({ title, subtitle, number, icon: Icon }: any) => (
+  <>
+    <div className="flex justify-between items-start">
+        <div className="p-2 bg-white/5 rounded border border-white/5 backdrop-blur-sm">
+            <Icon className="w-5 h-5 text-blue-400" />
+        </div>
+        <span className="text-[60px] font-display font-bold text-white/10 leading-none -mt-2 -mr-2">
+            0{number}
+        </span>
+    </div>
+    <div>
+        <h3 className="text-xl font-bold text-white mb-1 tracking-wide font-display">{title}</h3>
+        <p className="text-xs text-gray-400 font-mono uppercase tracking-wider flex items-center gap-2">
+            <span className="w-1 h-1 bg-blue-500 rounded-full"></span>
+            {subtitle}
+        </p>
+    </div>
+  </>
+);
+
+// --- MAIN COMPONENT ---
+
+interface ThemeCardsGridProps {
+  data: any;
+  images: { source: string; target: string };
+  taskId?: string | null;
+  onSimulate: () => void;
+}
+
+export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsGridProps) => {
+  const { t } = useLanguage();
+  const [activeModal, setActiveModal] = useState<string | null>(null);
+  const [workflowStage, setWorkflowStage] = useState<'diagnosis' | 'decrypting' | 'synthesis' | 'simulating'>('diagnosis');
+  const [results, setResults] = useState<any>(data);
+  const [isWarping, setIsWarping] = useState(false);
+
+  // Unlock Animation Sequence
+  const handleUnlock = async () => {
+    setWorkflowStage('decrypting');
+    
+    if (!taskId) {
+      toast.error("Task ID is missing");
+      return;
+    }
+
+    try {
+      // 1. 触发 Part2 分析（立即返回 processing）
+      await api.analyze.part2(taskId);
+      
+      // 2. 启动轮询机制（每3秒轮询一次，直到 status === 'completed'）
+      const pollInterval = 3000; // 3秒
+      const maxAttempts = 30; // 最多轮询30次（90秒）
+      let attempts = 0;
+      
+      const pollPart2Result = async () => {
+        try {
+          const res = await api.analyze.getTask(taskId!);
+          
+          // 检查状态
+          if (res.status === 'completed') {
+            // 验证数据完整性：检查 sections 中是否有 Part2 数据
+            const structuredResult = res.structured_result || res;
+            const sections = structuredResult.sections || structuredResult;
+            
+            const hasPart2Data = sections.color || sections.lightroom || sections.photoshop;
+            
+            if (hasPart2Data) {
+              // 使用数据适配器转换数据
+              const adaptedData = adaptBackendToFrontend(structuredResult);
+              
+              // 合并数据到现有结果
+              setResults((prev: any) => ({ ...prev, ...adaptedData }));
+              
+              // 切换到 synthesis 阶段
+              setWorkflowStage('synthesis');
+              toast.success("EXECUTION VECTORS DECRYPTED");
+              return true; // 停止轮询
+            } else {
+              // 数据未准备好，继续轮询
+              console.log("Part2 data not ready yet, continuing to poll...");
+            }
+          } else if (res.status === 'failed' || res.status === 'error') {
+            toast.error("Part2 analysis failed");
+            setWorkflowStage('diagnosis');
+            return true; // 停止轮询
+          }
+          
+          // 检查是否超过最大尝试次数
+          attempts++;
+          if (attempts >= maxAttempts) {
+            toast.error("Part2 analysis timeout");
+            setWorkflowStage('diagnosis');
+            return true; // 停止轮询
+          }
+          
+          return false; // 继续轮询
+        } catch (error) {
+          console.error("Polling error:", error);
+          attempts++;
+          if (attempts >= maxAttempts) {
+            toast.error("Part2 analysis timeout");
+            setWorkflowStage('diagnosis');
+            return true;
+          }
+          return false;
+        }
+      };
+      
+      // 首次轮询（等待2秒后开始，给后端一些处理时间）
+      setTimeout(async () => {
+        let shouldContinue = true;
+        while (shouldContinue) {
+          shouldContinue = !(await pollPart2Result());
+          if (shouldContinue) {
+            await new Promise(resolve => setTimeout(resolve, pollInterval));
+          }
+        }
+      }, 2000);
+      
+    } catch (error) {
+      console.error("Part2 trigger error:", error);
+      toast.error("Failed to trigger Part2 analysis");
+      setWorkflowStage('diagnosis');
+    }
+  };
+
+  // Simulation Animation Sequence
+  const handleSimulate = () => {
+      setWorkflowStage('simulating');
+      setIsWarping(true);
+      
+      // 1. Trigger Warp Effect (1.5s duration to match warp transition)
+      setTimeout(() => {
+          onSimulate(); // Navigate away
+      }, 1500);
+  };
+
+  return (
+    <div className="space-y-12 pb-24 relative z-10 w-full max-w-[1400px] mx-auto px-4">
+      <AnimatePresence>
+          {isWarping && <WarpOverlay />}
       </AnimatePresence>
 
-      <div className="min-h-screen bg-[#f5f5f7]">
-        {/* Back Button - Top Left */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="fixed top-6 left-6 z-50"
-        >
-          <button
-            onClick={onBack}
-            className="flex items-center gap-2 px-4 py-2 bg-white/80 backdrop-blur-md rounded-full border border-gray-200/60 shadow-sm hover:shadow-md hover:bg-white transition-all text-gray-700 hover:text-gray-900"
-            style={{ fontSize: '14px', fontWeight: 500 }}
-          >
-            <svg 
-              className="w-4 h-4" 
-              fill="none" 
-              viewBox="0 0 24 24" 
-              stroke="currentColor" 
-              strokeWidth={2.5}
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M15 19l-7-7 7-7" />
-            </svg>
-            返回
-          </button>
-        </motion.div>
-
-        {/* User Menu - Top Right */}
-        <div className="fixed top-6 right-6 z-50">
-          <UserMenu onNavigate={(page) => {
-            // 导航处理已在 UserMenu 组件内部完成
-            handleNavigate(page);
-          }} />
-        </div>
-
-        {/* Top Right Actions */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          className="fixed top-6 right-24 z-50 flex items-center gap-3"
-        >
-          {/* Show Report Button in Stage 2 */}
-          {showStage === 'stage2' && (
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.2 }}
-              onClick={() => setShowReport(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-white border-2 border-gray-300 hover:border-indigo-400 text-gray-700 hover:text-indigo-600 rounded-full shadow-sm hover:shadow-lg transition-all group"
-              style={{ fontSize: '14px', fontWeight: 600 }}
-            >
-              <FileText className="w-4 h-4 group-hover:scale-110 transition-transform" />
-              仿色报告
-            </motion.button>
-          )}
-
-          {/* Show Style Simulation button only in Stage 2 */}
-          {showStage === 'stage2' && (
-            <motion.button
-              initial={{ opacity: 0, scale: 0.8 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: 0.3 }}
-              onClick={() => setShowStyleSimulation(true)}
-              className="flex items-center gap-2 px-5 py-2.5 bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white rounded-full shadow-lg hover:shadow-xl transition-all group"
-              style={{ fontSize: '14px', fontWeight: 600 }}
-            >
-              <Wand2 className="w-4 h-4 group-hover:rotate-12 transition-transform" />
-              风格模拟
-            </motion.button>
-          )}
-        </motion.div>
-
-        {/* Main Content */}
-        <div className="container mx-auto px-6 pt-24 pb-16">
-          {/* Header */}
-          <motion.div
-            key={showStage}
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="text-center mb-12"
-          >
-            {showStage === 'stage2' && (
-              <motion.div
-                initial={{ scale: 0 }}
-                animate={{ scale: 1 }}
-                transition={{ type: 'spring', damping: 15, delay: 0.2 }}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-gradient-to-r from-green-100 to-emerald-100 border border-green-300 rounded-full mb-4"
-              >
-                <motion.div
-                  animate={{ rotate: 360 }}
-                  transition={{ duration: 2, repeat: Infinity, ease: 'linear' }}
-                >
-                  <Sparkles className="w-4 h-4 text-green-600" />
-                </motion.div>
-                <span className="text-green-700 text-sm" style={{ fontWeight: 600 }}>
-                  分析完成
-                </span>
-              </motion.div>
-            )}
-            
-            <h1 
-              className="bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 bg-clip-text text-transparent mb-4"
-              style={{ 
-                fontSize: '48px', 
-                fontWeight: 800,
-                letterSpacing: '-0.02em',
-                lineHeight: '1.1'
-              }}
-            >
-              {showStage === 'stage1' ? '基础分析完成' : '完整专业方案'}
-            </h1>
-            <p 
-              className="text-gray-600 max-w-2xl mx-auto"
-              style={{ fontSize: '18px', lineHeight: '1.6' }}
-            >
-              {showStage === 'stage1' 
-                ? 'AI 已完成照片的基础分析，点击下方按钮获取完整的调色方案'
-                : '完整的专业调色方案已生成，包含 Lightroom 和 Photoshop 的详细参数'
-              }
-            </p>
-          </motion.div>
-
-          {/* Cards Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-12">
-            {displayCards.map((card, index) => {
-              const isNewCard = showStage === 'stage2' && index >= 3;
-              return (
-                <motion.div
-                  key={card.id}
-                  initial={{ opacity: 0, y: 30, scale: 0.9 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  transition={{ 
-                    delay: isNewCard ? (index - 3) * 0.15 : index * 0.1,
-                    type: 'spring',
-                    damping: 20,
-                    stiffness: 100
-                  }}
-                  onClick={() => {
-                    handleCardClick(card.id);
-                    setActiveNavIndex(index);
-                  }}
-                  onMouseEnter={() => setHoveredCard(card.id)}
-                  onMouseLeave={() => setHoveredCard(null)}
-                  className="group cursor-pointer relative"
-                >
-                  {/* New badge for newly revealed cards */}
-                  {isNewCard && (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0, rotate: -12 }}
-                      animate={{ opacity: 1, scale: 1, rotate: 0 }}
-                      transition={{ delay: (index - 3) * 0.15 + 0.3, type: 'spring', damping: 12 }}
-                      className="absolute -top-2 -right-2 z-10 px-3 py-1 bg-gradient-to-r from-yellow-400 to-orange-400 text-white rounded-full shadow-lg"
-                      style={{ fontSize: '11px', fontWeight: 700 }}
-                    >
-                      NEW
-                    </motion.div>
-                  )}
-                  
-                  <div className={`
-                    relative h-full p-8 rounded-3xl border-2 border-gray-200/60
-                    ${card.bgColor}
-                    backdrop-blur-sm
-                    transition-all duration-300
-                    hover:border-gray-300
-                    hover:shadow-xl
-                    hover:scale-[1.02]
-                    hover:-translate-y-1
-                  `}>
-                    {/* Icon */}
-                    <div className="mb-6">
-                      <div className={`
-                        inline-flex p-4 rounded-2xl
-                        bg-white/80 backdrop-blur-sm
-                        border border-gray-200/60
-                        ${card.color}
-                        transition-transform duration-300
-                        group-hover:scale-110
-                        group-hover:rotate-3
-                      `}>
-                        {card.icon}
-                      </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="mb-6">
-                      <h3 
-                        className="text-gray-900 mb-1"
-                        style={{ 
-                          fontSize: '19px',
-                          fontWeight: 700,
-                          letterSpacing: '-0.02em',
-                          lineHeight: '1.1'
-                        }}
-                      >
-                        {card.title}
-                      </h3>
-                      <p 
-                        className="text-gray-700 mb-0.5"
-                        style={{
-                          fontSize: '13px',
-                          fontWeight: 500,
-                          letterSpacing: '-0.01em',
-                          lineHeight: '1.3'
-                        }}
-                      >
-                        {card.subtitle}
-                      </p>
-                      <p 
-                        className="text-gray-500"
-                        style={{
-                          fontSize: '12px',
-                          fontWeight: 400,
-                          lineHeight: '1.4',
-                        }}
-                      >
-                        {card.description}
-                      </p>
-                    </div>
-
-                    {/* Learn More Link */}
-                    <motion.div
-                      animate={{
-                        x: hoveredCard === card.id ? 4 : 0,
-                      }}
-                      transition={{ duration: 0.3 }}
-                      className="flex items-center gap-1 text-blue-600"
-                      style={{
-                        fontSize: '13px',
-                        fontWeight: 500,
-                      }}
-                    >
-                      <span>查看详情</span>
-                      <ChevronRight 
-                        className="w-3.5 h-3.5 transition-transform"
-                      />
-                    </motion.div>
-
-                    {/* Hover Glow Effect */}
-                    <div className="absolute inset-0 rounded-3xl bg-gradient-to-br from-white/40 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
-                  </div>
-                </motion.div>
-              );
-            })}
-          </div>
-
-          {/* View Detailed Plan Button (Stage 1 Only) */}
-          {showStage === 'stage1' && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.4 }}
-              className="flex flex-col items-center gap-6"
-            >
-              {/* Decorative background */}
-              <div className="relative">
-                {/* Glow effect */}
-                <div className="absolute inset-0 blur-3xl bg-gradient-to-r from-blue-400/20 via-purple-400/20 to-pink-400/20 rounded-full scale-150" />
-                
-                <motion.button
-                  onClick={handleViewDetailedPlan}
-                  whileHover={{ scale: 1.05, y: -2 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="group relative px-12 py-5 rounded-2xl bg-gradient-to-r from-blue-500 via-purple-500 to-pink-500 text-white shadow-2xl hover:shadow-3xl overflow-hidden transition-all duration-300"
-                >
-                  {/* Animated background */}
-                  <div className="absolute inset-0 bg-gradient-to-r from-blue-600 via-purple-600 to-pink-600 opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                  
-                  {/* Content */}
-                  <div className="relative flex items-center gap-3">
-                    <span style={{ fontSize: '18px', fontWeight: 700 }}>
-                      查看详细方案
-                    </span>
-                    <motion.div
-                      animate={{ x: [0, 4, 0] }}
-                      transition={{ duration: 1.5, repeat: Infinity }}
-                    >
-                      <ArrowRight className="w-5 h-5" />
-                    </motion.div>
-                  </div>
-
-                  {/* Shine effect */}
-                  <div className="absolute inset-0 translate-x-[-100%] group-hover:translate-x-[100%] bg-gradient-to-r from-transparent via-white/30 to-transparent transition-transform duration-700" />
-                </motion.button>
+      {/* HEADER - WORKFLOW STATUS */}
+      <div className="flex items-center justify-between border-b border-white/10 pb-6 mb-12">
+          <div className="flex items-center gap-4">
+              <motion.div 
+                 animate={{ opacity: [1, 0.5, 1] }} 
+                 transition={{ duration: 2, repeat: Infinity }}
+                 className="w-2 h-2 bg-blue-500 rounded-full"
+              />
+              <div className="text-xs font-mono text-blue-400 tracking-[0.2em]">
+                  {workflowStage === 'diagnosis' ? t('status.awaiting') : workflowStage === 'decrypting' ? t('status.decrypting') : t('status.ready')}
               </div>
-
-              {/* Helper text */}
-              <motion.p
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: 0.6 }}
-                className="text-gray-500 text-sm"
-              >
-                包含色彩方案、Lightroom 和 Photoshop 的完整调整参数
-              </motion.p>
-            </motion.div>
-          )}
-
-          {/* Stage indicator */}
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ delay: 0.6 }}
-            className="flex justify-center items-center gap-2 mt-8"
-          >
-            <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
-              showStage === 'stage1' ? 'bg-blue-500 w-6' : 'bg-gray-300'
-            }`} />
-            <div className={`w-2 h-2 rounded-full transition-all duration-300 ${
-              showStage === 'stage2' ? 'bg-blue-500 w-6' : 'bg-gray-300'
-            }`} />
-          </motion.div>
-        </div>
+          </div>
+          <div className="flex gap-2">
+              {[1, 2, 3].map(step => (
+                  <motion.div 
+                      key={step} 
+                      animate={{ 
+                          backgroundColor: (step === 1 && workflowStage === 'diagnosis') || 
+                          (step === 2 && (workflowStage === 'synthesis' || workflowStage === 'decrypting')) ||
+                          (step === 3 && workflowStage === 'simulating') 
+                          ? '#3b82f6' : '#333'
+                      }}
+                      className="h-1 w-12 rounded-full"
+                  />
+              ))}
+          </div>
       </div>
 
-      {/* Theme Detail Modal */}
-      <ThemeDetailModal
-        themeId={selectedTheme}
-        onClose={() => setSelectedTheme(null)}
-        results={results}
-        targetImageUrl={targetImageUrl}
-        sourceImageUrl={sourceImageUrl}
-      />
+      {/* SEQUENCE 01: DIAGNOSIS (Analysis Layer) */}
+      <div className="relative">
+         <div className="absolute -top-16 left-0 text-[120px] font-bold text-white/[0.02] font-display pointer-events-none select-none">
+            {t('cards.analysis_bg')}
+         </div>
+         
+         <div className="flex items-center gap-4 mb-8 pl-2 border-l-2 border-blue-500">
+            <h2 className="text-sm font-display font-bold text-white tracking-widest">{t('cards.diag_layer')}</h2>
+            <span className="text-xs font-mono text-gray-500 uppercase">{t('cards.ai_assess')}</span>
+         </div>
+         
+         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+            {[0,1,2].map((i) => (
+                 <TiltCard 
+                    key={i} 
+                    onClick={() => setActiveModal(['review','composition','lighting'][i])} 
+                    delay={i * 100} 
+                    locked={false} 
+                    index={i}
+                 >
+                    <CardContent 
+                        title={[t('cards.review'),t('cards.composition'),t('cards.lighting')][i]} 
+                        subtitle={[t('cards.aesthetic'),t('cards.geometry'),t('cards.zone')][i]} 
+                        number={i+1} 
+                        icon={[Eye, Layers, Zap][i]} 
+                    />
+                </TiltCard>
+            ))}
+         </div>
+      </div>
 
-      {/* Style Simulation */}
-      <StyleSimulation
-        isOpen={showStyleSimulation}
-        onClose={() => setShowStyleSimulation(false)}
-        sourceImageUrl={sourceImageUrl}
-        targetImageUrl={targetImageUrl}
-        taskId={currentTaskId || undefined}
-      />
+      {/* TRANSITION CONTROL - THE CORE INTERACTION */}
+      <div className="relative h-24 flex items-center justify-center my-12">
+          <div className="absolute inset-0 flex justify-center items-center pointer-events-none">
+               <div className="h-full w-px bg-gradient-to-b from-white/10 via-blue-500/50 to-white/10"></div>
+          </div>
 
-      {/* Color Cloning Report */}
-      <ColorCloningReport
-        open={showReport}
-        onClose={() => setShowReport(false)}
-        results={results}
-        sourceImageUrl={sourceImageUrl}
-        targetImageUrl={targetImageUrl}
-      />
-    </>
+          <AnimatePresence mode="wait">
+            {workflowStage === 'diagnosis' && (
+                <motion.button 
+                    key="unlock-btn"
+                    initial={{ opacity: 0, scale: 0.8 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.5, filter: 'blur(10px)' }}
+                    onClick={handleUnlock}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="relative z-20 px-10 py-4 bg-black border border-white/20 text-white hover:bg-white hover:text-black hover:border-white transition-colors duration-300 rounded-full shadow-[0_0_20px_rgba(0,0,0,0.8)] group"
+                >
+                    <span className="flex items-center gap-3 text-xs font-bold tracking-[0.2em] uppercase font-display">
+                        <Unlock className="w-3 h-3" /> {t('cards.unlock_btn')}
+                    </span>
+                </motion.button>
+            )}
+
+            {workflowStage === 'decrypting' && (
+                <motion.div 
+                    key="decrypting-loader"
+                    initial={{ width: 0, opacity: 0 }}
+                    animate={{ width: 300, opacity: 1 }}
+                    exit={{ opacity: 0 }}
+                    className="relative z-20 h-10 bg-black border border-blue-500/50 rounded-full overflow-hidden flex items-center justify-center"
+                >
+                    <div className="absolute inset-0 bg-blue-500/10 animate-pulse"></div>
+                    <motion.div 
+                        className="absolute left-0 top-0 bottom-0 bg-blue-600/50"
+                        initial={{ width: "0%" }}
+                        animate={{ width: "100%" }}
+                        transition={{ duration: 2, ease: "easeInOut" }}
+                    />
+                    <div className="relative z-10 flex items-center gap-3 px-6">
+                       <Scan className="w-4 h-4 text-blue-400 animate-spin" />
+                       <span className="text-[10px] font-mono text-blue-400 tracking-[0.2em] animate-pulse">{t('cards.decrypting_vec')}</span>
+                    </div>
+                </motion.div>
+            )}
+          </AnimatePresence>
+      </div>
+
+      {/* SEQUENCE 02: SYNTHESIS (Execution Layer) */}
+      <div className="relative min-h-[400px]">
+         {/* Layer Title */}
+         <div className="absolute -top-16 right-0 text-[120px] font-bold text-white/[0.02] font-display pointer-events-none select-none text-right">
+            {t('cards.exec_bg')}
+         </div>
+
+         <div className="flex items-center gap-4 mb-8 pl-2 border-l-2 border-amber-500">
+            <h2 className="text-sm font-display font-bold text-white tracking-widest">{t('cards.exec_layer')}</h2>
+            <span className="text-xs font-mono text-gray-500 uppercase">{t('cards.tech_proc')}</span>
+         </div>
+         
+         <div className="relative">
+             {/* Decryption Effects */}
+             <AnimatePresence>
+                {workflowStage === 'decrypting' && (
+                    <motion.div 
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        className="absolute inset-0 z-50 border border-blue-500/20 bg-black/50 backdrop-blur-sm overflow-hidden rounded-lg"
+                    >
+                        <MatrixDecryption />
+                        <ScannerLine />
+                        <div className="absolute inset-0 flex items-center justify-center">
+                            <div className="text-4xl font-display font-bold text-white/10 tracking-widest animate-pulse">{t('cards.locked')}</div>
+                        </div>
+                    </motion.div>
+                )}
+             </AnimatePresence>
+
+             {/* The Grid */}
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {[3,4,5].map((i) => (
+                    <TiltCard 
+                        key={i} 
+                        onClick={() => setActiveModal(['color','lightroom','photoshop'][i-3])} 
+                        delay={(i-3) * 150} // Staggered entry
+                        locked={workflowStage === 'diagnosis' || workflowStage === 'decrypting'}
+                        index={i}
+                    >
+                        <CardContent 
+                            title={[t('cards.color'),t('cards.lightroom'),t('cards.photoshop')][i-3]} 
+                            subtitle={[t('cards.spectral'),t('cards.raw_dev'),t('cards.retouch')][i-3]} 
+                            number={i+1} 
+                            icon={[Activity, Aperture, Hexagon][i-3]} 
+                        />
+                    </TiltCard>
+                ))}
+             </div>
+         </div>
+         
+         {/* FINAL RENDER BUTTON */}
+         <AnimatePresence>
+            {workflowStage === 'synthesis' && (
+                <motion.div 
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ delay: 0.8, duration: 0.5 }}
+                    className="flex justify-center mt-24 relative"
+                >
+                    <motion.button 
+                      onClick={handleSimulate}
+                      whileHover={{ scale: 1.05, boxShadow: "0 0 40px rgba(0,122,255,0.6)" }}
+                      whileTap={{ scale: 0.95 }}
+                      className="
+                        relative z-20 group
+                        px-24 py-8 
+                        bg-blue-600 text-white 
+                        transition-all duration-300 
+                        rounded-sm overflow-hidden
+                        shadow-[0_0_40px_rgba(0,122,255,0.3)]
+                      "
+                    >
+                        <div className="absolute inset-0 bg-[url('https://grainy-gradients.vercel.app/noise.svg')] opacity-20 mix-blend-overlay"></div>
+                        <span className="relative z-10 flex items-center gap-4 text-lg font-bold font-display tracking-[0.2em] uppercase">
+                            <Cpu className="w-6 h-6" /> {t('cards.init_sim')}
+                        </span>
+                        {/* Button Shine */}
+                        <div className="absolute inset-0 -translate-x-full group-hover:translate-x-full transition-transform duration-700 bg-gradient-to-r from-transparent via-white/30 to-transparent transform skew-x-12"></div>
+                    </motion.button>
+                </motion.div>
+            )}
+         </AnimatePresence>
+      </div>
+
+      {/* Modals */}
+      {activeModal === 'review' && <ReviewModal data={results.review} images={images} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'composition' && <CompositionModal data={results.composition} images={images} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'lighting' && <LightingModal data={results.lighting} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'color' && <ColorModal data={results.color} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'lightroom' && <LightroomModal data={results.lightroom} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'photoshop' && <PhotoshopModal data={results.photoshop} onClose={() => setActiveModal(null)} />}
+    </div>
   );
-}
+};

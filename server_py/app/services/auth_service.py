@@ -141,32 +141,78 @@ class AuthService:
         return user
 
     def login_user(self, db: Session, email: str, password: str, token_type: str = "session") -> Dict[str, Any]:
-        """用户登录"""
+        """
+        用户登录
+        根据注册登录与权限设计方案实现
+        
+        Args:
+            db: 数据库会话
+            email: 用户邮箱
+            password: 用户密码（明文）
+            token_type: Token 类型（默认 "session"）
+        
+        Returns:
+            包含 accessToken 和 user 信息的字典
+        
+        Raises:
+            ValueError: 如果邮箱或密码错误、账号被禁用等业务逻辑错误
+            Exception: 如果数据库操作失败等未预期的错误
+        """
+        # 【日志记录】记录登录服务调用
+        logger.info(f"【登录服务】开始处理登录请求: 邮箱={email}")
+        
+        # 【步骤 1】查找用户
+        logger.debug(f"【登录服务】步骤 1：查找用户，邮箱={email}")
         user = db.query(User).filter(User.email == email).first()
         if not user:
+            logger.warning(f"【登录服务】❌ 用户不存在: 邮箱={email}")
             raise ValueError("邮箱或密码错误")
 
+        # 【步骤 2】验证密码
+        logger.debug(f"【登录服务】步骤 2：验证密码，用户ID={user.id}")
         if not self.verify_password(password, user.password_hash):
+            logger.warning(f"【登录服务】❌ 密码错误: 邮箱={email}, 用户ID={user.id}")
             raise ValueError("邮箱或密码错误")
 
+        # 【步骤 3】检查账号状态
+        logger.debug(f"【登录服务】步骤 3：检查账号状态，用户ID={user.id}, 状态={user.status}")
         if user.status != "active":
+            logger.warning(f"【登录服务】❌ 账号已被禁用: 邮箱={email}, 用户ID={user.id}, 状态={user.status}")
             raise ValueError("账号已被禁用")
 
-        # 生成 Token
-        token = self.create_token(user.id, token_type=token_type, role=user.role)
+        # 【步骤 4】生成 Token
+        logger.debug(f"【登录服务】步骤 4：生成 Token，用户ID={user.id}, 角色={user.role}")
+        try:
+            # 【修复】修复缩进错误：token 生成语句应该在 try 块内
+            token = self.create_token(user.id, token_type=token_type, role=user.role)
+            logger.debug(f"【登录服务】Token 生成成功，长度: {len(token)} 字符")
+        except Exception as e:
+            logger.error(f"【登录服务】❌ Token 生成失败: {type(e).__name__}: {str(e)}", exc_info=True)
+            raise ValueError(f"Token 生成失败: {str(e)}")
 
-        # 保存 Token 到数据库
-        expire = datetime.utcnow() + timedelta(minutes=self.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-        auth_token = AuthToken(
-            user_id=user.id,
-            type=token_type,
-            token=token,
-            expired_at=expire,
-            consumed=False,
-        )
-        db.add(auth_token)
-        db.commit()
+        # 【步骤 5】保存 Token 到数据库
+        logger.debug(f"【登录服务】步骤 5：保存 Token 到数据库，用户ID={user.id}")
+        try:
+            # 【修复】修复缩进错误：expire 和 auth_token 相关语句应该在 try 块内
+            expire = datetime.utcnow() + timedelta(minutes=self.settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+            auth_token = AuthToken(
+                user_id=user.id,
+                type=token_type,
+                token=token,
+                expired_at=expire,
+                consumed=False,
+            )
+            db.add(auth_token)
+            db.commit()
+            logger.debug(f"【登录服务】Token 已保存到数据库，过期时间: {expire.strftime('%Y-%m-%d %H:%M:%S')}")
+        except Exception as e:
+            # 数据库操作失败，回滚事务
+            db.rollback()
+            logger.error(f"【登录服务】❌ Token 保存失败: {type(e).__name__}: {str(e)}", exc_info=True)
+            raise ValueError(f"Token 保存失败: {str(e)}")
 
+        # 【步骤 6】返回结果
+        logger.info(f"【登录服务】✅ 登录成功: 邮箱={email}, 用户ID={user.id}, 角色={user.role}")
         return {
             "accessToken": token,
             "user": {

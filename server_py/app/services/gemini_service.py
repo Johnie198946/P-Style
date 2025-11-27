@@ -1,12 +1,18 @@
 """
 Gemini 服务 - 增强版，支持 Part1/Part2/Part3 和缓存
 根据开发方案第 22 节实现
+
+【错误处理增强】
+- 添加重试机制：对于网络连接错误（如 Server disconnected），自动重试最多 3 次
+- 指数退避：每次重试间隔递增（1s, 2s, 4s）
+- 区分错误类型：网络错误可重试，业务错误不重试
 """
 import os
 import time
 from typing import List, Dict, Any, Optional
 from loguru import logger
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
+import random  # 用于添加随机抖动，避免重试风暴
 
 try:
     from google import genai
@@ -24,7 +30,9 @@ class GeminiService:
         model: str = "gemini-3-pro-preview",
         flash_model: str = "gemini-2.5-flash-image",
         image_model: str = "gemini-3-pro-image-preview",
-        timeout_ms: int = 120000,  # 默认 120 秒（毫秒）
+        timeout_ms: int = 180000,  # 【修复】默认 180 秒（毫秒），与配置文件保持一致
+        # 注意：实际使用时应该通过 get_gemini_service() 获取实例，它会从配置文件读取 GEMINI_TIMEOUT_MS
+        # 这个默认值仅用于直接实例化 GeminiService 的情况（如测试脚本）
     ):
         """
         初始化 Gemini 服务
@@ -34,7 +42,9 @@ class GeminiService:
             model: Part1/Part2 使用的模型（默认 gemini-3-pro-preview）
             flash_model: Part3 风格模拟使用的回退模型（默认 gemini-2.5-flash-image，快速生成，1024 像素分辨率）
             image_model: Part3 风格模拟使用的主要模型（默认 gemini-3-pro-image-preview，支持 4K 输出）
-            timeout_ms: Gemini API 调用超时时间（毫秒），默认 120 秒
+            timeout_ms: Gemini API 调用超时时间（毫秒），默认 180 秒（与配置文件保持一致）
+                【重要】根据实际测试，Part1 分析可能需要 60-70 秒，AI 诊断可能需要 70+ 秒
+                考虑到网络延迟和 Gemini API 响应时间波动，设置为 180 秒以确保稳定性
         """
         self.api_key = api_key
         self.model = model
@@ -94,26 +104,42 @@ class GeminiService:
             # 构建生成配置（根据开发方案第 22 节，支持 response_mime_type 和 thinking_level）
             from google.genai import types
             
-            config_params = {}
-            if response_mime:
-                config_params["response_mime_type"] = response_mime
-            
-            # 设置 thinking_level（Gemini 3.0 新特性）
-            # 注意：需要确认 google-genai SDK 是否支持 thinking_level 参数
-            # 如果 SDK 支持，可以通过 config 传递；如果不支持，先记录日志，等待 SDK 更新
-            if thinking_level:
-                # 尝试设置 thinking_level（如果 SDK 支持）
-                try:
-                    # 检查 GenerateContentConfig 是否支持 thinking_level
-                    # 如果支持，应该可以通过参数传递
-                    # 暂时先记录日志，实际设置需要根据 SDK 文档确认
-                    logger.info(f"Gemini 3.0 thinking_level={thinking_level} (待 SDK 确认支持方式)")
+            # 【补丁3：Gemini SDK 配置写法】根据 google-genai SDK 标准写法，设置 temperature 和 top_p
+            # 对于结构化输出任务，temperature 设为 0.2（越低越好），top_p 设为 0.95
+            # 注意：google-genai SDK 使用 types.GenerateContentConfig 来配置生成参数
+            config = None
+            try:
+                # 【补丁3】根据 google-genai SDK 标准写法，通过 GenerateContentConfig 传递所有配置参数
+                generation_config_params = {}
+                if response_mime:
+                    generation_config_params["response_mime_type"] = response_mime
+                generation_config_params["temperature"] = 0.2  # 保持冷静，不要胡编乱造（对于结构化输出任务，越低越好）
+                generation_config_params["top_p"] = 0.95
+                generation_config_params["top_k"] = 64
+                generation_config_params["max_output_tokens"] = 8192
+                
+                # 设置 thinking_level（Gemini 3.0 新特性）
+                # 注意：需要确认 google-genai SDK 是否支持 thinking_level 参数
+                if thinking_level:
+                    # 尝试设置 thinking_level（如果 SDK 支持）
+                    logger.info(f"【补丁3】Gemini 3.0 thinking_level={thinking_level} (尝试设置)")
                     # TODO: 如果 SDK 支持，取消下面的注释
-                    # config_params["thinking_level"] = thinking_level
-                except Exception as e:
-                    logger.warning(f"设置 thinking_level 失败（可能 SDK 尚未支持）: {e}")
-            
-            config = types.GenerateContentConfig(**config_params) if config_params else None
+                    # generation_config_params["thinking_level"] = thinking_level
+                
+                # 使用 types.GenerateContentConfig 创建配置对象
+                config = types.GenerateContentConfig(**generation_config_params)
+                logger.info(f"【补丁3】Gemini generation_config 已设置: temperature=0.2, top_p=0.95, top_k=64, max_output_tokens=8192")
+            except Exception as e:
+                # 如果 SDK 不支持某些参数，回退到只设置 response_mime_type
+                logger.warning(f"【补丁3】设置 generation_config 失败（可能 SDK 版本不支持）: {e}，回退到只设置 response_mime_type")
+                try:
+                    if response_mime:
+                        config = types.GenerateContentConfig(response_mime_type=response_mime)
+                    else:
+                        config = None
+                except Exception as fallback_e:
+                    logger.warning(f"【补丁3】回退配置也失败: {fallback_e}，使用 None")
+                    config = None
 
             # 尝试使用缓存（如果启用）
             cached_content = None
@@ -171,26 +197,61 @@ class GeminiService:
 
             return result
 
-        try:
-            # 【超时控制】使用 ThreadPoolExecutor 执行 Gemini API 调用，并设置超时
-            logger.info(f"Gemini {stage} 开始调用，超时设置: {self.timeout_seconds:.1f}秒")
-            future = self._executor.submit(_call_gemini)
-            result = future.result(timeout=self.timeout_seconds)
-            
-            elapsed = time.time() - start_time
-            thinking_info = f", thinking_level={thinking_level}" if thinking_level else ""
-            logger.info(f"Gemini {stage} 调用完成，耗时: {elapsed:.2f}s, 模型: {self.model}{thinking_info}")
-            
-            return result
+        # 【重试机制】对于网络连接错误，自动重试最多 3 次
+        max_retries = 3
+        retry_delays = [1, 2, 4]  # 指数退避：1秒、2秒、4秒
+        
+        for attempt in range(max_retries):
+            try:
+                # 【超时控制】使用 ThreadPoolExecutor 执行 Gemini API 调用，并设置超时
+                if attempt == 0:
+                    logger.info(f"Gemini {stage} 开始调用，超时设置: {self.timeout_seconds:.1f}秒")
+                else:
+                    logger.info(f"Gemini {stage} 第 {attempt + 1} 次重试，超时设置: {self.timeout_seconds:.1f}秒")
+                
+                future = self._executor.submit(_call_gemini)
+                result = future.result(timeout=self.timeout_seconds)
+                
+                elapsed = time.time() - start_time
+                thinking_info = f", thinking_level={thinking_level}" if thinking_level else ""
+                if attempt > 0:
+                    logger.info(f"Gemini {stage} 调用成功（第 {attempt + 1} 次重试），耗时: {elapsed:.2f}s, 模型: {self.model}{thinking_info}")
+                else:
+                    logger.info(f"Gemini {stage} 调用完成，耗时: {elapsed:.2f}s, 模型: {self.model}{thinking_info}")
+                
+                return result
 
-        except FutureTimeoutError:
-            elapsed = time.time() - start_time
-            logger.error(f"Gemini {stage} 调用超时，耗时: {elapsed:.2f}s，超时设置: {self.timeout_seconds:.1f}秒")
-            raise TimeoutError(f"Gemini API 调用超时（超过 {self.timeout_seconds:.1f} 秒）")
-        except Exception as e:
-            elapsed = time.time() - start_time
-            logger.error(f"Gemini {stage} 调用失败，耗时: {elapsed:.2f}s，错误: {e}")
-            raise
+            except FutureTimeoutError:
+                elapsed = time.time() - start_time
+                logger.error(f"Gemini {stage} 调用超时，耗时: {elapsed:.2f}s，超时设置: {self.timeout_seconds:.1f}秒")
+                # 超时错误不重试，直接抛出
+                raise TimeoutError(f"Gemini API 调用超时（超过 {self.timeout_seconds:.1f} 秒）")
+            
+            except Exception as e:
+                elapsed = time.time() - start_time
+                error_type = type(e).__name__
+                error_detail = str(e)
+                
+                # 【判断是否可重试的错误】网络连接错误可以重试，业务错误不重试
+                is_retryable = (
+                    "Server disconnected" in error_detail or
+                    "Connection" in error_type or
+                    "RemoteProtocolError" in error_type or
+                    "ConnectionError" in error_type or
+                    "UNEXPECTED_EOF" in error_detail or
+                    "Broken pipe" in error_detail or
+                    "Connection reset" in error_detail
+                )
+                
+                # 如果是最后一次尝试，或者不是可重试的错误，直接抛出
+                if attempt == max_retries - 1 or not is_retryable:
+                    logger.error(f"Gemini {stage} 调用失败，耗时: {elapsed:.2f}s，错误: {error_type}: {error_detail}")
+                    raise
+                
+                # 如果是可重试的错误，等待后重试
+                wait_time = retry_delays[attempt] + random.uniform(0, 0.5)  # 添加随机抖动，避免重试风暴
+                logger.warning(f"Gemini {stage} 调用失败（可重试错误），耗时: {elapsed:.2f}s，错误: {error_type}: {error_detail}，将在 {wait_time:.2f} 秒后重试（第 {attempt + 1}/{max_retries} 次）")
+                time.sleep(wait_time)
 
     def generate_image(
         self,
@@ -530,10 +591,31 @@ class GeminiService:
 
 
 def get_gemini_service() -> GeminiService:
-    """获取 Gemini 服务实例（单例）"""
+    """
+    获取 Gemini 服务实例（单例）
+    根据开发方案第 22 节，支持 ClashX 代理配置
+    """
     from ..config import get_settings
 
     settings = get_settings()
+    
+    # 【代理配置】根据开发方案第 22 节，设置 HTTP/HTTPS 代理环境变量
+    # Gemini SDK 默认遵守上述代理环境变量，无需在代码中硬编码代理
+    # 注意：只有在配置中设置了代理时才设置环境变量，避免覆盖系统已有的代理设置
+    if settings.HTTP_PROXY:
+        os.environ["HTTP_PROXY"] = settings.HTTP_PROXY
+        logger.info(f"【Gemini 代理】设置 HTTP_PROXY={settings.HTTP_PROXY}")
+    if settings.HTTPS_PROXY:
+        os.environ["HTTPS_PROXY"] = settings.HTTPS_PROXY
+        logger.info(f"【Gemini 代理】设置 HTTPS_PROXY={settings.HTTPS_PROXY}")
+    
+    # 如果配置中都没有设置，但系统环境变量中已有，则使用系统环境变量
+    if not settings.HTTP_PROXY and not settings.HTTPS_PROXY:
+        if "HTTP_PROXY" in os.environ or "HTTPS_PROXY" in os.environ:
+            logger.info(f"【Gemini 代理】使用系统环境变量: HTTP_PROXY={os.environ.get('HTTP_PROXY', '未设置')}, HTTPS_PROXY={os.environ.get('HTTPS_PROXY', '未设置')}")
+        else:
+            logger.warning("【Gemini 代理】未配置代理，如果无法访问 Gemini API，请检查网络或配置 ClashX 代理")
+    
     return GeminiService(
         api_key=settings.GEMINI_API_KEY,
         model=settings.GEMINI_MODEL,

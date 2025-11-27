@@ -4,6 +4,88 @@ import { VisualAnalysisDashboard } from './analysis/VisualAnalysisDashboard';
 import { FalseColorOverlay } from './analysis/FalseColorOverlay';
 import { motion } from 'motion/react';
 import { useLanguage } from '../src/contexts/LanguageContext';
+import { DiagnosisRegion } from '../types/analysis';
+
+interface RegionOverlayProps {
+    regions: DiagnosisRegion[];
+}
+
+const RegionOverlay = ({ regions }: RegionOverlayProps) => {
+    if (!regions || regions.length === 0) return null;
+
+    return (
+        <div className="absolute inset-0 pointer-events-none z-30 animate-in fade-in duration-300">
+            <svg width="100%" height="100%" viewBox="0 0 1000 1000" preserveAspectRatio="none">
+                 <defs>
+                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+                      <feGaussianBlur stdDeviation="5" result="blur" />
+                      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+                    </filter>
+                  </defs>
+                {regions.map((region, index) => {
+                    const [ymin, xmin, ymax, xmax] = region.box_2d;
+                    const w = xmax - xmin;
+                    const h = ymax - ymin;
+                    return (
+                        <g key={index} className="animate-pulse">
+                            {/* 边框光晕 */}
+                            <rect
+                                x={xmin}
+                                y={ymin}
+                                width={w}
+                                height={h}
+                                fill="none"
+                                stroke="#38BDF8"
+                                strokeWidth="4"
+                                filter="url(#glow)"
+                                opacity="0.6"
+                                vectorEffect="non-scaling-stroke"
+                            />
+                            {/* 主边框 */}
+                            <rect
+                                x={xmin}
+                                y={ymin}
+                                width={w}
+                                height={h}
+                                fill="rgba(56, 189, 248, 0.1)"
+                                stroke="#38BDF8"
+                                strokeWidth="2"
+                                vectorEffect="non-scaling-stroke"
+                            />
+                            {/* 四角装饰 */}
+                            <path 
+                                d={`M${xmin},${ymin + 50} L${xmin},${ymin} L${xmin + 50},${ymin}`} 
+                                fill="none" stroke="#38BDF8" strokeWidth="4" vectorEffect="non-scaling-stroke" 
+                            />
+                            <path 
+                                d={`M${xmax - 50},${ymin} L${xmax},${ymin} L${xmax},${ymin + 50}`} 
+                                fill="none" stroke="#38BDF8" strokeWidth="4" vectorEffect="non-scaling-stroke" 
+                            />
+                            <path 
+                                d={`M${xmin},${ymax - 50} L${xmin},${ymax} L${xmin + 50},${ymax}`} 
+                                fill="none" stroke="#38BDF8" strokeWidth="4" vectorEffect="non-scaling-stroke" 
+                            />
+                            <path 
+                                d={`M${xmax - 50},${ymax} L${xmax},${ymax} L${xmax},${ymax - 50}`} 
+                                fill="none" stroke="#38BDF8" strokeWidth="4" vectorEffect="non-scaling-stroke" 
+                            />
+                            
+                            {/* 标签 */}
+                            <foreignObject x={xmin} y={Math.max(0, ymin - 40)} width="300" height="40">
+                                <div className="flex items-center gap-2">
+                                    <span className="bg-optic-accent text-black text-[12px] font-bold px-2 py-1 rounded-sm shadow-[0_0_10px_rgba(56,189,248,0.5)] font-mono uppercase tracking-wider">
+                                        {region.label}
+                                    </span>
+                                    <span className="h-px w-10 bg-optic-accent/50"></span>
+                                </div>
+                            </foreignObject>
+                        </g>
+                    );
+                })}
+            </svg>
+        </div>
+    );
+};
 
 interface PhotoUploadZoneProps {
   label: string;
@@ -11,9 +93,11 @@ interface PhotoUploadZoneProps {
   onFileSelect: (file: File) => void;
   className?: string;
   isScanning?: boolean;
+  dashboardRef?: React.RefObject<{ triggerDiagnosis: () => void } | null>; // 【新增】用于暴露 VisualAnalysisDashboard 的 ref
+  onStartDiagnosis?: () => void; // 【新增】用于通知父组件触发诊断
 }
 
-export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isScanning }: PhotoUploadZoneProps) => {
+export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isScanning, dashboardRef, onStartDiagnosis }: PhotoUploadZoneProps) => {
   const { t } = useLanguage();
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -26,6 +110,7 @@ export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isSc
   const [isFalseColorActive, setIsFalseColorActive] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [analysisData, setAnalysisData] = useState<any>(null);
+  const [activeRegions, setActiveRegions] = useState<DiagnosisRegion[]>([]); // 【新增】用于存储 AI 诊断的高亮区域
 
   const handleStartAnalysis = () => {
       setIsAnalyzing(true);
@@ -207,6 +292,9 @@ export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isSc
                 height={512}
              />
              
+             {/* AI Diagnosis Region Overlay */}
+             <RegionOverlay regions={activeRegions} />
+             
              {/* Gradient Overlay - Hide when inspecting to see clear colors */}
              <div className={`absolute inset-0 bg-gradient-to-t from-carbon-950 to-transparent pointer-events-none transition-opacity duration-200 ${hoverPos ? 'opacity-0' : 'opacity-90'}`}></div>
              
@@ -237,29 +325,75 @@ export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isSc
              {/* MAGNIFIER & INSPECTOR */}
              {hoverPos && colorInfo && !isFalseColorActive && (
                 <div 
-                    className="absolute z-50 pointer-events-none flex flex-col items-center gap-2"
+                    className="absolute z-50 pointer-events-none flex flex-col items-center gap-4"
                     style={{ 
                         left: hoverPos.x, 
                         top: hoverPos.y,
-                        transform: 'translate(-50%, -120%)' 
+                        transform: 'translate(-50%, -4rem)' // 4rem is half of w-32 (8rem), ensuring lens center aligns with cursor
                     }}
                 >
-                    {/* Lens */}
-                    <div className="w-24 h-24 rounded-full border-2 border-white/20 bg-carbon-950/50 backdrop-blur-xl overflow-hidden relative shadow-2xl flex items-center justify-center">
-                         <div className="absolute inset-0" style={{ backgroundColor: colorInfo.hex }}></div>
-                         <div className="w-full h-px bg-white/50 absolute top-1/2"></div>
-                         <div className="h-full w-px bg-white/50 absolute left-1/2"></div>
+                    {/* Advanced Lens Design */}
+                    <div className="relative w-32 h-32">
+                        {/* Outer rotating ring */}
+                        <div className="absolute inset-0 border border-dashed border-white/20 rounded-full animate-[spin_10s_linear_infinite]"></div>
+                        
+                        {/* Inner static ring with tick marks */}
+                        <div className="absolute inset-2 border border-white/10 rounded-full flex items-center justify-center">
+                            <div className="absolute w-full h-px bg-white/20 rotate-0"></div>
+                            <div className="absolute w-full h-px bg-white/20 rotate-45"></div>
+                            <div className="absolute w-full h-px bg-white/20 rotate-90"></div>
+                            <div className="absolute w-full h-px bg-white/20 rotate-135"></div>
+                        </div>
+
+                        {/* Main lens container */}
+                        <div className="absolute inset-4 rounded-full bg-black/40 backdrop-blur-md border border-white/30 overflow-hidden shadow-[0_0_30px_rgba(0,0,0,0.5)]">
+                            {/* Color preview */}
+                            <div className="absolute inset-0 transition-colors duration-75" style={{ backgroundColor: colorInfo.hex }}></div>
+                            
+                            {/* Crosshair */}
+                            <div className="absolute inset-0 flex items-center justify-center opacity-50">
+                                <div className="w-full h-px bg-white mix-blend-difference"></div>
+                                <div className="h-full w-px bg-white mix-blend-difference absolute"></div>
+                                <div className="w-2 h-2 border border-white/80 rounded-full mix-blend-difference absolute"></div>
+                            </div>
+                            
+                            {/* Glossy overlay */}
+                            <div className="absolute inset-0 bg-gradient-to-br from-white/20 to-transparent opacity-50 rounded-full pointer-events-none"></div>
+                        </div>
+
+                        {/* Decorative markers */}
+                        <div className="absolute top-0 left-1/2 -translate-x-1/2 -translate-y-1 w-1 h-2 bg-optic-accent"></div>
+                        <div className="absolute bottom-0 left-1/2 -translate-x-1/2 translate-y-1 w-1 h-2 bg-optic-accent"></div>
+                        <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 w-2 h-1 bg-optic-accent"></div>
+                        <div className="absolute right-0 top-1/2 translate-x-1 -translate-y-1/2 w-2 h-1 bg-optic-accent"></div>
                     </div>
 
-                    {/* Data Panel */}
-                    <div className="bg-black/80 border border-white/10 backdrop-blur rounded p-2 text-[9px] font-mono min-w-[100px]">
-                        <div className="flex justify-between gap-4 mb-1">
-                            <span className="text-gray-400">HEX</span>
-                            <span className="text-optic-accent font-bold">{colorInfo.hex}</span>
+                    {/* Data HUD */}
+                    <div className="flex flex-col gap-1">
+                        <div className="bg-black/90 border border-white/20 backdrop-blur-md rounded-sm p-2 min-w-[120px] shadow-xl relative overflow-hidden group">
+                            <div className="absolute top-0 left-0 w-0.5 h-full bg-optic-accent"></div>
+                            <div className="absolute inset-0 bg-optic-accent/5 opacity-0 group-hover:opacity-100 transition-opacity"></div>
+                            
+                            <div className="flex items-center justify-between gap-4 mb-1.5 border-b border-white/10 pb-1">
+                                <span className="text-[9px] text-white/40 font-mono tracking-widest">HEX</span>
+                                <span className="text-[10px] text-optic-accent font-bold font-mono tracking-wider shadow-[0_0_10px_rgba(56,189,248,0.3)]">{colorInfo.hex}</span>
+                            </div>
+                            
+                            <div className="flex items-center justify-between gap-4">
+                                <span className="text-[9px] text-white/40 font-mono tracking-widest">RGB</span>
+                                <div className="flex gap-2 font-mono text-[10px]">
+                                    <span className="text-red-400 font-bold">{colorInfo.r}</span>
+                                    <span className="text-green-400 font-bold">{colorInfo.g}</span>
+                                    <span className="text-blue-400 font-bold">{colorInfo.b}</span>
+                                </div>
+                            </div>
                         </div>
-                        <div className="flex justify-between gap-4">
-                            <span className="text-gray-400">RGB</span>
-                            <span className="text-white">{colorInfo.r} {colorInfo.g} {colorInfo.b}</span>
+                        
+                        {/* Coordinates */}
+                        <div className="flex justify-center">
+                           <div className="bg-black/60 border border-white/10 rounded-full px-2 py-0.5 text-[8px] text-white/50 font-mono">
+                                X:{Math.round(hoverPos.x)} Y:{Math.round(hoverPos.y)}
+                           </div>
                         </div>
                     </div>
                 </div>
@@ -290,7 +424,10 @@ export const PhotoUploadZone = ({ label, imageSrc, onFileSelect, className, isSc
            histogramElement={<Histogram imageSrc={imageSrc} height={120} className="border-0 bg-transparent p-0" />}
            analysisData={analysisData}
            isAnalyzing={isAnalyzing}
-           onStartAnalysis={handleStartAnalysis}
+           onStartAnalysis={onStartDiagnosis || handleStartAnalysis} // 【重要】使用 onStartDiagnosis 来同时触发两个图片的诊断
+           ref={dashboardRef} // 【重要】传递 ref，用于从外部触发诊断
+           onActiveRegionsChange={setActiveRegions} // 【新增】传递区域更新函数给子组件
+           hoverColor={colorInfo} // 【新增】传递鼠标悬停颜色到色彩雷达
          />
       </div>
     </div>

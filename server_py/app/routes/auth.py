@@ -125,11 +125,36 @@ async def login(
     - 如果请求中带有 Token（可能是无效的残留 Token），我们忽略它
     - 登录成功后，会返回新的 Token，覆盖旧的 Token
     """
+    # 【日志记录】记录登录请求（使用 INFO 级别，确保日志被记录）
+    logger.info("=" * 80)
+    logger.info("【用户登录】=========================================")
+    logger.info(f"【用户登录】函数被调用，开始处理登录请求")
+    logger.info(f"【用户登录】请求路径: /api/auth/login")
+    logger.info(f"【用户登录】请求时间: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}")
+    logger.info(f"【用户登录】邮箱: {request.email}")
+    logger.info(f"【用户登录】密码长度: {len(request.password)} 字符")
+    logger.info("【用户登录】=========================================")
+    logger.info("=" * 80)
+    
     try:
+        # 【调用登录服务】执行登录逻辑
+        logger.info(f"【用户登录】开始调用 auth_service.login_user...")
         result = auth_service.login_user(db, request.email, request.password)
+        logger.info(f"【用户登录】✅ 登录成功: 邮箱={request.email}, 用户ID={result.get('user', {}).get('id', '未知')}")
+        logger.info(f"【用户登录】Token 已生成，长度: {len(result.get('accessToken', ''))} 字符")
         return success_response(data=result, message="登录成功")
     except ValueError as e:
-        raise error_response(ErrorCode.AUTH_LOGIN_FAILED, str(e))
+        # 【错误处理】业务逻辑错误（如邮箱或密码错误）
+        error_msg = str(e)
+        logger.warning(f"【用户登录】❌ 登录失败（业务逻辑错误）: {error_msg}, 邮箱={request.email}")
+        raise error_response(ErrorCode.AUTH_LOGIN_FAILED, error_msg)
+    except Exception as e:
+        # 【错误处理】其他未预期的异常（如数据库错误、网络错误等）
+        error_type = type(e).__name__
+        error_detail = str(e)
+        logger.error(f"【用户登录】❌ 登录失败（未预期的异常）: {error_type}: {error_detail}", exc_info=True)
+        logger.error(f"【用户登录】请求数据摘要: 邮箱={request.email}, 密码长度={len(request.password)}")
+        raise error_response(ErrorCode.INTERNAL_ERROR, f"登录失败: {error_detail}")
 
 
 @router.post("/send-verification-code")

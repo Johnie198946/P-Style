@@ -20,12 +20,13 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         exc: HTTPException 异常对象
     
     Returns:
-        JSONResponse: 统一格式的错误响应
+        JSONResponse: 统一格式的错误响应（包含 CORS 头）
     
     Note:
         - HTTPException 通常由 HTTPBearer、业务逻辑等抛出
         - 对于可行性评估接口，可能是认证失败（401/403）导致的
         - 需要记录详细的错误信息，便于排查问题
+        - 【重要】异常处理器返回的响应必须包含 CORS 头，否则浏览器会阻止跨域请求
     """
     # 【重要】记录 HTTPException 的详细信息，特别是对于可行性评估接口
     logger.error(f"【HTTPException】被捕获: 状态码={exc.status_code}, 详情={exc.detail}, 路径={request.url.path}")
@@ -36,11 +37,24 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             logger.error(f"【HTTPException】可行性评估接口认证失败: 状态码={exc.status_code}")
             logger.error(f"【HTTPException】Authorization 头: {request.headers.get('Authorization', '未提供')}")
     
+    # 【CORS 头处理】获取请求的 Origin 头，用于设置 CORS 响应头
+    # 根据开发方案第 0 节，前端运行在 http://localhost:3001
+    origin = request.headers.get("Origin", "")
+    allowed_origins = ["http://localhost:3001", "http://127.0.0.1:3001"]
+    
+    # 构建响应头（包含 CORS 头）
+    headers = {}
+    if origin in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Expose-Headers"] = "*"
+    
     # 如果 detail 已经是字典格式（使用 error_response 创建），直接使用
     if isinstance(exc.detail, dict) and "code" in exc.detail:
         return JSONResponse(
             status_code=exc.status_code,
             content=exc.detail,
+            headers=headers,  # 【重要】添加 CORS 头
         )
     
     # 否则，将 FastAPI 默认的 detail 格式转换为统一格式
@@ -63,6 +77,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
             "message": message,
             "data": None,
         },
+        headers=headers,  # 【重要】添加 CORS 头
     )
 
 
@@ -76,15 +91,28 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         exc: 异常对象
     
     Returns:
-        JSONResponse: 统一格式的错误响应
+        JSONResponse: 统一格式的错误响应（包含 CORS 头）
     
     Note:
         - 此处理器会捕获所有未预期的异常（包括参数验证错误、数据解析错误等）
         - 对于参数验证错误（如 FastAPI 的 RequestValidationError），会返回 400 错误
         - 对于其他异常，会返回 500 错误
+        - 【重要】异常处理器返回的响应必须包含 CORS 头，否则浏览器会阻止跨域请求
     """
     error_type = type(exc).__name__
     error_detail = str(exc)
+    
+    # 【CORS 头处理】获取请求的 Origin 头，用于设置 CORS 响应头
+    # 根据开发方案第 0 节，前端运行在 http://localhost:3001
+    origin = request.headers.get("Origin", "")
+    allowed_origins = ["http://localhost:3001", "http://127.0.0.1:3001"]
+    
+    # 构建响应头（包含 CORS 头）
+    headers = {}
+    if origin in allowed_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Access-Control-Expose-Headers"] = "*"
     
     # 检查是否是参数验证错误（FastAPI 的 RequestValidationError）
     # 这通常发生在 Form 数据解析失败、参数类型不匹配等情况
@@ -107,6 +135,7 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
                 "message": f"请求参数错误: {error_detail}",
                 "data": None,
             },
+            headers=headers,  # 【重要】添加 CORS 头
         )
     
     # 其他未预期的异常
@@ -121,5 +150,6 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
             "message": "服务器内部错误",
             "data": None,
         },
+        headers=headers,  # 【重要】添加 CORS 头
     )
 

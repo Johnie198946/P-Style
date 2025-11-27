@@ -220,9 +220,22 @@ def create_app() -> FastAPI:
                 if not error_messages or all('图片数据格式错误' not in msg for msg in error_messages):
                     error_message = "图片数据格式错误，请确保正确上传图片。如果问题持续，请检查图片大小是否超过 100MB"
         
+        # 【CORS 头处理】获取请求的 Origin 头，用于设置 CORS 响应头
+        # 根据开发方案第 0 节，前端运行在 http://localhost:3001
+        origin = request.headers.get("Origin", "")
+        allowed_origins = ["http://localhost:3001", "http://127.0.0.1:3001"]
+        
+        # 构建响应头（包含 CORS 头）
+        headers = {}
+        if origin in allowed_origins:
+            headers["Access-Control-Allow-Origin"] = origin
+            headers["Access-Control-Allow-Credentials"] = "true"
+            headers["Access-Control-Expose-Headers"] = "*"
+        
         # 【响应返回】返回统一格式的错误响应
         # 注意：根据开发方案第 15 节，所有错误响应必须统一为 {code, message, data} 格式
         # 对于 RequestValidationError，返回 400 状态码和 INVALID_REQUEST 错误码
+        # 【重要】异常处理器返回的响应必须包含 CORS 头，否则浏览器会阻止跨域请求
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
             content={
@@ -233,6 +246,7 @@ def create_app() -> FastAPI:
                     "errors": error_errors if error_errors else None,
                 } if settings.DEBUG else None,  # 仅在调试模式下返回详细错误信息
             },
+            headers=headers,  # 【重要】添加 CORS 头
         )
     
     # 注册 HTTPException 异常处理器（在 RequestValidationError 之后）

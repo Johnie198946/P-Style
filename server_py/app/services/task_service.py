@@ -23,19 +23,57 @@ class TaskService:
         source_image_data: Optional[str] = None,
         target_image_data: Optional[str] = None,
     ) -> AnalysisTask:
-        """创建分析任务"""
+        """
+        创建分析任务
+        
+        Args:
+            db: 数据库会话
+            user_id: 用户 ID（可选）
+            source_image_data: 源图 Base64 数据（可选，可能很大）
+            target_image_data: 目标图 Base64 数据（可选，可能很大）
+        
+        Returns:
+            AnalysisTask: 创建的任务对象
+        
+        Raises:
+            Exception: 如果数据库操作失败（如图片数据过大导致 SQLite 操作超时）
+        """
         task_id = str(uuid.uuid4())
-        task = AnalysisTask(
-            id=task_id,
-            user_id=user_id,
-            source_image_data=source_image_data,
-            target_image_data=target_image_data,
-            status="pending",
-        )
-        db.add(task)
-        db.commit()
-        db.refresh(task)
-        return task
+        
+        # 【日志记录】记录图片数据大小（不记录完整数据）
+        source_size = len(source_image_data) if source_image_data else 0
+        target_size = len(target_image_data) if target_image_data else 0
+        logger.info(f"【create_task】创建任务: taskId={task_id}, userId={user_id}, 源图大小={source_size / 1024 / 1024:.2f}MB, 目标图大小={target_size / 1024 / 1024:.2f}MB")
+        
+        # 【性能优化】检查图片数据大小，如果过大则警告
+        MAX_IMAGE_SIZE = 20 * 1024 * 1024  # 20MB Base64 字符串
+        if source_size > MAX_IMAGE_SIZE:
+            logger.warning(f"【create_task】⚠️ 源图数据过大: {source_size / 1024 / 1024:.2f}MB，可能导致数据库操作缓慢")
+        if target_size > MAX_IMAGE_SIZE:
+            logger.warning(f"【create_task】⚠️ 目标图数据过大: {target_size / 1024 / 1024:.2f}MB，可能导致数据库操作缓慢")
+        
+        try:
+            task = AnalysisTask(
+                id=task_id,
+                user_id=user_id,
+                source_image_data=source_image_data,
+                target_image_data=target_image_data,
+                status="pending",
+            )
+            db.add(task)
+            db.commit()
+            db.refresh(task)
+            logger.info(f"【create_task】任务创建成功: taskId={task_id}")
+            return task
+        except Exception as e:
+            # 数据库操作失败（可能是图片数据太大导致 SQLite 操作超时或失败）
+            error_type = type(e).__name__
+            error_detail = str(e)
+            logger.error(f"【create_task】❌ 任务创建失败: {error_type}: {error_detail}", exc_info=True)
+            logger.error(f"【create_task】源图大小: {source_size / 1024 / 1024:.2f}MB, 目标图大小: {target_size / 1024 / 1024:.2f}MB")
+            # 回滚事务
+            db.rollback()
+            raise
 
     @staticmethod
     def get_task(db: Session, task_id: str) -> Optional[AnalysisTask]:

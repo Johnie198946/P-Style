@@ -178,6 +178,11 @@ class StorageService:
             if not task_id:
                 raise ValueError("上传预览图需要提供 task_id")
             object_key = f"results/{task_id}/preview-{file_name}"
+        elif image_type == "saliency_mask":
+            # 显著性遮罩图：saliency_masks/{user_id}/{task_id}/{uuid}.png（使用 UUID 避免同一任务多次生成时覆盖）
+            if not user_id or not task_id:
+                raise ValueError("上传显著性遮罩图需要提供 user_id 和 task_id")
+            object_key = f"saliency_masks/{user_id}/{task_id}/{file_name}"
         else:
             raise ValueError(f"未知的图片类型: {image_type}")
         

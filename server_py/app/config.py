@@ -49,7 +49,10 @@ class Settings(BaseSettings):
     GEMINI_MODEL: str = "gemini-3-pro-preview"  # Part1/Part2 使用的模型（已迁移到 Gemini 3.0）
     GEMINI_FLASH_MODEL: str = "gemini-2.5-flash-image"  # Part3 风格模拟使用的回退模型（快速生成，1024 像素分辨率）
     GEMINI_IMAGE_MODEL: str = "gemini-3-pro-image-preview"  # Part3 风格模拟使用的模型（Gemini 3 Pro 图片生成，支持 4K 输出）
-    GEMINI_TIMEOUT_MS: int = 120000  # Gemini API 调用超时时间（毫秒），默认 120 秒
+    GEMINI_TIMEOUT_MS: int = 180000  # Gemini API 调用超时时间（毫秒），默认 180 秒（3 分钟）
+    # 【重要】AI 诊断功能可能需要较长时间，特别是两个请求同时处理时
+    # 根据实际测试，单个请求耗时约 34-35 秒，两个请求同时处理时可能需要 70+ 秒
+    # 考虑到网络延迟和 Gemini API 响应时间波动，设置为 180 秒以确保稳定性
 
     # ========== 代理配置（ClashX） ==========
     # 用于访问 Gemini API 的 HTTP/HTTPS 代理

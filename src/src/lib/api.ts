@@ -181,10 +181,39 @@ async function apiClient<T>(endpoint: string, options: RequestInit = {}): Promis
       });
     }
     
-    if (response.status === 401) { 
-      removeAuthToken(); 
-      window.location.href = '/login'; 
-      throw new Error('Session expired'); 
+    // 【错误处理】检查响应状态
+    if (!response.ok) {
+      // 【重要】对于非 2xx 响应，尝试解析 JSON 错误信息
+      // 如果解析失败（如网络错误、CORS 错误），则抛出通用错误
+      let errorMessage = `请求失败: ${response.status} ${response.statusText}`;
+      let errorCode: string | number = 'UNKNOWN_ERROR';
+      
+      try {
+        const errorJson: ApiResponse = await response.json();
+        errorMessage = errorJson.message || errorMessage;
+        errorCode = errorJson.code || errorCode;
+      } catch (parseError) {
+        // JSON 解析失败，可能是网络错误或 CORS 错误
+        console.error(`[API Error] 无法解析错误响应:`, parseError);
+        if (response.status === 0 || response.statusText === '') {
+          // 这通常是 CORS 错误或网络错误
+          errorMessage = '网络请求失败，请检查后端服务是否运行或 CORS 配置是否正确';
+          errorCode = 'NETWORK_ERROR';
+        }
+      }
+      
+      // 401 未授权：对于登录接口，不应该跳转（因为用户正在登录）
+      // 只有在已登录状态下访问需要认证的接口时，才需要跳转到登录页
+      // 登录接口本身返回 401 是正常的（如密码错误），应该直接抛出错误，让前端处理
+      if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/register')) {
+        // 只有在非登录/注册接口返回 401 时，才清除 token 并跳转
+        removeAuthToken();
+        window.location.href = '/login';
+        throw new ApiError(errorCode, 'Session expired');
+      }
+      
+      // 其他错误：抛出 ApiError
+      throw new ApiError(errorCode, errorMessage);
     }
     
     const resJson: ApiResponse<T> = await response.json();
@@ -210,7 +239,24 @@ async function apiClient<T>(endpoint: string, options: RequestInit = {}): Promis
   } catch (error: any) {
     // 【日志】记录错误信息
     console.error(`[API Error] ${options.method || 'GET'} ${fullUrl}:`, error);
-    throw error;
+    
+    // 【错误处理】处理网络错误和超时错误
+    if (error.name === 'AbortError' || error.name === 'TypeError' && error.message === 'Failed to fetch') {
+      // 网络错误或超时错误
+      if (error.name === 'AbortError') {
+        throw new ApiError('TIMEOUT_ERROR', '请求超时，请检查网络连接或稍后重试');
+      } else {
+        throw new ApiError('NETWORK_ERROR', '网络连接失败，请检查您的网络设置或后端服务是否运行');
+      }
+    }
+    
+    // 重新抛出 ApiError（如果已经是 ApiError，直接抛出）
+    if (error instanceof ApiError) {
+      throw error;
+    }
+    
+    // 对于其他未知错误，包装成 ApiError
+    throw new ApiError('UNKNOWN_ERROR', error.message || '未知 API 错误');
   }
 }
 
@@ -296,6 +342,13 @@ const api = {
     },
   },
   analyze: {
+    /**
+     * Part1 分析接口
+     * 根据开发方案第 1508-1515 行，前端超时设置为 200 秒（3分20秒），确保覆盖后端 180 秒超时
+     * 
+     * @param uploadId - 上传记录 ID
+     * @returns Part1 分析结果
+     */
     part1: async (uploadId: string) => {
       if (USE_MOCK_DATA) {
         await new Promise(resolve => setTimeout(resolve, 2500));
@@ -305,7 +358,29 @@ const api = {
           structuredAnalysis: FULL_MOCK_DATA
         };
       }
-      return apiClient('/analyze/part1', { method: 'POST', body: JSON.stringify({ uploadId }) });
+      
+      // 【超时控制】Part1 分析可能需要 60-70 秒，后端超时设置为 180 秒
+      // 前端超时设置为 200 秒（3分20秒），确保覆盖后端超时时间，并留出网络延迟缓冲
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 200000); // 200 秒（3分20秒）超时
+      
+      try {
+        const result = await apiClient('/analyze/part1', { 
+          method: 'POST', 
+          body: JSON.stringify({ uploadId }),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', 'Part1 分析请求超时（超过 3 分20秒），请稍后重试');
+        }
+        throw error;
+      }
     },
     part2: async (taskId: string) => {
         if (USE_MOCK_DATA) return { status: 'processing' };
@@ -369,10 +444,29 @@ const api = {
         dominantColorsCount: data.dominantColors.length
       });
       
-      return apiClient('/analyze/diagnosis', {
-        method: 'POST',
-        body: JSON.stringify(data)
-      });
+      // 【超时控制】AI 诊断可能需要 70+ 秒，且两个请求同时处理时总时间可能更长
+      // 根据后端日志，单个请求耗时约 34-35 秒，两个请求同时处理时可能需要 70+ 秒
+      // 考虑到网络延迟和 Gemini API 响应时间波动，设置 180 秒（3 分钟）超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 180000); // 180 秒（3 分钟）超时
+      
+      try {
+        const result = await apiClient('/analyze/diagnosis', {
+          method: 'POST',
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', 'AI 诊断请求超时（超过 3 分钟），请稍后重试');
+        }
+        throw error;
+      }
     }
   },
   simulate: {

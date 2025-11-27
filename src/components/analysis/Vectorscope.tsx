@@ -20,6 +20,7 @@ interface VectorscopeProps {
    * 当色彩雷达分析完成并提取出主色调后，会调用此回调
    */
   onDominantColorsExtracted?: (colors: DominantColor[]) => void;
+  hoverColor?: {r:number, g:number, b:number, hex:string} | null;
 }
 
 export const Vectorscope: React.FC<VectorscopeProps> = ({
@@ -28,9 +29,11 @@ export const Vectorscope: React.FC<VectorscopeProps> = ({
   height = 256,
   className,
   onDominantColorsExtracted,
+  hoverColor,
 }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
+  const interactionRef = useRef<HTMLCanvasElement>(null); // 【新增】交互层，用于显示鼠标悬停点
 
   /**
    * RGB 转 HSV 色彩空间转换函数
@@ -379,6 +382,13 @@ export const Vectorscope: React.FC<VectorscopeProps> = ({
         const { h, s, v } = rgbToHsv(r, g, b);
         
         // 计算扇区索引（0-35）
+        // 【修正】色相角度与雷达图方向对齐
+        // 在 HSV 模型中，0度是红色（3点钟方向），但在 Canvas 中 0 弧度也是3点钟方向
+        // 然而，雷达图的习惯布局可能是：红色在顶部或其他位置
+        // 如果发现点位偏移，可能需要调整这里的角度计算，例如 (h - 90) 或其他偏移
+        // 目前 Canvas 的 arc 方法 0 是 3点钟方向，顺时针增加
+        // hsvToRgb 中的 h 是 0-360
+        // 假设 h=0 是红色，在 Canvas 0弧度处
         const angleIndex = Math.floor((h / 360) * ANGLE_SECTORS) % ANGLE_SECTORS;
         // 计算饱和度层索引（0-9）
         const satIndex = Math.min(SATURATION_LAYERS - 1, Math.floor(s * SATURATION_LAYERS));
@@ -475,6 +485,55 @@ export const Vectorscope: React.FC<VectorscopeProps> = ({
 
   }, [imageSrc, width, height]); // 【优化】移除函数依赖项，避免重复执行
 
+  // 【新增】绘制鼠标悬停点
+  useEffect(() => {
+    const canvas = interactionRef.current;
+    if (!canvas) return;
+    
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    
+    // 清除画布
+    ctx.clearRect(0, 0, width, height);
+    
+    if (!hoverColor) return;
+    
+    // 计算位置
+    const { h, s } = rgbToHsv(hoverColor.r, hoverColor.g, hoverColor.b);
+    
+    // 映射到极坐标
+    // 【修正】交互点的位置计算需要与热力图绘制逻辑一致
+    // HSV h: 0-360 (0=Red, 120=Green, 240=Blue)
+    // Canvas 0弧度 = 3点钟方向
+    // 如果需要旋转对齐，请在此处调整 angle
+    const angle = (h / 360) * Math.PI * 2;
+    const radius = (width / 2) * s; // Max radius is width/2
+    const cx = width / 2;
+    const cy = height / 2;
+    
+    const x = cx + Math.cos(angle) * radius;
+    const y = cy + Math.sin(angle) * radius;
+    
+    // 绘制标记
+    ctx.beginPath();
+    ctx.arc(x, y, 4, 0, Math.PI * 2);
+    ctx.fillStyle = 'white';
+    ctx.fill();
+    ctx.strokeStyle = 'black';
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 绘制连接线
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(x, y);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
+    ctx.setLineDash([2, 2]);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    
+  }, [hoverColor, width, height, rgbToHsv]);
+
   return (
     <div 
       className={`relative bg-black rounded-lg overflow-hidden border border-white/10 shadow-inner ${className}`}
@@ -496,6 +555,14 @@ export const Vectorscope: React.FC<VectorscopeProps> = ({
         width={width} 
         height={height} 
         className="absolute inset-0 z-20 pointer-events-none"
+        style={{ width: '100%', height: '100%', display: 'block', position: 'absolute' }}
+      />
+      {/* 【新增】交互层（z-30），用于显示鼠标悬停点 */}
+      <canvas 
+        ref={interactionRef} 
+        width={width} 
+        height={height} 
+        className="absolute inset-0 z-30 pointer-events-none"
         style={{ width: '100%', height: '100%', display: 'block', position: 'absolute' }}
       />
       {/* 标签：显示色彩雷达类型 */}

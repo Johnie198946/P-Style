@@ -115,7 +115,11 @@ async def upload_photos(
                     content_type=sourceImage.content_type or "image/jpeg"
                 )
                 logger.info(f"[上传接口] 源图上传到对象存储成功: {source_image_url}")
-                source_base64 = None  # 对象存储成功，不需要 Base64
+                # 【重要修复】即使对象存储成功，也需要保存 Base64 数据到数据库
+                # 因为 Part1 接口需要从 source_image_data 字段读取图片数据
+                # 根据开发方案，Part1 接口使用 upload.source_image_data 字段
+                source_base64 = base64.b64encode(source_data).decode("utf-8")
+                logger.info(f"[上传接口] 源图 Base64 编码完成（对象存储模式），大小: {len(source_base64)} 字符")
             except Exception as e:
                 # 【日志记录】对象存储上传失败，记录详细错误信息
                 logger.warning(f"[上传接口] 对象存储上传失败，回退到 Base64: {type(e).__name__}: {str(e)}")
@@ -151,7 +155,11 @@ async def upload_photos(
                         content_type=targetImage.content_type or "image/jpeg"
                     )
                     logger.info(f"[上传接口] 目标图上传到对象存储成功: {target_image_url}")
-                    target_base64 = None  # 对象存储成功，不需要 Base64
+                    # 【重要修复】即使对象存储成功，也需要保存 Base64 数据到数据库
+                    # 因为 Part1 接口需要从 target_image_data 字段读取图片数据（如果存在）
+                    # 根据开发方案，Part1 接口使用 upload.target_image_data 字段
+                    target_base64 = base64.b64encode(target_data).decode("utf-8")
+                    logger.info(f"[上传接口] 目标图 Base64 编码完成（对象存储模式），大小: {len(target_base64)} 字符")
                 except Exception as e:
                     # 【日志记录】对象存储上传失败，记录详细错误信息
                     logger.warning(f"[上传接口] 对象存储上传失败，回退到 Base64: {type(e).__name__}: {str(e)}")

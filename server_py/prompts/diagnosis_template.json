@@ -1,0 +1,14 @@
+{
+    "scores": {
+      "exposure": { "value": 8.5, "description": "简评", "regions": [] },
+      "color": { "value": 7.0, "description": "简评", "regions": [] },
+      "composition": { "value": 9.0, "description": "简评", "regions": [] },
+      "mood": { "value": 8.0, "description": "简评", "regions": [] }
+    },
+    "critique": "100字以内的导师评语，指出优缺点。",
+    "suggestions": ["建议1", "建议2"],
+    "issues": [
+      { "type": "exposure", "severity": "high", "description": "高光溢出" }
+    ]
+  }
+

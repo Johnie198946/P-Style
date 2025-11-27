@@ -7,13 +7,61 @@ from typing import Dict, Any, Optional, List, Union
 from loguru import logger
 
 
+class StyleClassificationSchema(BaseModel):
+    """风格分类 Schema"""
+    master_archetype: Optional[str] = Field(default="", description="主导原型")
+    visual_signature: Optional[str] = Field(default="", description="视觉签名")
+
+
 class PhotoReviewStructuredSchema(BaseModel):
     """照片点评结构化数据 Schema（嵌套在 structured 字段中）"""
     overviewSummary: Optional[str] = Field(default="", description="整体概览")
+    # 【新增】comprehensive_review 字段：综合点评（用于前端显示）
+    comprehensive_review: Optional[str] = Field(default="", description="综合点评（完整分析文本）")
+    # 新增字段支持
+    style_classification: Optional[StyleClassificationSchema] = Field(default=None, description="风格分类")
+    master_archetype: Optional[str] = Field(default="", description="主导原型（扁平化支持）")
+    visual_signature: Optional[str] = Field(default="", description="视觉签名（扁平化支持）")
+    
     dimensions: Optional[Dict[str, Any]] = Field(default_factory=dict, description="各维度分析")
+    
+    # 新增色彩策略字段
+    saturation_strategy: Optional[str] = Field(default="", description="饱和度策略")
+    tonal_intent: Optional[str] = Field(default="", description="影调意图")
+    simulated_histogram_data: Optional[Dict[str, Any]] = Field(default=None, description="模拟直方图数据")
+    
+    # 新增情感字段（如果不在 dimensions 中）
+    emotion: Optional[str] = Field(default="", description="情感与意境")
+    
+    # 之前的字段
     photographerStyleSummary: Optional[str] = Field(default="", description="摄影师风格总结")
+    # 兼容 style_summary 别名
+    style_summary: Optional[str] = Field(default="", description="风格总结（Phase 2 指令）")
+    
     comparisonTable: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="参数对比表")
+    # 兼容 parameter_comparison_table 别名
+    parameter_comparison_table: Optional[List[Dict[str, str]]] = Field(default_factory=list, description="参数对比表")
+    
     feasibility: Optional[Dict[str, Any]] = Field(default_factory=dict, description="可行性评估")
+    # 兼容 feasibility_assessment 别名
+    feasibility_assessment: Optional[Dict[str, Any]] = Field(default_factory=dict, description="可行性评估")
+    
+    # 【新增】overlays 字段：用于前端图片区域高亮显示
+    # 根据 BACKEND_AI_SPECS.md 要求，必须包含 visual_subject、focus_exposure、color_depth 三个区域
+    overlays: Optional[Dict[str, Any]] = Field(default_factory=dict, description="区域坐标数据（用于图片高亮显示）")
+    
+    # 【新增】spatial_analysis 字段：空间分析大一统（最新格式）
+    # 包含 ref_visual_mass_polygon、ref_overlays、user_overlays
+    # 注意：这是 Prompt 模板的新结构，用于解决 Gemini 跳过 visual_mass 的问题
+    spatial_analysis: Optional[Dict[str, Any]] = Field(default_factory=dict, description="空间分析数据（包含 visual_mass 和 overlays）")
+    
+    # 【新增】image_verification 字段：图像验证描述
+    # 用于前端在参考图和用户图下方显示图像内容描述
+    # 包含 ref_image_content 和 user_image_content 两个字段
+    image_verification: Optional[Dict[str, Any]] = Field(default_factory=dict, description="图像验证描述（包含参考图和用户图的内容描述）")
+    
+    # 允许额外字段
+    model_config = {"extra": "allow"}
 
 
 class PhotoReviewNaturalLanguageSchema(BaseModel):
@@ -50,10 +98,21 @@ class CompositionStructuredSchema(BaseModel):
     """构图分析结构化数据 Schema（嵌套在 structured 字段中）"""
     # 支持新结构（5字段）和旧结构（7段）
     main_structure: Optional[str] = Field(default="", description="画面主结构分析（新结构）")
-    subject_weight: Optional[Dict[str, str]] = Field(default_factory=dict, description="主体位置与视觉权重（新结构）")
-    visual_guidance: Optional[Dict[str, str]] = Field(default_factory=dict, description="线条与方向引导（新结构）")
-    ratios_negative_space: Optional[Dict[str, str]] = Field(default_factory=dict, description="比例与留白（新结构）")
+    # 【修复】subject_weight 可能包含 score (int) 和 method (str) 等字段，使用 Dict[str, Any] 支持混合类型
+    subject_weight: Optional[Dict[str, Any]] = Field(default_factory=dict, description="主体位置与视觉权重（新结构，包含 score、description、layers、method 等字段）")
+    visual_guidance: Optional[Dict[str, Any]] = Field(default_factory=dict, description="线条与方向引导（新结构，包含 analysis、path 等字段）")
+    ratios_negative_space: Optional[Dict[str, Any]] = Field(default_factory=dict, description="比例与留白（新结构，包含 entity_ratio、space_ratio、distribution 等字段）")
     style_class: Optional[str] = Field(default="", description="构图风格归类（新结构）")
+    
+    # 【新增】视觉流、空间深度、留白分析 (根据开发方案要求)
+    visual_flow: Optional[Dict[str, Any]] = Field(default=None, description="视觉流路径分析")
+    spatial_depth: Optional[Dict[str, Any]] = Field(default=None, description="空间深度分析")
+    negative_space: Optional[Dict[str, Any]] = Field(default=None, description="留白与平衡分析")
+    
+    # 【新增】visual_mass 字段：视觉质量/视觉重心（用于前端 Visual Mass 功能）
+    # 包含 score、composition_rule、center_point、polygon_points 等字段
+    visual_mass: Optional[Dict[str, Any]] = Field(default=None, description="视觉质量/视觉重心数据（包含分数、构图法则、坐标等）")
+    
     advanced_sections: Optional[Dict[str, str]] = Field(
         default_factory=lambda: {
             "画面主结构分析": "",
@@ -93,9 +152,10 @@ class CompositionSchema(BaseModel):
     # 【向后兼容】为了兼容旧代码，也支持顶层字段（但优先使用 structured 中的字段）
     # 注意：这些字段主要用于向后兼容，新代码应该使用 structured 中的字段
     main_structure: Optional[str] = Field(default=None, description="画面主结构分析（向后兼容，优先使用 structured.main_structure）")
-    subject_weight: Optional[Dict[str, str]] = Field(default=None, description="主体位置与视觉权重（向后兼容，优先使用 structured.subject_weight）")
-    visual_guidance: Optional[Dict[str, str]] = Field(default=None, description="线条与方向引导（向后兼容，优先使用 structured.visual_guidance）")
-    ratios_negative_space: Optional[Dict[str, str]] = Field(default=None, description="比例与留白（向后兼容，优先使用 structured.ratios_negative_space）")
+    # 【修复】subject_weight 可能包含 score (int) 和 method (str) 等字段，使用 Dict[str, Any] 支持混合类型
+    subject_weight: Optional[Dict[str, Any]] = Field(default=None, description="主体位置与视觉权重（向后兼容，优先使用 structured.subject_weight）")
+    visual_guidance: Optional[Dict[str, Any]] = Field(default=None, description="线条与方向引导（向后兼容，优先使用 structured.visual_guidance）")
+    ratios_negative_space: Optional[Dict[str, Any]] = Field(default=None, description="比例与留白（向后兼容，优先使用 structured.ratios_negative_space）")
     style_class: Optional[str] = Field(default=None, description="构图风格归类（向后兼容，优先使用 structured.style_class）")
     advanced_sections: Optional[Dict[str, str]] = Field(default=None, description="构图七段分析（向后兼容，优先使用 structured.advanced_sections）")
 
@@ -405,8 +465,10 @@ def validate_part1_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
         
         # 【重要】使用 model_dump() 替代已废弃的 dict() 方法
         # 注意：Pydantic V2 使用 model_dump()，它会正确保留嵌套结构
-        # 使用 exclude_none=True 排除 None 值，避免向后兼容字段干扰
-        result = validated.model_dump(exclude_none=True)
+        # 【修复】不使用 exclude_none=True，因为空字符串和空数组也是有效数据
+        # 原因：如果使用 exclude_none=True，空字符串 "" 和空数组 [] 可能被过滤，导致数据丢失
+        # 解决方案：使用 mode='json' 确保正确序列化，但不排除 None 值（因为 None 值在 JSON 中也是有效的）
+        result = validated.model_dump(mode='json')
         
         # 【调试日志】记录验证后的结构
         if "sections" in result and "photoReview" in result["sections"]:
@@ -415,14 +477,21 @@ def validate_part1_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
             if "structured" in photo_review:
                 structured = photo_review["structured"]
                 logger.debug(f"validate_part1_response: photoReview.structured keys = {list(structured.keys())}")
+                # 【新增】记录关键字段的长度和存在性
+                logger.debug(f"validate_part1_response: style_summary 长度 = {len(structured.get('style_summary', ''))} 字符")
+                logger.debug(f"validate_part1_response: comprehensive_review 长度 = {len(structured.get('comprehensive_review', ''))} 字符")
+                logger.debug(f"validate_part1_response: overlays keys = {list(structured.get('overlays', {}).keys()) if isinstance(structured.get('overlays'), dict) else 'not dict'}")
+                logger.debug(f"validate_part1_response: simulated_histogram_data keys = {list(structured.get('simulated_histogram_data', {}).keys()) if isinstance(structured.get('simulated_histogram_data'), dict) else 'not dict'}")
                 if "dimensions" in structured:
                     logger.debug(f"validate_part1_response: photoReview.structured.dimensions keys = {list(structured['dimensions'].keys())}")
         
         return result
     except Exception as e:
         logger.error(f"Part1 Schema 验证失败: {e}", exc_info=True)
-        # 返回默认结构
-        return Part1ResponseSchema().model_dump(exclude_none=True)
+        # 【修复】Schema 验证失败时，不应该返回默认空结构，应该抛出异常让 format_part1 处理
+        # 原因：返回默认空结构会导致所有数据丢失，format_part1 的 try-except 无法捕获
+        # 解决方案：重新抛出异常，让 format_part1 的异常处理逻辑处理（会使用原始 structured 数据）
+        raise ValueError(f"Schema 验证失败: {str(e)}") from e
 
 
 def validate_part2_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -486,12 +555,26 @@ class DiagnosisIssueSchema(BaseModel):
     region: Optional[str] = Field(default=None, description="区域描述（如 sky、shadow）")
 
 
+class DiagnosisRegionSchema(BaseModel):
+    """诊断区域 Schema（用于在图像上标记区域）"""
+    label: str = Field(description="区域标签（如：'过曝区域', '主体'）")
+    box_2d: List[int] = Field(default_factory=list, description="归一化坐标 [ymin, xmin, ymax, xmax]，范围 0-1000")
+
+
+class DiagnosisScoreItemSchema(BaseModel):
+    """诊断评分项 Schema（包含数值和描述）"""
+    value: float = Field(ge=0, le=100, description="评分数值（0-10 或 0-100）")
+    description: str = Field(description="评分描述（如：'曝光准确，高光细节保留良好'）")
+    regions: List[DiagnosisRegionSchema] = Field(default_factory=list, description="相关区域列表")
+
+
 class DiagnosisScoresSchema(BaseModel):
-    """诊断评分 Schema"""
-    exposure: float = Field(ge=0, le=10, description="曝光评分（0-10）")
-    color: float = Field(ge=0, le=10, description="色彩评分（0-10）")
-    composition: float = Field(ge=0, le=10, description="构图评分（0-10）")
-    mood: float = Field(ge=0, le=10, description="情感评分（0-10）")
+    """诊断评分 Schema（支持两种格式：简单数值或带描述的格式）"""
+    # 支持旧格式（简单数值，0-10分）
+    exposure: float | DiagnosisScoreItemSchema = Field(description="曝光评分（0-10 或 0-100，可带描述）")
+    color: float | DiagnosisScoreItemSchema = Field(description="色彩评分（0-10 或 0-100，可带描述）")
+    composition: float | DiagnosisScoreItemSchema = Field(description="构图评分（0-10 或 0-100，可带描述）")
+    mood: float | DiagnosisScoreItemSchema = Field(description="情感评分（0-10 或 0-100，可带描述）")
 
 
 class DiagnosisResponseSchema(BaseModel):
@@ -500,6 +583,15 @@ class DiagnosisResponseSchema(BaseModel):
     critique: str = Field(description="详细诊断文字")
     suggestions: List[str] = Field(default_factory=list, description="改进建议列表")
     issues: List[DiagnosisIssueSchema] = Field(default_factory=list, description="问题列表")
+
+
+class Part1RequestSchema(BaseModel):
+    """
+    Part1 分析请求 Schema
+    根据开发方案第 763 行实现，支持通过 uploadId 获取图片数据
+    """
+    uploadId: str = Field(..., description="上传记录 ID（必填）")
+    optional_style: Optional[str] = Field(None, description="可选风格关键词（如 '日出暖光', '胶片感'）")
 
 
 class DiagnosisRequestSchema(BaseModel):
@@ -513,12 +605,15 @@ class DiagnosisRequestSchema(BaseModel):
 def validate_diagnosis_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     """
     验证 AI 诊断响应数据
+    支持两种评分格式：
+    1. 简单格式：{"exposure": 8.5, "color": 7.2, ...}
+    2. 详细格式：{"exposure": {"value": 8.5, "description": "..."}, ...}
     
     Args:
         data: Gemini 返回的 JSON 字符串或字典
         
     Returns:
-        验证后的标准化字典
+        验证后的标准化字典（统一转换为详细格式）
     """
     import json
     
@@ -538,20 +633,93 @@ def validate_diagnosis_response(data: Union[str, Dict[str, Any]]) -> Dict[str, A
         else:
             raw_data = data
         
-        # 使用 Pydantic Schema 验证
-        validated = DiagnosisResponseSchema(**raw_data)
+        # 【数据标准化】将评分数据统一转换为详细格式
+        # 支持两种格式：简单数值或带描述的格式
+        if "scores" in raw_data:
+            scores = raw_data["scores"]
+            normalized_scores = {}
+            
+            for key in ["exposure", "color", "composition", "mood"]:
+                if key in scores:
+                    score_value = scores[key]
+                    # 如果是简单数值格式，转换为详细格式
+                    if isinstance(score_value, (int, float)):
+                        normalized_scores[key] = {
+                            "value": float(score_value),
+                            "description": "",  # 如果没有描述，留空
+                            "regions": []
+                        }
+                    # 如果是详细格式，直接使用
+                    elif isinstance(score_value, dict) and "value" in score_value:
+                        normalized_scores[key] = {
+                            "value": float(score_value.get("value", 0)),
+                            "description": str(score_value.get("description", "")),
+                            "regions": score_value.get("regions", [])  # 保留区域数据
+                        }
+                    else:
+                        # 格式不正确，使用默认值
+                        normalized_scores[key] = {
+                            "value": 5.0,
+                            "description": "",
+                            "regions": []
+                        }
+                else:
+                    # 缺少该评分项，使用默认值
+                    normalized_scores[key] = {
+                        "value": 5.0,
+                        "description": "",
+                        "regions": []
+                    }
+            
+            raw_data["scores"] = normalized_scores
         
-        # 转换为字典
-        result = validated.model_dump()
+        # 【诊断文本长度验证】确保 critique 不超过 100 字
+        if "critique" in raw_data and isinstance(raw_data["critique"], str):
+            critique_text = raw_data["critique"]
+            # 计算中文字符数（中文字符算1个字，英文单词算1个字）
+            # 简单估算：中文字符数 + 英文单词数
+            chinese_chars = len([c for c in critique_text if '\u4e00' <= c <= '\u9fff'])
+            english_words = len(critique_text.split())
+            total_length = chinese_chars + english_words
+            
+            if total_length > 100:
+                logger.warning(f"【AI 诊断】诊断文本长度超过 100 字（实际 {total_length} 字），将截断")
+                # 截断到 100 字（简单处理，保留前 100 个字符）
+                raw_data["critique"] = critique_text[:100] + "..."
+        
+        # 使用 Pydantic Schema 验证（注意：Schema 需要支持两种格式）
+        # 由于 Schema 验证可能失败（如果评分格式不匹配），我们使用更宽松的验证
+        try:
+            validated = DiagnosisResponseSchema(**raw_data)
+            result = validated.model_dump()
+        except Exception as schema_error:
+            # Schema 验证失败，但我们已经标准化了数据，尝试手动构建
+            logger.warning(f"【AI 诊断】Schema 验证失败，使用标准化数据: {schema_error}")
+            result = {
+                "scores": raw_data.get("scores", {
+                    "exposure": {"value": 5.0, "description": ""},
+                    "color": {"value": 5.0, "description": ""},
+                    "composition": {"value": 5.0, "description": ""},
+                    "mood": {"value": 5.0, "description": ""}
+                }),
+                "critique": raw_data.get("critique", "诊断分析失败，请重试"),
+                "suggestions": raw_data.get("suggestions", []),
+                "issues": raw_data.get("issues", [])
+            }
         
         return result
     except Exception as e:
         logger.error(f"AI 诊断 Schema 验证失败: {e}", exc_info=True)
         # 返回默认结构
-        return DiagnosisResponseSchema(
-            scores=DiagnosisScoresSchema(exposure=5.0, color=5.0, composition=5.0, mood=5.0),
-            critique="诊断分析失败，请重试",
-            suggestions=[],
-            issues=[]
-        ).model_dump()
+        return {
+            "scores": {
+                "exposure": {"value": 5.0, "description": ""},
+                "color": {"value": 5.0, "description": ""},
+                "composition": {"value": 5.0, "description": ""},
+                "mood": {"value": 5.0, "description": ""}
+            },
+            "critique": "诊断分析失败，请重试",
+            "suggestions": [],
+            "issues": []
+        }
 

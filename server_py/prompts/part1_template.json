@@ -1,0 +1,109 @@
+{
+    "module_1_critique": {
+      "style_classification": {
+        "master_archetype": "STRING: Identify specific lineage (e.g. 'Cyberpunk / Liam Wong', 'Airy / Hamada', 'Magnum / Alex Webb')",
+        "visual_signature": "STRING: Analyze Micro-contrast, Tonal Separation, and Color Harmony."
+      },
+      "comprehensive_review": "STRING: Deep dive comparison. Diagnose the User Image's histogram health (High-key/Low-key) vs the Reference's lighting hierarchy.",
+      "visual_subject_analysis": "STRING: Compare Subject Saliency and Depth of Field separation.",
+      "focus_exposure_analysis": "STRING: Analyze Exposure Strategy (ETTR vs ETTL) and Focus Plane.",
+      "color_depth_analysis": {
+        "text": "STRING: Deep Color Science. Analyze HSL shifts (e.g. 'Greens shifted to Teal').",
+        "saturation_strategy": "STRING: Specific instruction (e.g. 'Global Desaturate -20, Boost Orange Luminance').",
+        "tonal_intent": "STRING: Curve strategy (e.g. 'Lift Blacks for Matte look, S-Curve for crunch').",
+        "simulated_histogram_data": {
+          "description": "STRING: Describe the Reference histogram shape (e.g. U-shaped, Right-skewed).",
+          "data_points": []
+        }
+      },
+      "emotion": "STRING: Abstract mood description.",
+      "pros_evaluation": "STRING: What makes the Reference look 'Premium'?",
+      "parameter_comparison_table": [
+        { "dimension": "Lighting Physics", "ref_feature": "STRING", "user_feature": "STRING" },
+        { "dimension": "Color Grade", "ref_feature": "STRING", "user_feature": "STRING" },
+        { "dimension": "Dynamic Range", "ref_feature": "STRING", "user_feature": "STRING" }
+      ],
+      "style_summary": "STRING: PHASE 2 CONSTITUTION. Must include: [Strategy Name], [Color Mapping], [Light Shaping], [Forbidden Actions].",
+      "feasibility_assessment": {
+        "score": 0,
+        "level": "Easy/Medium/Hard",
+        "limitations": "STRING: List physical conflicts (e.g. Point Light vs Diffuse Light).",
+        "recommendation": "STRING: Actionable advice.",
+        "confidence": "High"
+      },
+      "overlays": {
+        "reference_overlays": {
+          "visual_subject": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "Ref Subject" },
+          "focus_exposure": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "Ref Highlights" },
+          "color_depth": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "Ref Color Zone" }
+        },
+        "user_overlays": {
+          "visual_subject": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "User Subject" },
+          "focus_exposure": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "User Highlights" },
+          "color_depth": { "x": 0, "y": 0, "w": 0, "h": 0, "label": "User Color Zone" }
+        }
+      }
+    },
+    "module_2_composition": {
+      "visual_mass": {
+        "type": "polygon",
+        "confidence": 0.8,
+        "description": "STRING: Analyze the Reference Image's Visual Center of Gravity (Saliency Map).",
+        "vertices": [],
+        "center_of_gravity": [0, 0],
+        "note": "MANDATORY FIELD"
+      },
+      "main_structure": "STRING: Geometric analysis.",
+      "subject_weight": {
+        "score": 0,
+        "description": "STRING: Subject prominence analysis.",
+        "layers": "STRING: Foreground/Midground/Background.",
+        "method": "STRING"
+      },
+      "visual_guidance": { "analysis": "STRING", "path": "STRING" },
+      "visual_flow": {
+        "entry_point": { "label": "STRING", "coordinates": [0, 0] },
+        "focal_point": { "label": "STRING", "coordinates": [0, 0] },
+        "exit_point": { "label": "STRING", "coordinates": [0, 0] },
+        "path_vector": []
+      },
+      "spatial_depth": {
+        "foreground": { "content": "STRING", "depth_range": [0, 0] },
+        "midground": { "content": "STRING", "depth_range": [0, 0] },
+        "background": { "content": "STRING", "depth_range": [0, 0] }
+      },
+      "negative_space": {
+        "percentage": 0,
+        "horizontal_balance": "STRING",
+        "vertical_balance": "STRING"
+      },
+      "ratios_negative_space": {
+        "entity_ratio": "STRING",
+        "space_ratio": "STRING",
+        "distribution": "STRING"
+      },
+      "style_class": "STRING"
+    },
+    "module_3_lighting_params": {
+      "exposure_control": {
+        "exposure": "STRING",
+        "contrast": "STRING",
+        "highlights": "STRING",
+        "shadows": "STRING",
+        "whites": "STRING",
+        "blacks": "STRING"
+      },
+      "tone_curves": {
+        "explanation": "STRING: Explain curve shape (e.g. Fade Black, S-Curve).",
+        "points_rgb": [],
+        "points_red": [],
+        "points_green": [],
+        "points_blue": []
+      },
+      "texture_clarity": {
+        "texture": "STRING",
+        "clarity": "STRING",
+        "dehaze": "STRING"
+      }
+    }
+  }

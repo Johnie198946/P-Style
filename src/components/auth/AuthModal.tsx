@@ -10,7 +10,7 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { useLanguage } from '../../src/contexts/LanguageContext';
 import { api, setAuthToken, ApiError } from '../../src/lib/api';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 
 interface AuthModalProps {
   isOpen: boolean;
@@ -222,18 +222,79 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose, onLoginSu
           });
         }
         
+        // 【日志记录】记录登录响应
+        console.log('[AuthModal] ✅ 登录 API 调用成功，收到响应:', {
+          hasResult: !!result,
+          resultType: typeof result,
+          resultKeys: result ? Object.keys(result) : [],
+          hasAccessToken: !!(result as any)?.accessToken,
+          timestamp: new Date().toISOString()
+        });
+        
         // 保存 token
         const loginResult: any = result;
         if (loginResult?.accessToken) {
+          // 【日志记录】记录 Token 保存
+          console.log('[AuthModal] 保存 Token 到本地存储...');
           setAuthToken(loginResult.accessToken);
+          
+          // 【日志记录】记录获取用户信息请求
+          console.log('[AuthModal] 开始获取用户信息...');
+          try {
           // 获取用户信息
           const user = await api.auth.me();
+            console.log('[AuthModal] ✅ 用户信息获取成功:', {
+              userId: user?.id,
+              email: user?.email,
+              timestamp: new Date().toISOString()
+            });
           toast.success('登录成功');
           onLoginSuccess();
+          } catch (meError: any) {
+            // 【错误处理】获取用户信息失败，但登录已成功，仍然允许登录
+            console.error('[AuthModal] ⚠️ 获取用户信息失败，但登录已成功:', meError);
+            // 即使获取用户信息失败，也允许登录（因为 Token 已经保存）
+            toast.success('登录成功（用户信息获取失败，请刷新页面）');
+            onLoginSuccess();
+          }
+        } else {
+          // 【错误处理】如果没有返回 accessToken，说明登录失败
+          console.error('[AuthModal] ❌ 登录失败：未返回 accessToken', loginResult);
+          toast.error('登录失败：服务器未返回有效凭证');
         }
       }
     } catch (error: any) {
-      toast.error(error.message || '操作失败，请重试');
+      // 【错误处理】记录详细错误信息
+      console.error('[AuthModal] 登录/注册错误:', error);
+      console.error('[AuthModal] 错误类型:', error?.constructor?.name);
+      console.error('[AuthModal] 错误消息:', error?.message);
+      console.error('[AuthModal] 错误堆栈:', error?.stack);
+      
+      // 【用户友好的错误提示】
+      let errorMessage = '操作失败，请重试';
+      if (error instanceof ApiError) {
+        // 如果是 ApiError，显示后端返回的错误消息
+        errorMessage = error.message || '操作失败，请检查网络连接或稍后重试';
+        // 特殊处理某些错误码
+        if (error.code === 'AUTH_LOGIN_FAILED') {
+          // 【优化】登录失败时，提示用户如果还没有账号可以注册
+          // 注意：不区分"用户不存在"和"密码错误"是安全最佳实践，防止用户枚举攻击
+          errorMessage = mode === 'login' 
+            ? t('auth.login_failed_hint') // 使用翻译，支持中英文
+            : '注册失败，请检查后重试';
+        } else if (error.code === 'NETWORK_ERROR') {
+          errorMessage = t('auth.network_error');
+        } else if (error.code === 'TIMEOUT_ERROR') {
+          errorMessage = t('auth.timeout_error');
+        } else if (error.code === 'EMAIL_NOT_REGISTERED') {
+          // 【新增】如果邮箱未注册，提示用户去注册
+          errorMessage = t('auth.email_not_registered');
+        }
+      } else if (error?.message) {
+        errorMessage = error.message;
+      }
+      
+      toast.error(errorMessage);
     } finally {
       setIsLoading(false);
     }

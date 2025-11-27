@@ -277,8 +277,8 @@ export const StyleSimulationStage = ({ data, images, taskId }: StyleSimulationSt
       return;
     }
     
-    setIsScanning(true);
-    setSliderPos(0);
+      setIsScanning(true);
+      setSliderPos(0);
     
     try {
       // 调用后端生成预览图
@@ -299,9 +299,9 @@ export const StyleSimulationStage = ({ data, images, taskId }: StyleSimulationSt
       let start = Date.now();
       const duration = 2000;
       const animate = () => {
-        const now = Date.now();
-        const progress = Math.min(1, (now - start) / duration);
-        setSliderPos((1 - Math.pow(1 - progress, 3)) * 100);
+          const now = Date.now();
+          const progress = Math.min(1, (now - start) / duration);
+          setSliderPos((1 - Math.pow(1 - progress, 3)) * 100);
         if (progress < 1) {
           requestAnimationFrame(animate);
         } else {

@@ -32,6 +32,7 @@ const AppContent = () => {
   const [showSimTransition, setShowSimTransition] = useState(false);
   const [showLoginTransition, setShowLoginTransition] = useState(false);
   const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [isCheckingAuth, setIsCheckingAuth] = useState(true); // 【新增】标记是否正在检查登录状态
   
   // Image State
   const [sourceFile, setSourceFile] = useState<File | null>(null);
@@ -42,11 +43,121 @@ const AppContent = () => {
   const [uploadId, setUploadId] = useState<string | null>(null);
   const [taskId, setTaskId] = useState<string | null>(null);
   const [analysisResult, setAnalysisResult] = useState<any>(null);
+  
+  // 【重要】用于同时触发两个图片的 AI 诊断
+  // 用户需求：无论点击哪一个"启动深度扫描"按钮，两边都同时启动 AI 分析
+  const sourceDashboardRef = useRef<{ triggerDiagnosis: () => void } | null>(null);
+  const targetDashboardRef = useRef<{ triggerDiagnosis: () => void } | null>(null);
+  
+  // 【重要】处理"启动深度扫描"按钮点击
+  // 无论点击哪一个按钮，都同时触发两个图片的诊断
+  // 【修复】添加防重复触发机制，避免多次点击导致重复触发
+  const isTriggeringRef = useRef(false); // 用于跟踪是否正在触发诊断
+  
+  const handleStartDiagnosis = () => {
+    // 【防重复触发】如果正在触发中，直接返回
+    if (isTriggeringRef.current) {
+      console.warn('[App] 诊断正在触发中，跳过重复调用');
+      return;
+    }
+    
+    console.log('[App] handleStartDiagnosis 被调用，准备同时触发两个图片的诊断');
+    
+    // 设置触发标志
+    isTriggeringRef.current = true;
+    
+    try {
+      // 【重要】同时触发参考图和用户图的 AI 诊断
+      // 直接调用 triggerDiagnosis，不需要 Promise.all，因为 triggerDiagnosis 是同步的
+      if (sourceDashboardRef.current) {
+        console.log('[App] 触发参考图诊断');
+        try {
+          sourceDashboardRef.current.triggerDiagnosis();
+        } catch (error) {
+          console.error('[App] 参考图诊断触发失败:', error);
+        }
+      }
+      
+      if (targetDashboardRef.current) {
+        console.log('[App] 触发用户图诊断');
+        try {
+          targetDashboardRef.current.triggerDiagnosis();
+        } catch (error) {
+          console.error('[App] 用户图诊断触发失败:', error);
+        }
+      }
+      
+      console.log('[App] 两个图片的诊断已同时触发');
+    } catch (error) {
+      console.error('[App] 同时触发诊断时发生错误:', error);
+      // 即使出错，也不影响用户体验，继续执行
+    } finally {
+      // 【重要】延迟重置触发标志，避免短时间内重复触发
+      // 设置 500ms 的防抖时间，确保诊断请求已发送
+      setTimeout(() => {
+        isTriggeringRef.current = false;
+      }, 500);
+    }
+  };
 
   // Debug Check
   useEffect(() => {
     if (!api) console.error("CRITICAL: API module failed to load.");
   }, []);
+
+  // 【重要】检查登录状态持久化
+  // 用户需求：刷新浏览器后不丢失登录状态
+  // 在应用启动时检查 localStorage 中是否有 token，如果有则自动登录
+  useEffect(() => {
+    const checkAuthStatus = async () => {
+      try {
+        // 从 localStorage 读取 token
+        const token = localStorage.getItem('accessToken');
+        
+        if (token) {
+          // 【日志】记录 token 检查
+          console.log('[App] 检测到已保存的 token，验证登录状态...');
+          
+          // 验证 token 有效性（调用 /api/auth/me 接口）
+          try {
+            const user = await api.auth.me();
+            
+            // 【日志】记录验证成功
+            console.log('[App] Token 验证成功，用户已登录:', user);
+            
+            // 如果验证成功，直接进入应用界面，跳过登录
+            setView('app');
+          } catch (error: any) {
+            // 【日志】记录验证失败
+            console.error('[App] Token 验证失败，清除无效 token:', error);
+            
+            // Token 无效或已过期，清除 localStorage 中的 token
+            localStorage.removeItem('accessToken');
+            
+            // 保持在 landing 页面，需要重新登录
+            setView('landing');
+          }
+        } else {
+          // 【日志】记录无 token
+          console.log('[App] 未检测到 token，需要登录');
+          
+          // 没有 token，保持在 landing 页面
+          setView('landing');
+        }
+      } catch (error: any) {
+        // 【错误处理】如果检查过程中出现异常，清除可能无效的 token
+        console.error('[App] 检查登录状态时出错:', error);
+        localStorage.removeItem('accessToken');
+        setView('landing');
+      } finally {
+        // 【重要】无论成功或失败，都要标记检查完成
+        setIsCheckingAuth(false);
+      }
+    };
+
+    // 执行检查
+    checkAuthStatus();
+  }, []); // 只在组件挂载时执行一次
 
   // 1. Handle Image Selection & Upload
   const handleFileSelect = async (type: 'source' | 'target', file: File) => {
@@ -56,16 +167,26 @@ const AppContent = () => {
     else setTargetFile(file);
   };
 
-  // 2. Start Analysis (Part 1)
+  /**
+   * 开始分析（Part 1）
+   * 根据用户需求：转场动画应该在 Part1 完成后才开始，而不是在 Part1 开始时
+   * 这样可以确保转场动画与 Part1 输出时间对齐，避免进入下一个画面时 Part1 内容还没加载出来
+   * 
+   * 流程：
+   * 1. 上传图片
+   * 2. 调用 Part1 API（等待 50-60 秒）
+   * 3. Part1 完成后，设置分析结果
+   * 4. 启动转场动画
+   * 5. 转场动画完成后，切换到分析结果页面
+   */
   const handleAnalyze = async () => {
     if (!sourceFile) {
       toast.error("Please upload a Reference Style image");
       return;
     }
     
-    // Start Transition
-    setShowTransition(true);
-    setIsAnalyzing(true); // Lock button
+    // 【重要】锁定按钮，防止重复点击
+    setIsAnalyzing(true);
 
     try {
         // Step A: Upload
@@ -73,19 +194,53 @@ const AppContent = () => {
         formData.append('sourceImage', sourceFile);
         if (targetFile) formData.append('targetImage', targetFile);
         
+        console.log('[App] 开始上传图片...');
         const uploadRes = await api.photos.upload(formData);
         setUploadId(uploadRes.uploadId);
+        console.log('[App] 图片上传完成，uploadId:', uploadRes.uploadId);
 
-        // Step B: Analyze Part 1
+        // Step B: Analyze Part 1（等待 50-60 秒）
+        console.log('[App] 开始 Part1 分析（预计需要 50-60 秒）...');
+        const startTime = Date.now();
         const analyzeRes = await api.analyze.part1(uploadRes.uploadId);
+        const endTime = Date.now();
+        const duration = ((endTime - startTime) / 1000).toFixed(1);
+        console.log(`[App] Part1 分析完成，耗时: ${duration} 秒`);
+        
         setTaskId(analyzeRes.taskId);
-        // 使用数据适配器转换后端数据格式
+        
+        // 【重要】使用数据适配器转换后端数据格式
+        // 后端返回的数据结构：{ taskId, stage, status, structuredAnalysis, naturalLanguage, protocolVersion }
+        // structuredAnalysis 包含 sections.photoReview, sections.composition 等
+        console.log('[App] Part1 API 返回结果:', {
+          hasStructuredAnalysis: !!analyzeRes.structuredAnalysis,
+          structuredAnalysisKeys: analyzeRes.structuredAnalysis ? Object.keys(analyzeRes.structuredAnalysis) : [],
+          hasSections: !!analyzeRes.structuredAnalysis?.sections,
+          sectionsKeys: analyzeRes.structuredAnalysis?.sections ? Object.keys(analyzeRes.structuredAnalysis.sections) : [],
+        });
+        
         const adaptedData = adaptBackendToFrontend(analyzeRes.structuredAnalysis || analyzeRes);
+        
+        console.log('[App] 数据适配器转换后的结果:', {
+          hasReview: !!adaptedData.review,
+          reviewKeys: adaptedData.review ? Object.keys(adaptedData.review) : [],
+          hasComposition: !!adaptedData.composition,
+          hasLighting: !!adaptedData.lighting,
+          hasColor: !!adaptedData.color,
+          fullAdaptedData: adaptedData,
+        });
+        
+        // 【重要】先设置分析结果，确保数据已准备好
         setAnalysisResult(adaptedData);
         
-        // The transition component will call handleTransitionComplete when animation is done
+        // 【修复】Part1 完成后，再启动转场动画
+        // 这样可以确保转场动画与 Part1 输出时间对齐
+        console.log('[App] Part1 数据已准备好，启动转场动画...');
+        setShowTransition(true);
+        
+        // 转场动画组件会在动画完成后调用 handleTransitionComplete
     } catch (e) {
-        console.error(e);
+        console.error('[App] Part1 分析失败:', e);
         toast.error("Analysis failed. Please try again.");
         setIsAnalyzing(false);
         setShowTransition(false);
@@ -109,6 +264,19 @@ const AppContent = () => {
   };
 
   const isAnalysisComplete = !!analysisResult;
+
+  // 【重要】在检查登录状态时显示加载状态，避免闪烁
+  if (isCheckingAuth) {
+    return (
+      <div className="min-h-screen relative bg-carbon-950 text-optic-white font-sans overflow-x-hidden selection:bg-optic-accent/30 flex items-center justify-center">
+        <ParticleBackground />
+        <div className="relative z-10 text-center">
+          <div className="w-12 h-12 border-4 border-optic-accent/30 border-t-optic-accent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-white/60 text-sm font-mono">正在验证登录状态...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen relative bg-carbon-950 text-optic-white font-sans overflow-x-hidden selection:bg-optic-accent/30">
@@ -206,18 +374,24 @@ const AppContent = () => {
                     </div>
 
                     {/* Upload Zones */}
+                    {/* 【重要】两个图片上传区域，每个都有自己的分析面板 */}
+                    {/* 用户需求：无论点击哪一个"启动深度扫描"按钮，两边都同时启动 AI 分析 */}
                     <div className="flex gap-20 mb-16">
                         <PhotoUploadZone 
                             label={t('stage.upload.ref_label')}
                             imageSrc={images.source} 
                             onFileSelect={(f) => handleFileSelect('source', f)} 
                             isScanning={isAnalyzing}
+                            dashboardRef={sourceDashboardRef} // 【重要】传递 ref，用于从外部触发诊断
+                            onStartDiagnosis={handleStartDiagnosis} // 【重要】传递处理函数，用于同时触发两个图片的诊断
                         />
                         <PhotoUploadZone 
                             label={t('stage.upload.target_label')}
                             imageSrc={images.target} 
                             onFileSelect={(f) => handleFileSelect('target', f)} 
                             isScanning={isAnalyzing}
+                            dashboardRef={targetDashboardRef} // 【重要】传递 ref，用于从外部触发诊断
+                            onStartDiagnosis={handleStartDiagnosis} // 【重要】传递处理函数，用于同时触发两个图片的诊断
                         />
                     </div>
 
@@ -238,6 +412,18 @@ const AppContent = () => {
                             </span>
                         ) : t('stage.upload.btn_analyze')}
                     </button>
+                    
+                    {/* 【Part1 分析进度提示】在 Part1 进行期间显示加载状态 */}
+                    {isAnalyzing && !showTransition && (
+                        <div className="mt-8 text-center">
+                            <div className="inline-flex items-center gap-3 px-6 py-3 bg-black/50 border border-white/10 rounded-lg backdrop-blur-sm">
+                                <div className="w-4 h-4 border-2 border-optic-accent/30 border-t-optic-accent rounded-full animate-spin"></div>
+                                <span className="text-xs font-mono text-white/80 tracking-wider">
+                                    {t('stage.upload.analyzing_part1') || "正在分析 Part1（预计 50-60 秒）..."}
+                                </span>
+                            </div>
+                        </div>
+                    )}
                 </div>
                 )}
 

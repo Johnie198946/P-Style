@@ -51,12 +51,25 @@ export interface CompositionData {
     lines: { 
         path: string[];
         guide?: string;
+        // New field for vector data
+        vectors?: {
+            entry: { label: string, coords: number[] };
+            focal: { label: string, coords: number[] };
+            exit: { label: string, coords: number[] };
+            path: number[][];
+        };
     };
     zones: { 
         foreground: string; 
         midground: string; 
         background: string; 
         perspective: string;
+        // New field for detailed depth data
+        details?: {
+            foreground: { content: string, range: number[] };
+            midground: { content: string, range: number[] };
+            background: { content: string, range: number[] };
+        };
     };
     proportions: { 
         entities: string; 
@@ -67,11 +80,33 @@ export interface CompositionData {
         horizontal: string; 
         vertical: string; 
         strategy: string; 
+        // New field for detailed negative space data
+        details?: {
+            percentage: number;
+            h_balance: string;
+            v_balance: string;
+        };
     };
     style: { 
         name: string; 
         method: string; 
         features: string; 
+    };
+    // 【新增】Visual Mass 功能所需的数据（视觉质量/视觉重心）
+    visual_data?: {
+        saliency_mask_url?: string;  // 显著性遮罩图 URL（优先使用）
+        subject_poly?: string;  // SVG polygon points 格式（后备方案）
+        visual_mass?: {
+            type: string;
+            confidence: number;
+            score: number;  // 视觉吸引力分数 (0-100)
+            composition_rule: string;  // 构图法则名称
+            center_point: { x: number; y: number };  // 重心点（百分比格式 0-100）
+            center_of_gravity: number[];  // 向后兼容字段
+            vertices: number[][];  // 向后兼容字段
+            polygon_points: Array<{ x: number; y: number }>;  // 多边形点集（百分比格式 0-100）
+            saliency_mask_url?: string;
+        };
     };
 }
 
@@ -87,129 +122,47 @@ export interface LightroomData {
     highlights: number;
   };
   basic_panel: {
-    temp: { value: number; range: string; reason: string };
-    tint: { value: number; range: string; reason: string };
-    exposure: { value: number; range: string; reason: string };
-    contrast: { value: number; range: string; reason: string };
-    highlights: { value: number; range: string; reason: string };
-    shadows: { value: number; range: string; reason: string };
-    whites: { value: number; range: string; reason: string };
-    blacks: { value: number; range: string; reason: string };
-    texture: { value: number; range: string; reason: string };
-    clarity: { value: number; range: string; reason: string };
-    dehaze: { value: number; range: string; reason: string };
-    vibrance: { value: number; range: string; reason: string };
-    saturation: { value: number; range: string; reason: string };
+    temp: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    tint: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    exposure: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    contrast: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    highlights: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    shadows: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    whites: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    blacks: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    texture: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    clarity: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    dehaze: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    vibrance: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
+    saturation: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
   };
-  hsl: HSLData;
   curve: {
-    rgb: Array<{x: number, y: number}>;
-    red: Array<{x: number, y: number}>;
-    green: Array<{x: number, y: number}>;
-    blue: Array<{x: number, y: number}>;
+    rgb: [number, number][];
+    red: [number, number][];
+    green: [number, number][];
+    blue: [number, number][];
+    analysis: { rgb: string; red: string }; // Simplified
+    tips: string[];
     reason: string;
   };
+  hsl: HSLData;
   split_toning: {
     highlights: { hue: number; saturation: number; reason: string };
+    midtones: { hue: number; saturation: number; reason: string };
     shadows: { hue: number; saturation: number; reason: string };
-    balance: { value: number; reason: string };
+    balance: { value: number; min: number; max: number; target_min: number; target_max: number; reason: string };
   };
-  composition?: CompositionData;
 }
 
 export interface PhotoshopData {
-  camera_raw_adjustments: string;
-  curve_refinement: string;
-  hsl_refinement: string;
-  selective_color: Array<{
-    color: string;
-    adjustments: { c: number; m: number; y: number; k: number };
-    method: "Relative" | "Absolute";
-    reason: string;
-  }>;
-  local_adjustments: Array<{
-    tool: "Dodge" | "Burn" | "Brush";
-    location: string;
-    params: string;
-    reason: string;
-  }>;
-  atmosphere: {
-    technique: string;
-    opacity: number;
-    blend_mode: string;
-    color: string;
-    reason: string;
-  };
-  sharpening: {
-    technique: "High Pass" | "Unsharp Mask";
-    amount: number;
-    radius: number;
-    threshold: number;
-    reason: string;
-  };
-  grain: {
-    amount: number;
-    size: number;
-    roughness: number;
-    reason: string;
-  };
-}
-
-export interface AdvancedPhotoshopData {
-    histogram: {
-        r: number[]; g: number[]; b: number[]; l: number[];
-        avg_l: number; shadows: number; midtones: number; highlights: number;
-    };
-    cr_base: {
-        temp: number; tint: number; exposure: number; contrast: number;
-        highlights: number; shadows: number; whites: number; blacks: number;
-        texture: number; clarity: number; dehaze: number;
-        reason: string;
-    };
-    curves: {
-        rgb: Array<{x: number, y: number}>;
-        reason: string;
-    };
-    hsl: {
-        red: { h:number, s:number, l:number }; orange: { h:number, s:number, l:number }; yellow: { h:number, s:number, l:number };
-        green: { h:number, s:number, l:number }; aqua: { h:number, s:number, l:number }; blue: { h:number, s:number, l:number };
-        purple: { h:number, s:number, l:number }; magenta: { h:number, s:number, l:number };
-        reason: string;
-    };
-    selective_color: Array<{
-        color: string;
-        c: number; m: number; y: number; k: number;
-        method: "Relative" | "Absolute";
-        opacity: number; blend_mode: string;
-        reason: string;
+    layers: Array<{
+        name: string;
+        blend_mode: string;
+        opacity: number;
+        mask?: string;
+        adjustments?: Record<string, any>;
     }>;
-    local_light: Array<{
-        location: string; tool: "Dodge" | "Burn";
-        params: string; opacity: number; blend_mode: string;
-        reason: string;
-    }>;
-    atmosphere: {
-        hardness: number; opacity: number; flow: number; color: string;
-        reason: string;
-    };
-    sharpen: {
-        technique: string; amount: number; radius: number; threshold: number;
-        reason: string;
-    };
-    grain: {
-        type: string; amount: number; size: number; roughness: number;
-        reason: string;
-    };
-    vignette: {
-        amount: number; midpoint: number; roundness: number; feather: number;
-        reason: string;
-    };
-    levels: {
-        black_input: number; white_input: number; gamma: number;
-        black_output: number; white_output: number;
-        blend_mode: string; opacity: number;
-        reason: string;
-    };
+    operations: string[];
 }
 
 export interface FullAnalysisData {
@@ -217,13 +170,65 @@ export interface FullAnalysisData {
     style_summary: string;
     comprehensive_review: string;
     pros_evaluation: string;
+    // 新增字段
+    master_archetype?: string;
+    visual_signature?: string;
+    saturation_strategy?: string;
+    tonal_intent?: string;
+    simulated_histogram_data?: {
+        reference: number[];
+        user: number[];
+        description?: string;
+        ref_description?: string;
+    };
+    emotion?: string;
+    visual_subject_analysis?: string;
+    focus_exposure_analysis?: string;
+    parameter_comparison_table?: any[];
+    feasibility_assessment?: any;
+    overlays?: any;
+    // 【新增】图像验证描述字段
+    // 用于前端在参考图和用户图下方显示图像内容描述
+    image_verification?: {
+      ref_image_content?: string;
+      user_image_content?: string;
+    };
   };
+  lighting: {
+      exposure_control: Array<{ param: string; range: string; desc: string }>;
+  };
+  color: ColorSchemeData;
   composition: CompositionData;
-  lighting?: {
-    exposure_control: Array<{ param: string; range: string; desc: string }>;
-    zone_system_data?: number[];
-  };
-  color_scheme?: ColorSchemeData;
   lightroom: LightroomData;
-  photoshop: PhotoshopData | AdvancedPhotoshopData;
+  photoshop: PhotoshopData;
+}
+
+// AI 诊断相关类型定义
+export interface DiagnosisRegion {
+  label: string;
+  box_2d: [number, number, number, number]; // [ymin, xmin, ymax, xmax], 0-1000
+}
+
+export interface DiagnosisScoreDetail {
+    value: number;
+    description: string;
+    regions?: DiagnosisRegion[];
+}
+
+export interface DiagnosisResult {
+  scores: {
+    exposure: number | DiagnosisScoreDetail;
+    color: number | DiagnosisScoreDetail;
+    composition: number | DiagnosisScoreDetail;
+    mood: number | DiagnosisScoreDetail;
+  };
+  critique: string;
+  suggestions: string[];
+  issues: Array<{
+    type: string;
+    severity: string;
+    description: string;
+    region?: string | null;
+  }>;
+  processingTime?: number;
 }

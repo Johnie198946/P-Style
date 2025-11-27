@@ -1,14 +1,30 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
+import { useLanguage } from '../../src/contexts/LanguageContext';
 
+/**
+ * 分析转场动画组件
+ * 在 Part1 分析完成后播放转场动画，然后切换到分析结果页面
+ * 
+ * @param onComplete - 转场动画完成后的回调函数
+ */
 interface AnalysisTransitionProps {
   onComplete: () => void;
 }
 
 export const AnalysisTransition = ({ onComplete }: AnalysisTransitionProps) => {
+  const { t } = useLanguage();
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // 【中英文支持】使用翻译键，支持中英文切换
+  // 注意：useState 的初始值在组件挂载时计算，此时 t 函数可能还未准备好
+  // 所以使用默认值作为后备
   const [statusText, setStatusText] = useState("ESTABLISHING NEURAL LINK");
   const [progress, setProgress] = useState(0);
+  
+  // 【修复】在 useEffect 中设置初始状态文本，确保翻译函数已准备好
+  useEffect(() => {
+    setStatusText(t('transition.analysis.establishing') || "ESTABLISHING NEURAL LINK");
+  }, [t]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -256,9 +272,14 @@ export const AnalysisTransition = ({ onComplete }: AnalysisTransitionProps) => {
     animate();
 
     // --- TIMELINE SEQUENCE ---
+    // 【转场动画时间线】约 4 秒的动画序列
+    // 1. Ingest (0s - 2.0s) - 数据摄取阶段
+    // 2. Stabilize & Analyze (2.0s - 3.0s) - 稳定与分析阶段
+    // 3. Critical Mass (3.0s - 3.8s) - 临界质量阶段
+    // 4. Explode (3.8s - 4.4s) - 爆炸效果阶段
     const runSequence = async () => {
         // 1. Ingest (0s - 2.0s)
-        setStatusText("INGESTING RAW DATA");
+        setStatusText(t('transition.analysis.ingesting') || "INGESTING RAW DATA");
         for (let i = 0; i <= 70; i++) {
             setProgress(i);
             await new Promise(r => setTimeout(r, 20));
@@ -266,7 +287,7 @@ export const AnalysisTransition = ({ onComplete }: AnalysisTransitionProps) => {
 
         // 2. Stabilize & Analyze (2.0s - 3.0s)
         phase = 'stabilize';
-        setStatusText("ANALYZING TENSOR VECTORS");
+        setStatusText(t('transition.analysis.analyzing') || "ANALYZING TENSOR VECTORS");
         for (let i = 70; i <= 90; i++) {
             setProgress(i);
             await new Promise(r => setTimeout(r, 40));
@@ -274,7 +295,7 @@ export const AnalysisTransition = ({ onComplete }: AnalysisTransitionProps) => {
 
         // 3. Critical Mass (3.0s - 3.8s)
         phase = 'critical';
-        setStatusText("ENERGY SURGE DETECTED");
+        setStatusText(t('transition.analysis.energy_surge') || "ENERGY SURGE DETECTED");
         setProgress(100);
         await new Promise(r => setTimeout(r, 800));
 
@@ -334,8 +355,8 @@ export const AnalysisTransition = ({ onComplete }: AnalysisTransitionProps) => {
             </div>
             
             <div className="flex justify-between w-96 text-[9px] text-blue-300/50 font-mono uppercase">
-                <span>Sector 7G</span>
-                <span>{progress.toFixed(0)}% COMPLETE</span>
+                <span>{t('transition.analysis.sector') || "Sector 7G"}</span>
+                <span>{progress.toFixed(0)}% {t('transition.analysis.complete') || "COMPLETE"}</span>
             </div>
         </div>
 

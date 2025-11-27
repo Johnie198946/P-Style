@@ -144,6 +144,13 @@ class FeasibilityService:
             if img.mode != 'RGB':
                 img = img.convert('RGB')
             
+            # 【性能优化】缩放图片
+            # 为了避免大图处理导致内存溢出或 OpenCV 处理过慢，将图片缩放到最大边长 1024px
+            # 可行性评估不需要原始分辨率，1024px 足够进行光影、色彩、构图分析
+            max_size = 1024
+            if max(img.size) > max_size:
+                img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
             # 转换为 numpy 数组，形状为 (H, W, 3)
             return np.array(img)
         except Exception as e:

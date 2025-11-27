@@ -30,38 +30,491 @@ export interface FrontendData {
 
 /**
  * 将后端返回的数据结构转换为前端期望的扁平结构
+ * 根据开发方案第 2180-2248 行实现
+ * 
+ * @param backendData - 后端返回的数据，格式：
+ *   {
+ *     sections: {
+ *       photoReview: { naturalLanguage: {...}, structured: {...} },
+ *       composition: { naturalLanguage: {...}, structured: {...} },
+ *       ...
+ *     }
+ *   }
+ * @returns 前端期望的扁平结构：
+ *   {
+ *     review: { style_summary, comprehensive_review, ... },
+ *     composition: { main_structure, ... },
+ *     ...
+ *   }
  */
 export function adaptBackendToFrontend(backendData: BackendResponse | null | undefined): FrontendData {
-  if (!backendData) return {};
+  if (!backendData) {
+    console.warn('[dataAdapter] backendData 为空，返回空对象');
+    return {};
+  }
 
-  // 获取 sections（可能直接在 structured_result 中，也可能在顶层）
+  // 【重要】获取 sections（可能直接在 structured_result 中，也可能在顶层）
+  // 根据开发方案第 2193-2196 行，sections 在 structured_result.sections 中
   const sections = backendData.sections || backendData.structured_result?.sections || backendData.structured_result || {};
+  
+  // 【调试日志】记录数据转换开始（仅在开发环境）
+  if (process.env.NODE_ENV === 'development') {
+  console.log('[dataAdapter] 开始转换数据:', {
+    hasSections: !!sections,
+    sectionsKeys: sections ? Object.keys(sections) : [],
+    hasPhotoReview: !!sections.photoReview,
+    photoReviewKeys: sections.photoReview ? Object.keys(sections.photoReview) : [],
+      photoReviewStructuredKeys: sections.photoReview?.structured ? Object.keys(sections.photoReview.structured) : [],
+  });
+  }
 
   const result: FrontendData = {};
 
   // 1. Review（照片点评）→ results.review
+  // 根据开发方案第 2206-2229 行，从 sections.photoReview.structured 提取字段
   if (sections.photoReview) {
     const photoReview = sections.photoReview;
     const structured = photoReview.structured || photoReview;
     
+    // 【调试日志】记录从 structured 提取的原始数据（仅在开发环境）
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[dataAdapter] 从 structured 提取数据:', {
+        hasStyleSummary: !!structured.style_summary,
+        styleSummaryLength: structured.style_summary ? structured.style_summary.length : 0,
+        styleSummaryPreview: structured.style_summary ? structured.style_summary.substring(0, 50) + '...' : 'empty',
+        hasPhotographerStyleSummary: !!structured.photographerStyleSummary,
+        photographerStyleSummaryLength: structured.photographerStyleSummary ? structured.photographerStyleSummary.length : 0,
+        photographerStyleSummaryPreview: structured.photographerStyleSummary ? structured.photographerStyleSummary.substring(0, 50) + '...' : 'empty',
+        hasOverviewSummary: !!structured.overviewSummary,
+        overviewSummaryLength: structured.overviewSummary ? structured.overviewSummary.length : 0,
+        overviewSummaryPreview: structured.overviewSummary ? structured.overviewSummary.substring(0, 50) + '...' : 'empty',
+        hasComprehensiveReview: !!structured.comprehensive_review,
+        comprehensiveReviewLength: structured.comprehensive_review ? structured.comprehensive_review.length : 0,
+        comprehensiveReviewPreview: structured.comprehensive_review ? structured.comprehensive_review.substring(0, 50) + '...' : 'empty',
+        structuredKeys: Object.keys(structured),
+        structuredKeysCount: Object.keys(structured).length,
+        // 【重要】打印所有 structured 的键值对，帮助定位问题
+        structuredFull: structured,
+      });
+    }
+    
+    // 【重要】提取 review 数据，确保所有字段都有默认值
+    // 【修复】优先从 style_summary 提取，如果没有则从 photographerStyleSummary 或 overviewSummary 提取
+    const styleSummary = structured.style_summary || structured.photographerStyleSummary || structured.overviewSummary || "";
+    
+    // 合并 comprehensive_review, master_archetype, visual_signature
+    const masterArchetype = structured.master_archetype || "";
+    const visualSignature = structured.visual_signature || "";
+    // 【修复】优先从 comprehensive_review 提取，如果没有则从 overviewSummary 提取
+    const compReview = structured.comprehensive_review || structured.overviewSummary || "";
+    
+    // 构建合并后的综合点评（保留原始逻辑作为后备，但现在前端会优先使用独立字段）
+    let mergedComprehensiveReview = compReview;
+    
+    // 提取 Color & Emotion 相关的字段
+    const emotionDesc = structured.emotion || structured.dimensions?.colorEmotion?.description || "";
+    const colorDepth = structured.color_depth_analysis || structured.dimensions?.colorDepth?.description || "";
+    const saturationStrategy = structured.saturation_strategy || "";
+    const tonalIntent = structured.tonal_intent || "";
+
+    // 构建合并后的情感描述（同样保留作为后备）
+    let mergedEmotion = emotionDesc;
+    if (colorDepth) mergedEmotion += `\n\n【色彩深度】${colorDepth}`;
+    // saturation_strategy 和 tonal_intent 现在单独展示，不再强制合并到 emotion 中，除非 emotion 为空
+    if (!mergedEmotion && saturationStrategy) mergedEmotion += `\n\n【饱和度策略】${saturationStrategy}`;
+
     result.review = {
-      style_summary: structured.overviewSummary || structured.photographerStyleSummary || structured.style_summary || "",
-      comprehensive_review: structured.overviewSummary || structured.comprehensive_review || "",
+      style_summary: styleSummary,
+      comprehensive_review: mergedComprehensiveReview,
+      // 独立字段
+      master_archetype: masterArchetype,
+      visual_signature: visualSignature,
+      saturation_strategy: saturationStrategy,
+      tonal_intent: tonalIntent,
+      
       pros_evaluation: structured.dimensions?.advantages?.description || structured.pros_evaluation || "",
-      visual_subject_analysis: structured.dimensions?.visualGuidance?.description || structured.visual_subject_analysis,
-      focus_exposure_analysis: structured.dimensions?.focusExposure?.description || structured.focus_exposure_analysis,
-      emotion: structured.dimensions?.colorEmotion?.description || structured.emotion,
-      overlays: structured.dimensions?.visualGuidance?.overlays || structured.overlays,
-      simulated_histogram_data: structured.dimensions?.colorDepth?.histogramData || structured.simulated_histogram_data,
-      parameter_comparison_table: structured.comparisonTable || structured.parameter_comparison_table,
-      feasibility_assessment: structured.feasibility || photoReview.feasibility || structured.feasibility_assessment,
+      visual_subject_analysis: structured.dimensions?.visualGuidance?.description || structured.visual_subject_analysis || "",
+      focus_exposure_analysis: structured.dimensions?.focusExposure?.description || structured.focus_exposure_analysis || "",
+      emotion: mergedEmotion,
+      // 【新增】提取 image_verification 字段（图像验证描述）
+      // 用于前端在参考图和用户图下方显示图像内容描述
+      image_verification: structured.image_verification || {},
+      // 【修复】提取 overlays 数据：支持新旧两种格式
+      // 新格式：overlays.reference 和 overlays.user（两套坐标，分别用于参考图和用户图）
+      // 旧格式：overlays.visual_subject/focus_exposure/color_depth（一套坐标，向后兼容）
+      overlays: (() => {
+        // 【修复】提取 overlays 数据：支持新旧两种格式
+        // 新格式：overlays.reference 和 overlays.user（两套坐标，分别用于参考图和用户图）
+        // 旧格式：overlays.visual_subject/focus_exposure/color_depth（一套坐标，向后兼容）
+        const overlaysData = structured.overlays || structured.dimensions?.visualGuidance?.overlays || {};
+        
+        // 【调试日志】记录 overlays 数据提取过程（仅在开发环境）
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dataAdapter] 提取 overlays 数据:', {
+            hasStructuredOverlays: !!structured.overlays,
+            structuredOverlaysType: typeof structured.overlays,
+            structuredOverlaysKeys: structured.overlays && typeof structured.overlays === 'object' ? Object.keys(structured.overlays) : [],
+            hasDimensionsVisualGuidanceOverlays: !!structured.dimensions?.visualGuidance?.overlays,
+            dimensionsVisualGuidanceOverlaysKeys: structured.dimensions?.visualGuidance?.overlays && typeof structured.dimensions.visualGuidance.overlays === 'object' ? Object.keys(structured.dimensions.visualGuidance.overlays) : [],
+            finalOverlaysType: typeof overlaysData,
+            finalOverlaysKeys: overlaysData && typeof overlaysData === 'object' ? Object.keys(overlaysData) : [],
+            hasReference: overlaysData && typeof overlaysData === 'object' ? 'reference' in overlaysData : false,
+            hasUser: overlaysData && typeof overlaysData === 'object' ? 'user' in overlaysData : false,
+            finalOverlays: overlaysData
+          });
+        }
+        
+        // 【修复】如果 overlays 包含 reference 和 user 字段，说明是新格式（两套坐标）
+        // 否则是旧格式（一套坐标），需要向后兼容
+        if (overlaysData && typeof overlaysData === 'object' && !Array.isArray(overlaysData) && 'reference' in overlaysData && 'user' in overlaysData) {
+          // 新格式：返回包含 reference 和 user 的对象
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[dataAdapter] ✅ 检测到新格式 overlays（两套坐标）:', {
+              referenceKeys: overlaysData.reference && typeof overlaysData.reference === 'object' ? Object.keys(overlaysData.reference) : [],
+              userKeys: overlaysData.user && typeof overlaysData.user === 'object' ? Object.keys(overlaysData.user) : []
+            });
+          }
+          return overlaysData;
+        } else {
+          // 旧格式：向后兼容，将同一套坐标同时用于参考图和用户图
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[dataAdapter] ⚠️ 检测到旧格式 overlays（只有一套坐标），将同时用于参考图和用户图。建议后端更新为两套坐标格式。');
+            console.warn('[dataAdapter] ⚠️ 旧格式 overlays keys:', overlaysData && typeof overlaysData === 'object' ? Object.keys(overlaysData) : []);
+          }
+          return {
+            reference: overlaysData || {},
+            user: overlaysData || {}
+          };
+        }
+      })(),
+      // 【修复】转换直方图数据格式
+      // 数据来源优先级：
+      // 1. structured.simulated_histogram_data（顶层字段，优先使用）
+      // 2. structured.dimensions?.colorDepth?.histogramData（嵌套在 dimensions 中）
+      simulated_histogram_data: (() => {
+        const histogramData = structured.simulated_histogram_data || structured.dimensions?.colorDepth?.histogramData;
+        if (!histogramData) {
+          // 【调试日志】记录直方图数据缺失
+          if (process.env.NODE_ENV === 'development') {
+            console.warn('[dataAdapter] simulated_histogram_data 不存在:', {
+              hasSimulatedHistogramData: !!structured.simulated_histogram_data,
+              hasColorDepthHistogramData: !!structured.dimensions?.colorDepth?.histogramData,
+              colorDepthKeys: structured.dimensions?.colorDepth ? Object.keys(structured.dimensions.colorDepth) : []
+            });
+          }
+          return undefined;
+        }
+        
+        // 【修复】提取数据点，支持多种数据格式
+        // 后端可能返回的格式：
+        // 1. { reference: { data_points: [...] }, user: { data_points: [...] } }（新结构）
+        // 2. { reference: [...], user: [...] }（旧结构，直接是数组）
+        // 3. { reference: { description: "...", data_points: [...] }, user: { description: "...", data_points: [...] } }（带描述的新结构）
+        const result: any = {};
+        
+        // 【调试日志】记录直方图数据格式（仅在开发环境）
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dataAdapter] 处理直方图数据:', {
+            histogramDataType: typeof histogramData,
+            histogramDataKeys: Object.keys(histogramData),
+            hasReference: !!histogramData.reference,
+            referenceType: typeof histogramData.reference,
+            referenceIsArray: Array.isArray(histogramData.reference),
+            hasUser: !!histogramData.user,
+            userType: typeof histogramData.user,
+            userIsArray: Array.isArray(histogramData.user),
+          });
+        }
+        
+        // 尝试提取描述
+        if (histogramData.description) result.description = histogramData.description;
+
+        // 【修复】提取 reference 数据，支持多种格式
+        // 新增支持格式：{ description: "...", data_points: [{ value, frequency, channel }] }
+        if (Array.isArray(histogramData.reference)) {
+          // 格式1：直接是数组
+             result.reference = histogramData.reference;
+        } else if (histogramData.reference && typeof histogramData.reference === 'object') {
+          // 格式2：是对象，可能包含 data_points 或直接是数组
+          if (Array.isArray(histogramData.reference.data_points)) {
+             // 【修复】处理 data_points 格式：可能是对象数组 [{ value, frequency, channel }] 或数字数组
+             const dataPoints = histogramData.reference.data_points;
+             if (dataPoints.length > 0 && typeof dataPoints[0] === 'object' && 'value' in dataPoints[0]) {
+               // 格式：对象数组 [{ value, frequency, channel }]，需要转换为数字数组
+               // 创建一个 256 长度的数组，根据 value 和 frequency 填充
+               const histogramArray = new Array(256).fill(0);
+               dataPoints.forEach((point: any) => {
+                 const value = Math.round(point.value || 0);
+                 const frequency = point.frequency || 0;
+                 if (value >= 0 && value < 256) {
+                   histogramArray[value] = frequency;
+                 }
+               });
+               result.reference = histogramArray;
+             } else {
+               // 格式：数字数组，直接使用
+               result.reference = dataPoints;
+             }
+             // 如果描述在 reference 对象里
+             if (histogramData.reference.description) result.ref_description = histogramData.reference.description;
+          } else if (Array.isArray(histogramData.reference)) {
+            // 如果 reference 对象本身是数组（不应该发生，但为了安全）
+            result.reference = histogramData.reference;
+          } else {
+            result.reference = [];
+          }
+        } else if (Array.isArray(histogramData.data_points)) {
+          // 【新增】格式3：顶层 data_points（新 Prompt 结构）
+          // 处理 data_points 格式：可能是对象数组 [{ value, frequency, channel }] 或数字数组
+          const dataPoints = histogramData.data_points;
+          if (dataPoints.length > 0 && typeof dataPoints[0] === 'object' && 'value' in dataPoints[0]) {
+            // 格式：对象数组 [{ value, frequency, channel }]，需要转换为数字数组
+            // 创建一个 256 长度的数组，根据 value 和 frequency 填充
+            const histogramArray = new Array(256).fill(0);
+            dataPoints.forEach((point: any) => {
+              const value = Math.round(point.value || 0);
+              const frequency = point.frequency || 0;
+              if (value >= 0 && value < 256) {
+                histogramArray[value] = frequency;
+              }
+            });
+            result.reference = histogramArray;
+          } else {
+            // 格式：数字数组，直接使用
+            result.reference = dataPoints;
+          }
+        } else {
+             result.reference = [];
+        }
+
+        // 【修复】提取 user 数据，支持多种格式
+        // 新增支持格式：{ description: "...", data_points: [{ value, frequency, channel }] }
+        if (Array.isArray(histogramData.user)) {
+          // 格式1：直接是数组
+             result.user = histogramData.user;
+        } else if (histogramData.user && typeof histogramData.user === 'object') {
+          // 格式2：是对象，可能包含 data_points 或直接是数组
+          if (Array.isArray(histogramData.user.data_points)) {
+             // 【修复】处理 data_points 格式：可能是对象数组 [{ value, frequency, channel }] 或数字数组
+             const dataPoints = histogramData.user.data_points;
+             if (dataPoints.length > 0 && typeof dataPoints[0] === 'object' && 'value' in dataPoints[0]) {
+               // 格式：对象数组 [{ value, frequency, channel }]，需要转换为数字数组
+               // 创建一个 256 长度的数组，根据 value 和 frequency 填充
+               const histogramArray = new Array(256).fill(0);
+               dataPoints.forEach((point: any) => {
+                 const value = Math.round(point.value || 0);
+                 const frequency = point.frequency || 0;
+                 if (value >= 0 && value < 256) {
+                   histogramArray[value] = frequency;
+                 }
+               });
+               result.user = histogramArray;
+             } else {
+               // 格式：数字数组，直接使用
+               result.user = dataPoints;
+             }
+          } else if (Array.isArray(histogramData.user)) {
+            // 如果 user 对象本身是数组（不应该发生，但为了安全）
+            result.user = histogramData.user;
+          } else {
+            result.user = [];
+          }
+        } else {
+             result.user = [];
+        }
+        
+        // 【调试日志】记录转换后的直方图数据（仅在开发环境）
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dataAdapter] 直方图数据转换完成:', {
+            hasReference: !!result.reference,
+            referenceLength: Array.isArray(result.reference) ? result.reference.length : 0,
+            hasUser: !!result.user,
+            userLength: Array.isArray(result.user) ? result.user.length : 0,
+            hasDescription: !!result.description,
+            hasRefDescription: !!result.ref_description,
+          });
+        }
+        
+        return result;
+      })(),
+      // 【修复】转换参数对比表格式：后端返回的是 { dimension, reference, user }
+      // 前端期望的是 { param, ref, user, suggest }
+      parameter_comparison_table: (() => {
+        const table = structured.comparisonTable || structured.parameter_comparison_table;
+        if (!Array.isArray(table)) return [];
+        
+        return table.map((item: any) => {
+          // 如果已经是前端期望的格式（有 param, ref, user, suggest），直接返回
+          if (item.param && item.ref !== undefined && item.user !== undefined) {
+            return item;
+          }
+          
+          // 如果是后端格式（dimension, reference, user），转换为前端格式
+          // 支持 ref_feature 和 user_feature 字段
+          // 注意：后端没有 suggest 字段，需要从 reference 和 user 推导，或者留空
+          return {
+            param: item.dimension || item.param || "",
+            ref: item.reference || item.ref_feature || item.ref || "",
+            user: item.user || item.user_feature || "",
+            suggest: item.suggest || ""  // 如果没有 suggest，留空（前端会显示为空）
+          };
+        });
+      })(),
+      // 【修复】提取可行性评估数据
+      // 后端返回的格式可能是：
+      // 1. structured.feasibility.conversion_feasibility (新格式)
+      // 2. structured.feasibility (旧格式，直接是对象)
+      // 3. photoReview.feasibility (向后兼容)
+      feasibility_assessment: (() => {
+        const feasibility = structured.feasibility || photoReview.feasibility || structured.feasibility_assessment;
+        if (!feasibility) {
+          console.warn('[dataAdapter] feasibility_assessment 不存在，使用默认值');
+          return {
+            score: 0,
+            level: "未知",
+            recommendation: "暂无建议"
+          };
+        }
+        
+        // 如果是新格式（包含 conversion_feasibility）
+        if (feasibility.conversion_feasibility) {
+          const cf = feasibility.conversion_feasibility;
+          return {
+            // 【修复】优先使用顶层的 score，如果没有则根据 can_transform 计算
+            score: feasibility.score !== undefined ? feasibility.score : (cf.can_transform ? 85 : 0),
+            level: cf.difficulty || feasibility.level || feasibility.difficulty || "未知",
+            // 【修复】优先使用顶层的 recommendation，如果没有则使用 conversion_feasibility 中的
+            recommendation: feasibility.recommendation || cf.recommendation || "暂无建议",
+            // 【修复】limitations 格式统一：优先使用字符串格式（Gemini 返回的文本），如果是数组则转换为字符串
+            // 根据 Prompt 模版，Gemini 应该输出字符串格式的 limitations（包含限制因素和评分逻辑）
+            // 但为了兼容 CV 算法返回的数组格式，需要统一处理
+            limitations: (() => {
+              const lim = feasibility.limitations || cf.limiting_factors || [];
+              if (typeof lim === 'string') {
+                // 如果是字符串，直接使用
+                return lim;
+              } else if (Array.isArray(lim)) {
+                // 如果是数组，转换为字符串（用换行符连接）
+                return lim.filter(item => item).join('\n');
+              } else {
+                // 如果是其他类型，转换为字符串
+                return String(lim || "");
+              }
+            })(),
+            // 【修复】优先使用顶层的 confidence，如果没有则使用 conversion_feasibility 中的
+            confidence: feasibility.confidence !== undefined ? feasibility.confidence : (cf.confidence || 0),
+          };
+        }
+        
+        // 如果是旧格式（直接是对象，包含 score, level, recommendation）
+        // 【修复】limitations 格式统一：优先使用字符串格式，如果是数组则转换为字符串
+        const lim = feasibility.limitations || [];
+        let limitationsStr: string;
+        if (typeof lim === 'string') {
+          limitationsStr = lim;
+        } else if (Array.isArray(lim)) {
+          limitationsStr = lim.filter(item => item).join('\n');
+        } else {
+          limitationsStr = String(lim || "");
+        }
+        
+        return {
+          score: feasibility.score || 0,
+          level: feasibility.level || "未知",
+          recommendation: feasibility.recommendation || "暂无建议",
+          limitations: limitationsStr,
+          confidence: feasibility.confidence || 0,
+        };
+      })(),
     };
+    
+    // 【调试日志】记录 review 数据提取结果（仅在开发环境）
+    if (process.env.NODE_ENV === 'development' && result.review) {
+    console.log('[dataAdapter] review 数据提取完成:', {
+      hasReview: !!result.review,
+      reviewKeys: result.review ? Object.keys(result.review) : [],
+      hasStyleSummary: !!result.review?.style_summary,
+        styleSummaryLength: result.review?.style_summary ? result.review.style_summary.length : 0,
+        styleSummaryPreview: result.review?.style_summary ? result.review.style_summary.substring(0, 50) + '...' : 'empty',
+      hasComprehensiveReview: !!result.review?.comprehensive_review,
+        comprehensiveReviewLength: result.review?.comprehensive_review ? result.review.comprehensive_review.length : 0,
+        comprehensiveReviewPreview: result.review?.comprehensive_review ? result.review.comprehensive_review.substring(0, 50) + '...' : 'empty',
+      hasProsEvaluation: !!result.review?.pros_evaluation,
+        prosEvaluationLength: result.review?.pros_evaluation ? result.review.pros_evaluation.length : 0,
+        hasOverlays: !!result.review?.overlays,
+        overlaysKeys: result.review?.overlays ? Object.keys(result.review.overlays) : [],
+        overlaysCount: result.review?.overlays ? Object.keys(result.review.overlays).length : 0,
+        hasHistogramData: !!result.review?.simulated_histogram_data,
+        histogramDataKeys: result.review?.simulated_histogram_data ? Object.keys(result.review.simulated_histogram_data) : [],
+      hasFeasibility: !!result.review?.feasibility_assessment,
+    });
+    }
   }
 
   // 2. Composition（构图分析）→ results.composition
   if (sections.composition) {
     const composition = sections.composition;
     const structured = composition.structured || composition;
+    
+    // 【🔴 关键修复】从 photoReview.structured.module_2_composition 中提取 visual_flow 和 composition_clinic
+    // 因为 _format_photo_review 现在将 module_2_composition 放在 photoReview.structured 中
+    // 【新增】同时检查 structured 顶层是否有 composition_clinic（_format_photo_review 也会直接添加到顶层）
+    const module_2_composition = sections.photoReview?.structured?.module_2_composition;
+    const composition_clinic_from_top = sections.photoReview?.structured?.composition_clinic; // 【新增】从顶层提取
+    
+    if (module_2_composition || composition_clinic_from_top) {
+      // 【调试日志】记录 module_2_composition 数据（仅在开发环境）
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[dataAdapter] 🔍 Debug Module 2:', {
+          hasModule2: !!module_2_composition,
+          module2Keys: module_2_composition ? Object.keys(module_2_composition) : [],
+          hasVisualFlow: !!module_2_composition?.visual_flow,
+          visualFlowKeys: module_2_composition?.visual_flow ? Object.keys(module_2_composition.visual_flow) : [],
+          hasCompositionClinic: !!(module_2_composition?.composition_clinic || composition_clinic_from_top),
+          compositionClinicFromModule2: !!module_2_composition?.composition_clinic,
+          compositionClinicFromTop: !!composition_clinic_from_top,
+          compositionClinicKeys: (module_2_composition?.composition_clinic || composition_clinic_from_top) ? Object.keys(module_2_composition?.composition_clinic || composition_clinic_from_top) : [],
+        });
+      }
+      
+      // 如果 structured 中没有 visual_flow，从 module_2_composition 中提取
+      if (!structured.visual_flow && module_2_composition?.visual_flow) {
+        structured.visual_flow = module_2_composition.visual_flow;
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dataAdapter] ✅ 从 module_2_composition 提取 visual_flow');
+        }
+      }
+      
+      // 【修复】优先从顶层提取 composition_clinic，如果没有则从 module_2_composition 中提取
+      if (!structured.composition_clinic) {
+        if (composition_clinic_from_top) {
+          structured.composition_clinic = composition_clinic_from_top;
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[dataAdapter] ✅ 从 structured 顶层提取 composition_clinic');
+          }
+        } else if (module_2_composition?.composition_clinic) {
+          structured.composition_clinic = module_2_composition.composition_clinic;
+          if (process.env.NODE_ENV === 'development') {
+            console.log('[dataAdapter] ✅ 从 module_2_composition 提取 composition_clinic');
+          }
+        }
+      }
+    }
+    
+    // 【新增】从 photoReview.structured.spatial_analysis 中提取 visual_mass（用于 Composition 的 visual_data）
+    // 后端现在将 visual_mass 放在 spatial_analysis 中，而不是直接在 composition.structured 中
+    let visual_mass_from_spatial_analysis = null;
+    if (sections.photoReview?.structured?.spatial_analysis?.visual_mass) {
+      visual_mass_from_spatial_analysis = sections.photoReview.structured.spatial_analysis.visual_mass;
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[dataAdapter] ✅ 从 photoReview.structured.spatial_analysis.visual_mass 提取 visual_mass:', {
+          hasScore: !!visual_mass_from_spatial_analysis.score,
+          hasCompositionRule: !!visual_mass_from_spatial_analysis.composition_rule,
+          hasCenterPoint: !!visual_mass_from_spatial_analysis.center_point,
+          hasPolygonPoints: !!visual_mass_from_spatial_analysis.polygon_points,
+        });
+      }
+    }
     
     // 检测新结构（5字段）或旧结构（7段）
     if (structured.main_structure || structured.subject_weight || structured.visual_guidance) {
@@ -79,36 +532,221 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
           balance: "",
         },
         subject: {
-          position: structured.subject_weight?.description || "",
-          weight_score: 85,
-          method: "",
+          // 【修复】position 应该显示位置坐标，如果有 center_point 则显示坐标，否则显示描述
+          position: (() => {
+            // 优先从 visual_mass 中提取位置坐标
+            const visual_mass = visual_mass_from_spatial_analysis || structured.visual_mass;
+            if (visual_mass?.center_point) {
+              return `X: ${Math.round(visual_mass.center_point.x)}% Y: ${Math.round(visual_mass.center_point.y)}%`;
+            } else if (visual_mass?.center_of_gravity && Array.isArray(visual_mass.center_of_gravity)) {
+              const [x, y] = visual_mass.center_of_gravity;
+              return `X: ${Math.round(x)}% Y: ${Math.round(y)}%`;
+            }
+            // 如果没有坐标，则显示描述文本
+            return structured.subject_weight?.description || "";
+          })(),
+          // 【修复】优先使用 structured.subject_weight.score，如果没有则使用默认值 85
+          weight_score: structured.subject_weight?.score ?? 85,
+          // 【修复】提取 method 字段，如果不存在则使用空字符串
+          method: structured.subject_weight?.method || "",
           analysis: structured.subject_weight?.description || "",
         },
         lines: {
-          path: structured.visual_guidance?.path ? [structured.visual_guidance.path] : [],
+          // 【修复】path 应该从 visual_flow.vectors 中提取，转换为路径描述数组
+          path: (() => {
+            if (structured.visual_flow?.vectors && Array.isArray(structured.visual_flow.vectors)) {
+              // 从 vectors 数组中提取路径描述
+              return structured.visual_flow.vectors.map((vec: any) => {
+                const type = vec.type || 'leading';
+                const start = vec.start ? `(${vec.start.x?.toFixed(1)}, ${vec.start.y?.toFixed(1)})` : '';
+                const end = vec.end ? `(${vec.end.x?.toFixed(1)}, ${vec.end.y?.toFixed(1)})` : '';
+                return `${type}: ${start} → ${end}`;
+              });
+            }
+            // 如果没有 vectors，则从 visual_guidance.path 提取（可能是字符串）
+            if (structured.visual_guidance?.path) {
+              return Array.isArray(structured.visual_guidance.path) 
+                ? structured.visual_guidance.path 
+                : [structured.visual_guidance.path];
+            }
+            return [];
+          })(),
           guide: structured.visual_guidance?.analysis,
+          // 【新增】视觉流向量数据（用于前端图片上绘制视觉流路径）
+          // 【修复】支持新旧两种格式：
+          // 1. 新格式：vanishing_point + vectors（X-Ray Vision 格式）
+          // 2. 旧格式：entry_point, focal_point, exit_point（向后兼容）
+          vectors: structured.visual_flow ? {
+            // 新格式支持
+            vanishing_point: structured.visual_flow.vanishing_point,
+            vectors: structured.visual_flow.vectors,
+            // 旧格式支持（向后兼容）
+            entry: structured.visual_flow.entry_point ? { label: structured.visual_flow.entry_point.label || "", coords: structured.visual_flow.entry_point.coordinates || [0,0] } : undefined,
+            focal: structured.visual_flow.focal_point ? { label: structured.visual_flow.focal_point.label || "", coords: structured.visual_flow.focal_point.coordinates || [0,0] } : undefined,
+            exit: structured.visual_flow.exit_point ? { label: structured.visual_flow.exit_point.label || "", coords: structured.visual_flow.exit_point.coordinates || [0,0] } : undefined,
+            path: structured.visual_flow.path_vector || []
+          } : undefined,
+          // 【新增】visual_guidance 的完整数据（包含 analysis 和 path）
+          visual_guidance: structured.visual_guidance || {}
         },
+        // 【新增】直接传递 visual_flow 数据（用于 VisualVectorsOverlay 组件）
+        visual_flow: structured.visual_flow || undefined,
+        // 【新增】直接传递 composition_clinic 数据（用于 CompositionClinicPanel 组件）
+        composition_clinic: structured.composition_clinic || undefined,
         zones: {
-          foreground: "",
-          midground: "",
-          background: "",
+          foreground: structured.spatial_depth?.foreground?.content || (typeof structured.spatial_depth?.foreground === 'string' ? structured.spatial_depth.foreground : "") || "",
+          midground: structured.spatial_depth?.midground?.content || (typeof structured.spatial_depth?.midground === 'string' ? structured.spatial_depth.midground : "") || "",
+          background: structured.spatial_depth?.background?.content || (typeof structured.spatial_depth?.background === 'string' ? structured.spatial_depth.background : "") || "",
           perspective: "",
+          // 【新增】空间深度详细数据（用于前端展示 Z-Depth 分析）
+          // 【修复】支持两种数据结构：对象格式（{content, depth_range}）和字符串格式
+          // 【修复】depth_range 可能是 0-100 的百分比，需要转换为 0-1 范围（前端期望 0-1）
+          details: structured.spatial_depth ? {
+            foreground: { 
+              content: typeof structured.spatial_depth.foreground === 'string' 
+                ? structured.spatial_depth.foreground 
+                : (structured.spatial_depth.foreground?.content || ""), 
+              range: (() => {
+                if (typeof structured.spatial_depth.foreground === 'object' && structured.spatial_depth.foreground?.depth_range) {
+                  const range = structured.spatial_depth.foreground.depth_range;
+                  // 如果 range 是 0-100 的百分比，转换为 0-1
+                  if (Array.isArray(range) && range.length === 2) {
+                    const [start, end] = range;
+                    // 如果值大于 1，说明是百分比，需要除以 100
+                    return [start > 1 ? start / 100 : start, end > 1 ? end / 100 : end];
+                  }
+                  return range;
+                }
+                return [0, 0.3]; // 默认前景范围
+              })()
+            },
+            midground: { 
+              content: typeof structured.spatial_depth.midground === 'string' 
+                ? structured.spatial_depth.midground 
+                : (structured.spatial_depth.midground?.content || ""), 
+              range: (() => {
+                if (typeof structured.spatial_depth.midground === 'object' && structured.spatial_depth.midground?.depth_range) {
+                  const range = structured.spatial_depth.midground.depth_range;
+                  if (Array.isArray(range) && range.length === 2) {
+                    const [start, end] = range;
+                    return [start > 1 ? start / 100 : start, end > 1 ? end / 100 : end];
+                  }
+                  return range;
+                }
+                return [0.3, 0.7]; // 默认中景范围
+              })()
+            },
+            background: { 
+              content: typeof structured.spatial_depth.background === 'string' 
+                ? structured.spatial_depth.background 
+                : (structured.spatial_depth.background?.content || ""), 
+              range: (() => {
+                if (typeof structured.spatial_depth.background === 'object' && structured.spatial_depth.background?.depth_range) {
+                  const range = structured.spatial_depth.background.depth_range;
+                  if (Array.isArray(range) && range.length === 2) {
+                    const [start, end] = range;
+                    return [start > 1 ? start / 100 : start, end > 1 ? end / 100 : end];
+                  }
+                  return range;
+                }
+                return [0.7, 1.0]; // 默认背景范围
+              })()
+            }
+          } : undefined,
+          // 【新增】完整的 spatial_depth 数据（用于前端展示）
+          spatial_depth: structured.spatial_depth || {}
         },
         proportions: {
           entities: structured.ratios_negative_space?.entity_ratio || "",
-          negative: structured.ratios_negative_space?.space_ratio || "",
+          negative: structured.ratios_negative_space?.space_ratio || (structured.negative_space ? `${structured.negative_space.percentage}%` : ""),
           distribution: structured.ratios_negative_space?.distribution || "",
         },
         balance: {
-          horizontal: "",
-          vertical: "",
-          strategy: "",
+          horizontal: structured.negative_space?.horizontal_balance || "",
+          vertical: structured.negative_space?.vertical_balance || "",
+          strategy: structured.negative_space ? `Negative Space: ${structured.negative_space.percentage}%` : "",
+          // 【新增】留白平衡详细数据
+          details: structured.negative_space ? {
+             percentage: structured.negative_space.percentage || 0,
+             h_balance: structured.negative_space.horizontal_balance || "",
+             v_balance: structured.negative_space.vertical_balance || ""
+          } : undefined
         },
         style: {
           name: structured.style_class || "",
           method: "",
           features: "",
         },
+        // 【优化】Visual Mass 功能所需的数据（使用新的 visual_mass 格式）
+        // 【新增】支持显著性遮罩图 URL（优先使用遮罩图，如果没有则使用多边形）
+        // 【修复】支持新的字段：score、composition_rule、polygon_points、center_point
+        // 【修复】优先从 spatial_analysis.visual_mass 提取，如果没有则从 structured.visual_mass 提取（向后兼容）
+        visual_data: (() => {
+          // 【优先】从 photoReview.structured.spatial_analysis.visual_mass 提取（后端字段映射后的位置）
+          const visual_mass = visual_mass_from_spatial_analysis || structured.visual_mass;
+          if (!visual_mass) return undefined;
+          
+          // 检查是否有有效数据
+          const hasData = visual_mass.vertices || visual_mass.polygon_points || visual_mass.saliency_mask_url;
+          if (!hasData) return undefined;
+          
+          return {
+          // 【新增】如果提供了显著性遮罩图 URL，优先使用遮罩图方案
+          saliency_mask_url: visual_mass.saliency_mask_url || undefined,
+          // 【修复】优先使用 polygon_points（新格式），如果没有则使用 vertices（旧格式）
+          // 将坐标转换为 SVG polygon points 格式
+          subject_poly: (() => {
+            const polygonPoints = visual_mass.polygon_points || visual_mass.vertices;
+            if (!polygonPoints) return undefined;
+            
+            // 处理两种格式：
+            // 1. polygon_points: [{x: number, y: number}, ...]（新格式）
+            // 2. vertices: [[x, y], ...]（旧格式，可能是 0-1 或 0-100）
+            if (Array.isArray(polygonPoints) && polygonPoints.length > 0) {
+              if (typeof polygonPoints[0] === 'object' && 'x' in polygonPoints[0]) {
+                // 新格式：{x, y} 对象数组
+                return polygonPoints
+                  .map((p: any) => `${p.x},${p.y}`)
+                  .join(' ');
+              } else if (Array.isArray(polygonPoints[0])) {
+                // 旧格式：[x, y] 数组
+                return polygonPoints
+                  .map((coord: number[]) => {
+                    // 如果坐标是 0-1 范围，转换为 0-100；如果已经是 0-100，直接使用
+                    const x = coord[0] <= 1 ? coord[0] * 100 : coord[0];
+                    const y = coord[1] <= 1 ? coord[1] * 100 : coord[1];
+                    return `${x},${y}`;
+                  })
+                  .join(' ');
+              }
+            }
+            return undefined;
+          })(),
+          // 【新增】保存完整的 visual_mass 数据（包含所有新字段）
+          visual_mass: {
+            type: visual_mass.type || 'polygon',
+            confidence: visual_mass.confidence || 0.0,
+            // 【新增】支持新字段
+            score: visual_mass.score ?? (visual_mass.confidence ? Math.round(visual_mass.confidence * 100) : 50),
+            composition_rule: visual_mass.composition_rule || 'Unknown',
+            // 【新增】支持 center_point（新格式）和 center_of_gravity（旧格式）
+            center_point: visual_mass.center_point || (visual_mass.center_of_gravity ? {
+              x: visual_mass.center_of_gravity[0] <= 1 ? visual_mass.center_of_gravity[0] * 100 : visual_mass.center_of_gravity[0],
+              y: visual_mass.center_of_gravity[1] <= 1 ? visual_mass.center_of_gravity[1] * 100 : visual_mass.center_of_gravity[1]
+            } : { x: 50, y: 50 }),
+            center_of_gravity: visual_mass.center_of_gravity || (visual_mass.center_point ? [
+              visual_mass.center_point.x <= 1 ? visual_mass.center_point.x * 100 : visual_mass.center_point.x,
+              visual_mass.center_point.y <= 1 ? visual_mass.center_point.y * 100 : visual_mass.center_point.y
+            ] : [50, 50]),
+            vertices: visual_mass.vertices || [],
+            polygon_points: visual_mass.polygon_points || (visual_mass.vertices ? visual_mass.vertices.map((v: number[]) => ({
+              x: v[0] <= 1 ? v[0] * 100 : v[0],
+              y: v[1] <= 1 ? v[1] * 100 : v[1]
+            })) : []),
+            saliency_mask_url: visual_mass.saliency_mask_url || undefined
+          }
+        };
+        })()
       };
     } else if (structured.advanced_sections) {
       // 旧结构（7段）
@@ -419,6 +1057,24 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
   // 7. Preview Image URL（Part3 生成的图片）
   if (backendData.meta?.preview_image_url || sections.preview_image_url) {
     result.preview_image_url = backendData.meta?.preview_image_url || sections.preview_image_url;
+  }
+
+  // 【调试日志】记录数据转换完成（仅在开发环境）
+  if (process.env.NODE_ENV === 'development') {
+  console.log('[dataAdapter] 数据转换完成:', {
+    hasReview: !!result.review,
+    hasComposition: !!result.composition,
+    hasLighting: !!result.lighting,
+    hasColor: !!result.color_scheme,
+    hasLightroom: !!result.lightroom,
+    hasPhotoshop: !!result.photoshop,
+    resultKeys: Object.keys(result),
+      // 【新增】详细记录 review 数据
+      reviewStyleSummary: result.review?.style_summary ? `${result.review.style_summary.substring(0, 50)}...` : 'empty',
+      reviewComprehensiveReview: result.review?.comprehensive_review ? `${result.review.comprehensive_review.substring(0, 50)}...` : 'empty',
+      reviewOverlays: result.review?.overlays ? Object.keys(result.review.overlays) : [],
+      reviewHistogramData: result.review?.simulated_histogram_data ? 'exists' : 'missing',
+  });
   }
 
   return result;

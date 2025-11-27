@@ -5,6 +5,7 @@ import { ColorModal } from './modals/ColorModal';
 import { LightroomModal } from './modals/LightroomModal';
 import { CompositionModal } from './modals/CompositionModal';
 import { PhotoshopModal } from './modals/PhotoshopModal';
+import { BaseModal } from './modals/BaseModal';
 import { api } from '../src/lib/api';
 import { adaptBackendToFrontend } from '../src/lib/dataAdapter';
 import { toast } from 'sonner@2.0.3';
@@ -264,12 +265,42 @@ interface ThemeCardsGridProps {
   onSimulate: () => void;
 }
 
+/**
+ * 主题卡片网格组件
+ * 显示分析结果的各种卡片（Review、Composition、Lighting等）
+ * 
+ * @param data - 分析结果数据（从 App.tsx 传入，已通过 adaptBackendToFrontend 转换）
+ * @param images - 图片对象，包含 source（参考图）和 target（用户图）
+ * @param taskId - 任务ID，用于触发 Part2 分析
+ * @param onSimulate - 模拟回调函数
+ */
 export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsGridProps) => {
   const { t } = useLanguage();
   const [activeModal, setActiveModal] = useState<string | null>(null);
   const [workflowStage, setWorkflowStage] = useState<'diagnosis' | 'decrypting' | 'synthesis' | 'simulating'>('diagnosis');
   const [results, setResults] = useState<any>(data);
   const [isWarping, setIsWarping] = useState(false);
+
+  // 【重要】监听 data 变化，同步更新 results
+  // 当父组件传入新的 data 时（例如 Part2 数据更新），需要更新 results
+  useEffect(() => {
+    if (data) {
+      console.log('[ThemeCardsGrid] data 更新:', {
+        hasReview: !!data.review,
+        reviewKeys: data.review ? Object.keys(data.review) : [],
+        hasComposition: !!data.composition,
+        hasLighting: !!data.lighting,
+        hasColor: !!data.color,
+        hasLightroom: !!data.lightroom,
+        hasPhotoshop: !!data.photoshop,
+      });
+      setResults((prev: any) => {
+        // 【合并策略】保留现有数据，只更新新传入的字段
+        // 这样可以避免覆盖已有的 Part2 数据
+        return { ...prev, ...data };
+      });
+    }
+  }, [data]);
 
   // Unlock Animation Sequence
   const handleUnlock = async () => {
@@ -421,7 +452,16 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
             {[0,1,2].map((i) => (
                  <TiltCard 
                     key={i} 
-                    onClick={() => setActiveModal(['review','composition','lighting'][i])} 
+                    onClick={() => {
+                      const modalType = ['review','composition','lighting'][i];
+                      console.log(`[ThemeCardsGrid] 点击卡片，打开 ${modalType} 模态框:`, {
+                        modalType,
+                        hasData: !!results[modalType],
+                        dataKeys: results[modalType] ? Object.keys(results[modalType]) : [],
+                        fullResults: results,
+                      });
+                      setActiveModal(modalType);
+                    }} 
                     delay={i * 100} 
                     locked={false} 
                     index={i}
@@ -572,7 +612,39 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
       </div>
 
       {/* Modals */}
-      {activeModal === 'review' && <ReviewModal data={results.review} images={images} onClose={() => setActiveModal(null)} />}
+      {/* 【修复】添加安全检查，确保数据存在时才渲染模态框 */}
+      {activeModal === 'review' && (
+        (() => {
+          console.log('[ThemeCardsGrid] 渲染 ReviewModal:', {
+            hasReview: !!results.review,
+            reviewData: results.review,
+            reviewKeys: results.review ? Object.keys(results.review) : [],
+          });
+          
+          // 【安全检查】如果 review 数据不存在，显示错误提示
+          if (!results.review) {
+            console.error('[ThemeCardsGrid] ⚠️ review 数据不存在，无法打开 ReviewModal');
+            return (
+              <BaseModal title={t('review.title') || "Visual Critique"} onClose={() => setActiveModal(null)} width="max-w-[95vw]">
+                <div className="flex items-center justify-center h-full p-10">
+                  <div className="text-center">
+                    <div className="text-red-500 text-lg font-bold mb-4">数据加载错误</div>
+                    <p className="text-white/60 text-sm mb-4">Review 数据不存在，请重新进行分析</p>
+                    <button 
+                      onClick={() => setActiveModal(null)}
+                      className="px-6 py-2 bg-optic-accent text-white rounded hover:bg-optic-accent/80 transition-colors"
+                    >
+                      关闭
+                    </button>
+                  </div>
+                </div>
+              </BaseModal>
+            );
+          }
+          
+          return <ReviewModal data={results.review} images={images} onClose={() => setActiveModal(null)} />;
+        })()
+      )}
       {activeModal === 'composition' && <CompositionModal data={results.composition} images={images} onClose={() => setActiveModal(null)} />}
       {activeModal === 'lighting' && <LightingModal data={results.lighting} onClose={() => setActiveModal(null)} />}
       {activeModal === 'color' && <ColorModal data={results.color} onClose={() => setActiveModal(null)} />}

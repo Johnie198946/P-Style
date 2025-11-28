@@ -138,7 +138,7 @@ export const LightingModal = ({ data, onClose }: any) => {
                     <div key={i} className="group p-5 bg-white/[0.02] border border-white/5 hover:border-white/20 transition-all duration-300 hover:translate-x-1 hover:bg-white/[0.04]">
                        <div className="flex justify-between items-baseline mb-2">
                           <div className="flex items-center gap-2">
-                            <span className="text-sm font-bold text-gray-200">{item.param}</span>
+                          <span className="text-sm font-bold text-gray-200">{item.param}</span>
                             {/* 【新增】方向指示器：根据数值正负显示不同颜色的箭头 */}
                             {isPositive && (
                               <ArrowUp className="w-3 h-3 text-orange-400" />
@@ -169,10 +169,10 @@ export const LightingModal = ({ data, onClose }: any) => {
                        </div>
                        {/* AI Reasoning */}
                        {item.desc && (
-                         <div className="flex gap-3 mt-2 items-start opacity-60 group-hover:opacity-100 transition-opacity">
-                             <div className="w-0.5 h-full min-h-[12px] bg-optic-accent/50 mt-1"></div>
-                             <p className="text-xs text-gray-400 font-light leading-relaxed">{item.desc}</p>
-                         </div>
+                       <div className="flex gap-3 mt-2 items-start opacity-60 group-hover:opacity-100 transition-opacity">
+                           <div className="w-0.5 h-full min-h-[12px] bg-optic-accent/50 mt-1"></div>
+                           <p className="text-xs text-gray-400 font-light leading-relaxed">{item.desc}</p>
+                       </div>
                        )}
                     </div>
                  );

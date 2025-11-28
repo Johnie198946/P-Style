@@ -863,11 +863,22 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
           action: basic.blacks?.action || "",
         },
       ],
+      // 【修复】确保曲线点格式统一为对象数组格式 {x, y}，兼容后端传递的两种格式
       tone_curves: structured.toneCurves ? {
         explanation: structured.toneCurves.explanation || "",
-        points_rgb: structured.toneCurves.points_rgb || [],
-        points_red: structured.toneCurves.points_red || [],
-        points_blue: structured.toneCurves.points_blue || [],
+        // 转换函数：将可能的 [x, y] 数组格式转换为 {x, y} 对象格式
+        points_rgb: (structured.toneCurves.points_rgb || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        points_red: (structured.toneCurves.points_red || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        points_green: (structured.toneCurves.points_green || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        points_blue: (structured.toneCurves.points_blue || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
       } : undefined,
       texture_clarity: [
         { 
@@ -904,6 +915,31 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     const color = sections.color;
     const structured = color.structured || color;
     
+    // 【调试日志】记录 color section 的数据结构
+    console.log('[dataAdapter] 🔍 Color Section 数据检查:', {
+      hasColor: !!sections.color,
+      colorKeys: color ? Object.keys(color) : [],
+      hasStructured: !!color.structured,
+      structuredKeys: structured ? Object.keys(structured) : [],
+      // 【关键】检查三个字段是否存在（包括空字符串检查）
+      master_style_recap: structured.master_style_recap,
+      master_style_recapType: typeof structured.master_style_recap,
+      master_style_recapLength: structured.master_style_recap?.length || 0,
+      master_style_recapTruthy: !!structured.master_style_recap,
+      style_summary_recap: structured.style_summary_recap,
+      style_summary_recapType: typeof structured.style_summary_recap,
+      style_summary_recapLength: structured.style_summary_recap?.length || 0,
+      style_summary_recapTruthy: !!structured.style_summary_recap,
+      key_adjustment_strategy: structured.key_adjustment_strategy,
+      key_adjustment_strategyType: typeof structured.key_adjustment_strategy,
+      key_adjustment_strategyLength: structured.key_adjustment_strategy?.length || 0,
+      key_adjustment_strategyTruthy: !!structured.key_adjustment_strategy,
+      styleKey: structured.styleKey,
+      style_key_points: structured.style_key_points,
+      // 【关键】检查原始 raw 数据
+      rawPhase1Extraction: structured.phase_1_extraction,
+    });
+    
     // 转换 HSL 数组为对象格式
     const hslArray = structured.hsl || [];
     const hslObject: any = {
@@ -929,6 +965,7 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       "洋红": "magenta", "Magenta": "magenta",
     };
     
+    // 【修复】映射 HSL 数据，包括 desc/note 字段（用于前端显示调整原因描述）
     hslArray.forEach((item: any) => {
       const colorName = colorMap[item.color] || item.color?.toLowerCase();
       if (colorName && hslObject[colorName]) {
@@ -936,39 +973,119 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
           hue: parseFloat(item.hue) || 0,
           saturation: parseFloat(item.saturation) || 0,
           luminance: parseFloat(item.luminance) || 0,
+          // 【新增】提取 desc 或 note 字段（后端在 _format_color_part2 中将 desc 映射到 note）
+          desc: item.desc || item.note || "",  // 优先使用 desc，如果没有则使用 note
+          note: item.note || item.desc || "",  // 向后兼容：同时提供 note 字段
         };
       }
     });
     
+    // 【关键修复】确保三个字段正确映射，即使后端返回 undefined 也至少是空字符串
+    const master_style_recap = structured.master_style_recap || "";
+    const style_summary_recap = structured.style_summary_recap || "";
+    const key_adjustment_strategy = structured.key_adjustment_strategy || "";
+    
+    // 【调试日志】记录映射结果
+    console.log('[dataAdapter] 🔍 Color Section 字段映射结果:', {
+      structuredHasMasterStyleRecap: !!structured.master_style_recap,
+      structuredHasStyleSummaryRecap: !!structured.style_summary_recap,
+      structuredHasKeyAdjustmentStrategy: !!structured.key_adjustment_strategy,
+      mappedMasterStyleRecap: master_style_recap,
+      mappedStyleSummaryRecap: style_summary_recap,
+      mappedKeyAdjustmentStrategy: key_adjustment_strategy,
+      masterStyleRecapLength: master_style_recap.length,
+      styleSummaryRecapLength: style_summary_recap.length,
+      keyAdjustmentStrategyLength: key_adjustment_strategy.length,
+    });
+    
     result.color_scheme = {
       style_key_points: structured.styleKey || structured.style_key_points || "",
+      // 【新增】phase_1_extraction 三个字段，用于前端色彩策略卡片展示
+      master_style_recap: master_style_recap,  // 主风格回顾（流派识别）
+      style_summary_recap: style_summary_recap,  // 风格总结回顾（Phase 1 核心指导思想）
+      key_adjustment_strategy: key_adjustment_strategy,  // 关键调整策略（三大动作）
       white_balance: {
         temp: {
-          value: parseFloat(structured.whiteBalance?.temp?.range?.replace(/[^0-9.-]/g, '') || "0"),
+          // 【修复】从 range 字符串中解析数值（如 "+600" -> 600，"+600 ~ +900" -> 600）
+          // 白平衡色温值需要加上基准值 5500K（Lightroom 默认值）
+          value: (() => {
+            const rangeStr = structured.whiteBalance?.temp?.range || "+0";
+            const numValue = parseFloat(rangeStr.replace(/[^0-9.-]/g, '') || "0");
+            return 5500 + numValue; // Lightroom 默认色温是 5500K，加上调整值
+          })(),
           range: structured.whiteBalance?.temp?.range || "+0",
           reason: structured.whiteBalance?.temp?.note || "",
+          // 【新增】从 range 字符串中解析目标范围（如果有范围格式，如 "+600 ~ +900"）
+          target_min: (() => {
+            const rangeStr = structured.whiteBalance?.temp?.range || "+0";
+            if (rangeStr.includes('~')) {
+              const parts = rangeStr.split('~');
+              const minStr = parts[0].trim();
+              const minValue = parseFloat(minStr.replace(/[^0-9.-]/g, '') || "0");
+              return 5500 + minValue;
+            }
+            return undefined;
+          })(),
+          target_max: (() => {
+            const rangeStr = structured.whiteBalance?.temp?.range || "+0";
+            if (rangeStr.includes('~')) {
+              const parts = rangeStr.split('~');
+              const maxStr = parts[1]?.trim();
+              if (maxStr) {
+                const maxValue = parseFloat(maxStr.replace(/[^0-9.-]/g, '') || "0");
+                return 5500 + maxValue;
+              }
+            }
+            return undefined;
+          })(),
         },
         tint: {
+          // 【修复】从 range 字符串中解析数值（如 "+10" -> 10，"+10 ~ +25" -> 10）
           value: parseFloat(structured.whiteBalance?.tint?.range?.replace(/[^0-9.-]/g, '') || "0"),
           range: structured.whiteBalance?.tint?.range || "+0",
           reason: structured.whiteBalance?.tint?.note || "",
+          // 【新增】从 range 字符串中解析目标范围（如果有范围格式，如 "+10 ~ +25"）
+          target_min: (() => {
+            const rangeStr = structured.whiteBalance?.tint?.range || "+0";
+            if (rangeStr.includes('~')) {
+              const parts = rangeStr.split('~');
+              const minStr = parts[0].trim();
+              return parseFloat(minStr.replace(/[^0-9.-]/g, '') || "0");
+            }
+            return undefined;
+          })(),
+          target_max: (() => {
+            const rangeStr = structured.whiteBalance?.tint?.range || "+0";
+            if (rangeStr.includes('~')) {
+              const parts = rangeStr.split('~');
+              const maxStr = parts[1]?.trim();
+              if (maxStr) {
+                return parseFloat(maxStr.replace(/[^0-9.-]/g, '') || "0");
+              }
+            }
+            return undefined;
+          })(),
         },
       },
       color_grading: {
         highlights: {
           hue: parseFloat(structured.grading?.highlights?.hue || "0"),
           saturation: parseFloat(structured.grading?.highlights?.saturation || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段，而不是硬编码为空字符串
+          // 后端在 _format_color_part2 中已提取 color_grading_wheels 的 reason 字段
+          reason: structured.grading?.highlights?.reason || "",
         },
         midtones: {
           hue: parseFloat(structured.grading?.midtones?.hue || "0"),
           saturation: parseFloat(structured.grading?.midtones?.saturation || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段
+          reason: structured.grading?.midtones?.reason || "",
         },
         shadows: {
           hue: parseFloat(structured.grading?.shadows?.hue || "0"),
           saturation: parseFloat(structured.grading?.shadows?.saturation || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段
+          reason: structured.grading?.shadows?.reason || "",
         },
         balance: parseFloat(structured.grading?.balance || "0"),
       },
@@ -980,6 +1097,28 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
   if (sections.lightroom) {
     const lightroom = sections.lightroom;
     const structured = lightroom.structured || lightroom;
+    
+    // 【调试日志】记录 lightroom structured 的完整结构
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[dataAdapter] 🔍 Lightroom structured 数据检查:', {
+        hasLightroom: !!sections.lightroom,
+        hasStructured: !!lightroom.structured,
+        structuredKeys: structured ? Object.keys(structured) : [],
+        hasSimulatedHistogram: !!structured?.simulatedHistogram,
+        simulatedHistogramType: structured?.simulatedHistogram ? typeof structured.simulatedHistogram : 'undefined',
+        simulatedHistogramValue: structured?.simulatedHistogram,
+        // 【新增】详细检查 simulatedHistogram 的内容
+        simulatedHistogramKeys: structured?.simulatedHistogram ? Object.keys(structured.simulatedHistogram) : [],
+        hasHistogramData: !!structured?.simulatedHistogram?.histogram_data,
+        histogramDataKeys: structured?.simulatedHistogram?.histogram_data ? Object.keys(structured.simulatedHistogram.histogram_data) : [],
+        histogramDataLengths: structured?.simulatedHistogram?.histogram_data ? {
+          r: structured.simulatedHistogram.histogram_data.r?.length || 0,
+          g: structured.simulatedHistogram.histogram_data.g?.length || 0,
+          b: structured.simulatedHistogram.histogram_data.b?.length || 0,
+          l: structured.simulatedHistogram.histogram_data.l?.length || 0,
+        } : null,
+      });
+    }
     
     // 【修复】优先从 structured.basic 中提取数据（新 Prompt 结构）
     // 如果没有，则从 panels 数组中提取（旧结构）
@@ -1074,18 +1213,202 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     // 【新增】从 toneCurves 中提取 explanation（曲线描述）
     const toneCurvesExplanation = structured.toneCurves?.explanation || "";
     
+    // 【修复】为 basic_panel 提供默认值，确保所有必需字段都存在，避免前端访问 undefined 导致崩溃
+    // 根据 LightroomData 类型定义，basic_panel 必须包含以下字段
+    const defaultBasicPanelValue = {
+      value: 0,
+      range: "+0",
+      reason: "",
+      target_min: undefined,
+      target_max: undefined,
+    };
+    
+    // 定义所有必需的 basic_panel 字段
+    const requiredBasicPanelFields = [
+      'temp', 'tint', 'exposure', 'contrast', 'highlights', 'shadows',
+      'whites', 'blacks', 'texture', 'clarity', 'dehaze', 'vibrance', 'saturation'
+    ];
+    
+    // 确保所有必需字段都有值，如果不存在则使用默认值
+    const safeBasicPanel: any = {};
+    requiredBasicPanelFields.forEach((field) => {
+      safeBasicPanel[field] = basicPanel[field] || { ...defaultBasicPanelValue };
+    });
+    
+    // 【调试日志】记录 basic_panel 数据检查
+    console.log('[dataAdapter] 🔍 Lightroom basic_panel 数据检查:', {
+      hasBasicPanel: !!basicPanel,
+      basicPanelKeys: Object.keys(basicPanel),
+      safeBasicPanelKeys: Object.keys(safeBasicPanel),
+      missingFields: requiredBasicPanelFields.filter(f => !basicPanel[f]),
+    });
+    
+    // 【新增】从 structured 中提取 simulated_histogram 数据（直方图描述、RGB 值和完整的直方图数据）
+    // 【修复】支持多种字段名：simulatedHistogram（驼峰）和 simulated_histogram（蛇形）
+    // 【修复】正确处理 None/null 值：如果后端返回 None，则使用空对象
+    const simulatedHistogramRaw = structured.simulatedHistogram || structured.simulated_histogram;
+    const simulatedHistogram = (simulatedHistogramRaw && simulatedHistogramRaw !== null && typeof simulatedHistogramRaw === 'object') ? simulatedHistogramRaw : {};
+    
+    // 【调试日志】记录 simulated_histogram 数据提取情况
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[dataAdapter] 📊 simulated_histogram 数据提取:', {
+        hasSimulatedHistogram: !!(structured.simulatedHistogram || structured.simulated_histogram),
+        hasSimulatedHistogramCamel: !!structured.simulatedHistogram,
+        hasSimulatedHistogramSnake: !!structured.simulated_histogram,
+        simulatedHistogramValue: structured.simulatedHistogram || structured.simulated_histogram,
+        simulatedHistogramKeys: simulatedHistogram ? Object.keys(simulatedHistogram) : [],
+        hasDescription: !!simulatedHistogram.description,
+        hasRgbValues: !!simulatedHistogram.rgb_values,
+        hasHistogramData: !!simulatedHistogram.histogram_data,
+        histogramDataKeys: simulatedHistogram.histogram_data ? Object.keys(simulatedHistogram.histogram_data) : [],
+        histogramDataLengths: simulatedHistogram.histogram_data ? {
+          r: simulatedHistogram.histogram_data.r?.length || 0,
+          g: simulatedHistogram.histogram_data.g?.length || 0,
+          b: simulatedHistogram.histogram_data.b?.length || 0,
+          l: simulatedHistogram.histogram_data.l?.length || 0,
+        } : null,
+        // 【新增】打印完整的 structured 对象（仅前 500 字符，避免日志过长）
+        structuredPreview: JSON.stringify(structured).substring(0, 500),
+      });
+    }
+    
+    // 【新增】从 color_scheme 中提取白平衡和色彩分级数据，用于 Lightroom 面板显示
+    const whiteBalance = result.color_scheme?.white_balance;
+    const colorGrading = result.color_scheme?.color_grading;
+    const keyAdjustmentStrategy = result.color_scheme?.key_adjustment_strategy || "";
+    
+    // 【新增】优先使用 simulated_histogram 中的 histogram_data，如果没有则使用 structured.histogram
+    // histogram_data 包含完整的 256 个值数组（r, g, b, l），用于前端绘制直方图
+    const histogramData = simulatedHistogram.histogram_data || structured.histogram || {};
+    
+    // 【新增】从直方图数据计算统计信息（avg_l, shadows, highlights）
+    // 如果 histogram_data 存在，则根据 l 通道计算统计信息
+    const calculateHistogramStats = (lChannel: number[]): { avg_l: number; shadows: number; midtones: number; highlights: number } => {
+      // 【调试日志】记录计算过程
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[dataAdapter] 📊 计算直方图统计信息:', {
+          lChannelLength: lChannel?.length || 0,
+          lChannelSample: lChannel?.slice(0, 10) || [],
+        });
+      }
+      if (!lChannel || lChannel.length === 0) {
+        return { avg_l: 0, shadows: 0, midtones: 0, highlights: 0 };
+      }
+      
+      // 计算总像素数
+      const totalPixels = lChannel.reduce((sum, val) => sum + val, 0);
+      if (totalPixels === 0) {
+        return { avg_l: 0, shadows: 0, midtones: 0, highlights: 0 };
+      }
+      
+      // 计算平均亮度（加权平均）
+      let weightedSum = 0;
+      for (let i = 0; i < lChannel.length; i++) {
+        weightedSum += i * lChannel[i];
+      }
+      const avg_l = Math.round(weightedSum / totalPixels);
+      
+      // 计算阴影区域（0-85）的像素占比
+      const shadowsPixels = lChannel.slice(0, 86).reduce((sum, val) => sum + val, 0);
+      const shadows = Math.round((shadowsPixels / totalPixels) * 100);
+      
+      // 计算中间调区域（86-170）的像素占比
+      const midtonesPixels = lChannel.slice(86, 171).reduce((sum, val) => sum + val, 0);
+      const midtones = Math.round((midtonesPixels / totalPixels) * 100);
+      
+      // 计算高光区域（171-255）的像素占比
+      const highlightsPixels = lChannel.slice(171, 256).reduce((sum, val) => sum + val, 0);
+      const highlights = Math.round((highlightsPixels / totalPixels) * 100);
+      
+      // 【调试日志】记录计算结果
+      if (process.env.NODE_ENV === 'development') {
+        console.log('[dataAdapter] 📊 直方图统计信息计算结果:', {
+          avg_l,
+          shadows,
+          midtones,
+          highlights,
+        });
+      }
+      
+      return { avg_l, shadows, midtones, highlights };
+    };
+    
+    // 【修复】优先使用 simulated_histogram 中的 histogram_data，如果没有则使用默认值
+    // 如果 histogram_data 存在，则计算统计信息；否则使用 structured.histogram 中的统计信息
+    const histogramLChannel = histogramData.l || structured.histogram?.l || [];
+    const calculatedStats = calculateHistogramStats(histogramLChannel);
+    
+    // 【调试日志】记录 HSL 数据检查
+    if (process.env.NODE_ENV === 'development') {
+      console.log('[dataAdapter] 🎨 HSL 数据检查:', {
+        hasColorScheme: !!result.color_scheme,
+        hasHsl: !!result.color_scheme?.hsl,
+        hslKeys: result.color_scheme?.hsl ? Object.keys(result.color_scheme.hsl) : [],
+        hslSample: result.color_scheme?.hsl ? Object.keys(result.color_scheme.hsl).slice(0, 3).map(key => ({
+          key,
+          data: result.color_scheme.hsl[key],
+        })) : [],
+      });
+    }
+    
     result.lightroom = {
-      histogram: structured.histogram || {
+      // 【修复】优先使用 simulated_histogram 中的 histogram_data，如果没有则使用默认值
+      histogram: (histogramData.r && histogramData.r.length > 0) ? {
+        r: histogramData.r || [],
+        g: histogramData.g || [],
+        b: histogramData.b || [],
+        l: histogramData.l || [],
+        // 【修复】优先使用计算出的统计信息，如果没有则使用 structured.histogram 中的统计信息
+        avg_l: calculatedStats.avg_l || structured.histogram?.avg_l || 0,
+        shadows: calculatedStats.shadows || structured.histogram?.shadows || 0,
+        midtones: calculatedStats.midtones || structured.histogram?.midtones || 0,
+        highlights: calculatedStats.highlights || structured.histogram?.highlights || 0,
+      } : (structured.histogram || {
         r: [], g: [], b: [], l: [],
         avg_l: 0, shadows: 0, midtones: 0, highlights: 0,
-      },
-      basic_panel: basicPanel,
+      }),
+      // 【新增】添加 simulated_histogram 数据（直方图描述、RGB 值和完整的直方图数据）
+      // 【修复】即使没有 description，只要有 histogram_data 就应该创建对象（用于渲染直方图）
+      simulated_histogram: (simulatedHistogram.description || simulatedHistogram.histogram_data) ? {
+        description: simulatedHistogram.description || "",
+        rgb_values: simulatedHistogram.rgb_values || { r: 0, g: 0, b: 0 },
+        histogram_data: simulatedHistogram.histogram_data || null, // 【新增】完整的直方图数据（256 个值）
+        // 【新增】添加 Stats Grid 和 Palette Strip 的说明
+        stats_grid_description: simulatedHistogram.stats_grid_description || "",
+        palette_strip_description: simulatedHistogram.palette_strip_description || "",
+      } : undefined,
+      // 【新增】添加白平衡数据（从 color_scheme 中提取）
+      white_balance: whiteBalance ? {
+        temp: whiteBalance.temp || { value: 0, range: "+0", reason: "" },
+        tint: whiteBalance.tint || { value: 0, range: "+0", reason: "" },
+      } : undefined,
+      // 【新增】添加色彩分级数据（从 color_scheme 中提取）
+      color_grading: colorGrading ? {
+        highlights: colorGrading.highlights || { hue: 0, saturation: 0, reason: "" },
+        midtones: colorGrading.midtones || { hue: 0, saturation: 0, reason: "" },
+        shadows: colorGrading.shadows || { hue: 0, saturation: 0, reason: "" },
+        balance: colorGrading.balance || 0,
+      } : undefined,
+      // 【新增】添加关键调整策略（用于 Tactical Brief）
+      key_adjustment_strategy: keyAdjustmentStrategy,
+      basic_panel: safeBasicPanel, // 【修复】使用安全的 basic_panel，确保所有字段都有默认值
       hsl: result.color_scheme?.hsl || {},
       curve: {
-        rgb: curvePoints.map((p: any) => Array.isArray(p) ? { x: p[0], y: p[1] } : p),
-        red: structured.rgbCurves?.red || [],
-        green: structured.rgbCurves?.green || [],
-        blue: structured.rgbCurves?.blue || [],
+        // 【修复】确保曲线点格式统一为对象数组格式 {x, y}
+        // 优先使用 toneCurves.points_rgb，如果没有则使用 toneCurve/curve 中的数据
+        rgb: (structured.toneCurves?.points_rgb || curvePoints || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        // 【修复】从 toneCurves 中提取单通道曲线点，如果没有则从 rgbCurves 中提取
+        red: (structured.toneCurves?.points_red || structured.rgbCurves?.red || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        green: (structured.toneCurves?.points_green || structured.rgbCurves?.green || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        blue: (structured.toneCurves?.points_blue || structured.rgbCurves?.blue || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
         reason: toneCurvesExplanation, // 【修复】使用 toneCurves.explanation 作为曲线描述
         analysis: toneCurvesExplanation, // 【新增】同时设置 analysis 字段，用于 AdvancedCurveMonitor 组件
       },
@@ -1093,16 +1416,20 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
         highlights: {
           hue: parseFloat(structured.colorGrading.highlights?.hue || "0"),
           saturation: parseFloat(structured.colorGrading.highlights?.saturation || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段，而不是硬编码为空字符串
+          // 后端在 _format_lightroom 中已提取 split_toning_detail 的 reason 字段
+          reason: structured.colorGrading.highlights?.reason || "",
         },
         shadows: {
           hue: parseFloat(structured.colorGrading.shadows?.hue || "0"),
           saturation: parseFloat(structured.colorGrading.shadows?.saturation || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段
+          reason: structured.colorGrading.shadows?.reason || "",
         },
         balance: {
           value: parseFloat(structured.colorGrading.balance || "0"),
-          reason: "",
+          // 【修复】从后端数据中提取 reason 字段
+          reason: structured.colorGrading.balance?.reason || structured.colorGrading.balance_reason || "",
         },
       } : undefined,
     };

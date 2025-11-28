@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Crop, Move, Zap, Eye, Check, X,
-  ArrowRight, Camera, XCircle, Sun, Moon, Palette, Layers, Navigation, Crosshair 
+  ArrowRight, Camera, XCircle, Sun, Moon, Palette, Layers, Navigation, Crosshair
 } from 'lucide-react';
 import { useLanguage } from '../src/contexts/LanguageContext';
 
@@ -163,7 +163,7 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
         />
 
         {/* 图片容器 */}
-        <div 
+        <div
           className="relative max-w-full max-h-[82vh] transition-all duration-700 ease-out shadow-2xl"
           style={{
             // 【横竖图适配】根据图片宽高比动态设置最大尺寸
@@ -236,7 +236,7 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
                  {/* 尺寸标记 */}
                  <div className="absolute -top-6 left-0 text-[10px] text-yellow-400 font-mono tracking-widest bg-black/80 px-2 py-0.5 rounded">
                    {t('modal.composition.clinic_crop_preview') || 'AI REFRAME'}
-                 </div>
+                  </div>
                </div>
             </div>
           )}
@@ -314,12 +314,12 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
              MODE: 后期蒙版 (MASK) - 工程图纸风格
              ----------------------------------------------------- */}
           {mode === 'mask' && (
-            <svg 
+              <svg 
               className="absolute inset-0 w-full h-full z-20 pointer-events-none"
-              viewBox="0 0 100 100"
-              preserveAspectRatio="none"
-            >
-              <defs>
+                viewBox="0 0 100 100"
+                preserveAspectRatio="none"
+              >
+                <defs>
                 {/* 纹理：Burn (黑色斜线) */}
                 <pattern id="pattern-burn" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
                   <rect width="4" height="8" transform="translate(0,0)" fill="black" fillOpacity="0.6" />
@@ -327,44 +327,44 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
                 {/* 纹理：Dodge (白色点阵) */}
                 <pattern id="pattern-dodge" width="6" height="6" patternUnits="userSpaceOnUse">
                    <circle cx="2" cy="2" r="1.5" fill="white" fillOpacity="0.6" />
-                </pattern>
+                  </pattern>
                 {/* 纹理：Color (方格) */}
                 <pattern id="pattern-color" width="8" height="8" patternUnits="userSpaceOnUse">
                    <path d="M0 0h8v8H0z" fill="none" stroke="rgba(236, 72, 153, 0.5)" strokeWidth="1"/>
-                </pattern>
-              </defs>
+                  </pattern>
+                </defs>
 
-              {clinic.grading_masks?.map((mask: GradingMask, idx: number) => {
+                {clinic.grading_masks?.map((mask: GradingMask, idx: number) => {
                  const isActive = activeMaskIndex === idx || activeMaskIndex === null;
-                 // 【修复】确保 polygon points 格式正确（数字，不是百分比字符串）
-                 const points = mask.area_polygon.map((p: { x: number; y: number }) => {
-                   const x = typeof p.x === 'string' ? parseFloat(p.x.replace('%', '')) : p.x;
-                   const y = typeof p.y === 'string' ? parseFloat(p.y.replace('%', '')) : p.y;
-                   return `${x},${y}`;
-                 }).join(' ');
+                   // 【修复】确保 polygon points 格式正确（数字，不是百分比字符串）
+                   const points = mask.area_polygon.map((p: { x: number; y: number }) => {
+                     const x = typeof p.x === 'string' ? parseFloat(p.x.replace('%', '')) : p.x;
+                     const y = typeof p.y === 'string' ? parseFloat(p.y.replace('%', '')) : p.y;
+                     return `${x},${y}`;
+                   }).join(' ');
                  
                  let fillUrl = 'url(#pattern-color)';
                  let strokeColor = '#ec4899';
                  if (mask.action === 'burn') { fillUrl = 'url(#pattern-burn)'; strokeColor = 'rgba(0,0,0,0.5)'; }
                  if (mask.action === 'dodge') { fillUrl = 'url(#pattern-dodge)'; strokeColor = 'rgba(255,255,255,0.8)'; }
-
-                 return (
+                   
+                   return (
                    <g 
                      key={idx} 
-                     className={`transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-10'}`}
-                   >
-                     <polygon 
-                       points={points} 
+                        className={`transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-10'}`}
+                     >
+                       <polygon 
+                         points={points} 
                        fill={fillUrl}
                        stroke={strokeColor}
-                       strokeWidth="1.5"
-                       strokeDasharray="4 2"
+                         strokeWidth="1.5"
+                         strokeDasharray="4 2"
                        className="animate-[dash_30s_linear_infinite]"
-                     />
-                   </g>
+                       />
+                     </g>
                  );
-              })}
-            </svg>
+                })}
+              </svg>
           )}
 
         </div>
@@ -442,35 +442,35 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
          ========================================================= */}
       <div className="h-24 flex items-center justify-center z-40 bg-gradient-to-t from-black via-black/80 to-transparent">
         <div className="flex items-center gap-3 px-4 py-3 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_20px_50px_-20px_rgba(0,0,0,0.7)]">
-          <ControlBtn 
-            active={mode === 'original'} 
-            onClick={() => setMode('original')} 
-            icon={<Eye />} 
+        <ControlBtn 
+          active={mode === 'original'} 
+          onClick={() => setMode('original')} 
+          icon={<Eye />} 
             label={t('modal.composition.clinic_mode_original') || 'RAW'} 
-          />
+        />
           <div className="w-px h-8 bg-white/10 mx-1" />
-          <ControlBtn 
-            active={mode === 'crop'} 
-            onClick={() => setMode('crop')} 
-            icon={<Crop />} 
+        <ControlBtn 
+          active={mode === 'crop'} 
+          onClick={() => setMode('crop')} 
+          icon={<Crop />} 
             label={t('modal.composition.clinic_mode_crop') || 'CROP'} 
-            highlightColor="yellow" 
-          />
-          <ControlBtn 
-            active={mode === 'guide'} 
-            onClick={() => setMode('guide')} 
-            icon={<Navigation />} 
+          highlightColor="yellow" 
+        />
+        <ControlBtn 
+          active={mode === 'guide'} 
+          onClick={() => setMode('guide')} 
+          icon={<Navigation />} 
             label={t('modal.composition.clinic_mode_guide') || 'GUIDE'} 
-            highlightColor="cyan" 
-          />
-          <ControlBtn 
-            active={mode === 'mask'} 
-            onClick={() => setMode('mask')} 
-            icon={<Layers />} 
+          highlightColor="cyan" 
+        />
+        <ControlBtn 
+          active={mode === 'mask'} 
+          onClick={() => setMode('mask')} 
+          icon={<Layers />} 
             label={t('modal.composition.clinic_mode_mask') || 'MASK'} 
-            highlightColor="purple" 
-          />
-        </div>
+          highlightColor="purple" 
+        />
+      </div>
       </div>
 
     </div>

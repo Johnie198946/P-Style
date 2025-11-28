@@ -146,6 +146,9 @@ const translations: Translations = {
     'modal.color.grading_vectors': 'Grading Vectors',
     'modal.color.balance': 'Balance',
     'modal.color.spectrum': 'Spectrum Matrix',
+    'modal.color.master_style': 'Master Style',
+    'modal.color.style_summary': 'Style Summary',
+    'modal.color.key_strategy': 'Key Strategy',
 
     // Modals - Review (Comprehensive Review Panel)
     'review.title': 'Visual Critique',
@@ -305,6 +308,9 @@ const translations: Translations = {
     'modal.lighting.delta_subtitle': 'The Delta to User',
     'modal.lighting.action_priorities': 'Action Priorities',
     'modal.lighting.top_actions': 'Top Actions',
+    'modal.lighting.tone_curve': 'Tone Curve',
+    'modal.lighting.output_luminance': 'OUTPUT LUMINANCE',
+    'modal.lighting.input_value': 'INPUT VALUE',
 
     // Modals - Photoshop
     'modal.ps.title': 'PHOTOSHOP WORKFLOW',
@@ -725,6 +731,9 @@ const translations: Translations = {
     // Modals - Color
     'modal.color.title': '光谱分级',
     'modal.color.strategy': '/// 色彩策略',
+    'modal.color.master_style': '主风格回顾',
+    'modal.color.style_summary': '风格总结回顾',
+    'modal.color.key_strategy': '关键调整策略',
     'modal.color.cinematic': '电影级调色',
     'modal.color.hsl': '全息 HSL 矩阵',
     'modal.color.wb': '白平衡',
@@ -891,6 +900,9 @@ const translations: Translations = {
     'modal.lighting.delta_subtitle': '用户图的偏离情况分析',
     'modal.lighting.action_priorities': '行动优先级',
     'modal.lighting.top_actions': '核心动作建议',
+    'modal.lighting.tone_curve': '色调曲线',
+    'modal.lighting.output_luminance': '输出亮度',
+    'modal.lighting.input_value': '输入值',
 
     // Modals - Photoshop
     'modal.ps.title': 'Photoshop 工作流',

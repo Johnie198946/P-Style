@@ -29,6 +29,7 @@ from ..utils.response import success_response, error_response
 from ..constants.error_codes import ErrorCode
 from ..schemas.analysis_schemas import (
     Part1RequestSchema,
+    Part2RequestSchema,
     DiagnosisRequestSchema,
     validate_diagnosis_response
 )
@@ -237,12 +238,20 @@ async def analyze_part1(
         - 调用 Gemini API 生成分析结果，然后格式化并保存到数据库
     """
     try:
-        # 【日志记录】记录函数入口，便于追踪问题
-        logger.info(f"【Part1 分析】收到分析请求，uploadId: {request_data.uploadId}, optional_style: {request_data.optional_style}")
+        # 【日志记录】记录函数入口，便于追踪问题  
+        # 【增强日志】记录请求时间戳、请求头信息、客户端IP等详细信息
+        import time
+        request_start_time = time.time()
+        logger.info("=" * 80)
+        logger.info(f"【Part1 分析】收到分析请求")
+        logger.info(f"【Part1 分析】请求时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"【Part1 分析】uploadId: {request_data.uploadId}")
+        logger.info(f"【Part1 分析】optional_style: {request_data.optional_style}")
+        logger.info("=" * 80)
         
         # 验证用户身份
         current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
-        logger.info(f"【Part1 分析】用户认证成功，用户ID: {current_user.id}")
+        logger.info(f"【Part1 分析】用户认证成功，用户ID: {current_user.id}, 用户邮箱: {current_user.email}")
         
         # 【重要】根据 uploadId 从数据库获取图片数据
         # 根据开发方案第 763 行，前端传递 uploadId，后端需要从 Upload 表中查询图片数据
@@ -465,6 +474,12 @@ async def analyze_part1(
             # 【SSL/连接错误处理】SSL 连接错误或网络连接错误
             error_detail = str(conn_err)
             logger.error(f"【Part1 分析】Gemini API 连接失败: {error_detail}", exc_info=True)
+            
+            # 【关键修复】明确提示代理连接拒绝错误
+            # [Errno 61] Connection refused 通常意味着代理服务器未启动
+            if "Connection refused" in error_detail or "Errno 61" in error_detail:
+                raise error_response(ErrorCode.INTERNAL_ERROR, "无法连接到代理服务器。请检查 ClashX(7890) 或 Clash Verge(7897) 是否已启动，并确认端口配置正确。")
+            
             # 提供更友好的错误消息，指导用户检查网络和代理配置
             if "SSL" in error_detail or "ssl" in error_detail:
                 raise error_response(ErrorCode.INTERNAL_ERROR, "AI 分析失败：SSL 连接错误。请检查网络连接或 ClashX 代理配置。")
@@ -806,18 +821,26 @@ async def analyze_part1(
 
 @router.post("/part2")
 async def analyze_part2(
-    taskId: str = Form(...),
+    request_data: Part2RequestSchema = Body(...),
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
 ):
     """
     Part2 分析接口（异步执行）
     
-    根据开发方案第 16 节，Part2 接口应立即返回 { status: 'processing' }，
+    根据开发方案第 16 节和第 793 行，Part2 接口应立即返回 { status: 'processing' }，
     实际的 Gemini 调用和数据库更新在后台异步执行，前端通过轮询获取结果。
     
+    【重要】参数格式：
+        - 请求体格式：JSON body { "taskId": "uuid" }
+        - 根据开发方案第 793 行：接口：POST /api/analyze/part2，请求体 { taskId }
+        - 前端发送的是 JSON 格式：body: JSON.stringify({ taskId })
+    
     Args:
-        taskId: 任务 ID（从 Part1 返回）
+        request_data: 请求数据（JSON body）
+            {
+                "taskId": str  # 任务 ID（从 Part1 返回，必填）
+            }
         credentials: JWT Token（Bearer）
         db: 数据库会话
         
@@ -839,7 +862,9 @@ async def analyze_part2(
     """
     # 【日志记录】记录请求接收时间，用于追踪请求处理时间
     request_start_time = time.time()
+    taskId = request_data.taskId  # 从请求数据中提取 taskId
     logger.info(f"【Part2 请求开始】taskId={taskId}, 时间戳={request_start_time}")
+    logger.info(f"【Part2 请求数据】request_data={request_data.model_dump()}")
     try:
         # 1. 验证用户身份
         current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
@@ -1088,6 +1113,14 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
                     color_structured = color_section.get("structured", {})
                     logger.info(f"Part2 color section: has structured = {bool(color_structured)}, structured keys = {list(color_structured.keys()) if isinstance(color_structured, dict) else 'not dict'}, taskId={task_id}")
                     logger.debug(f"Part2 color structured preview: whiteBalance = {bool(color_structured.get('whiteBalance'))}, grading = {bool(color_structured.get('grading'))}, hsl = {len(color_structured.get('hsl', []))} items, taskId={task_id}")
+                    # 【关键】检查三个新字段是否存在
+                    logger.info(f"Part2 color phase_1_extraction 字段检查: master_style_recap = {bool(color_structured.get('master_style_recap'))}, style_summary_recap = {bool(color_structured.get('style_summary_recap'))}, key_adjustment_strategy = {bool(color_structured.get('key_adjustment_strategy'))}, taskId={task_id}")
+                    if color_structured.get('master_style_recap'):
+                        logger.info(f"Part2 color master_style_recap 内容预览: {color_structured.get('master_style_recap')[:100]}..., taskId={task_id}")
+                    if color_structured.get('style_summary_recap'):
+                        logger.info(f"Part2 color style_summary_recap 内容预览: {color_structured.get('style_summary_recap')[:100]}..., taskId={task_id}")
+                    if color_structured.get('key_adjustment_strategy'):
+                        logger.info(f"Part2 color key_adjustment_strategy 内容预览: {color_structured.get('key_adjustment_strategy')[:100]}..., taskId={task_id}")
                 
                 # 检查 lightroom section
                 if "lightroom" in sections:
@@ -1196,6 +1229,11 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
         error_type = type(e).__name__
         error_message = str(e)
         logger.error(f"【Part2 后台任务失败】taskId={task_id}, 错误类型: {error_type}, 错误消息: {error_message}, 耗时={job_elapsed_time:.2f}秒", exc_info=True)
+        
+        # 【关键修复】明确提示代理连接拒绝错误
+        if "Connection refused" in error_message or "Errno 61" in error_message:
+            error_message = "无法连接到代理服务器。请检查 ClashX(7890) 或 Clash Verge(7897) 是否已启动，并确认端口配置正确。"
+            logger.error(f"【Part2 后台任务失败】检测到代理连接错误: {error_message}")
         
         # 【构建详细的失败原因】包含错误类型和错误消息，便于前端显示和调试
         status_reason = f"Part2 后台分析失败: {error_type}: {error_message}"
@@ -1491,6 +1529,13 @@ async def analyze_diagnosis(
             error_msg = str(e)
             logger.error(f"【AI 诊断】Gemini 客户端未初始化: {error_msg}")
             raise error_response(ErrorCode.INTERNAL_ERROR, f"Gemini 服务未配置: {error_msg}")
+            raise error_response(ErrorCode.INTERNAL_ERROR, f"Gemini 服务未配置: {error_msg}")
+        except ConnectionError as conn_err:
+            # 【关键修复】明确提示代理连接拒绝错误
+            error_detail = str(conn_err)
+            if "Connection refused" in error_detail or "Errno 61" in error_detail:
+                raise error_response(ErrorCode.INTERNAL_ERROR, "无法连接到代理服务器。请检查 ClashX(7890) 或 Clash Verge(7897) 是否已启动，并确认端口配置正确。")
+            raise error_response(ErrorCode.INTERNAL_ERROR, f"Gemini API 连接失败: {error_detail}")
         except Exception as e:
             # 其他 Gemini API 调用错误
             error_type = type(e).__name__

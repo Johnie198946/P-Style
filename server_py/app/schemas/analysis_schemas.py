@@ -249,6 +249,18 @@ class ColorStructuredSchema(BaseModel):
     )
     grading: ColorGradingSchema = Field(default_factory=ColorGradingSchema)
     hsl: List[HSLAdjustmentSchema] = Field(default_factory=list, description="HSL 调整列表")
+    # 【新增】phase_1_extraction 三个字段，用于前端色彩策略卡片展示
+    # 根据开发方案，这三个字段需要在色彩策略中展示：
+    # - master_style_recap: 主风格回顾（流派识别）
+    # - style_summary_recap: 风格总结回顾（Phase 1 核心指导思想）
+    # - key_adjustment_strategy: 关键调整策略（三大动作）
+    master_style_recap: Optional[str] = Field(default="", description="主风格回顾（流派识别）")
+    style_summary_recap: Optional[str] = Field(default="", description="风格总结回顾（Phase 1 核心指导思想）")
+    key_adjustment_strategy: Optional[str] = Field(default="", description="关键调整策略（三大动作）")
+    
+    # 【Pydantic v2 配置】允许额外字段，避免验证时过滤掉未定义的字段
+    # 注意：Pydantic v2 使用 model_config 字典，而不是 ConfigDict（除非显式导入）
+    model_config = {"extra": "allow"}
 
 
 class ColorNaturalLanguageSchema(BaseModel):
@@ -313,6 +325,8 @@ class LightroomStructuredSchema(BaseModel):
     rgbCurves: Dict[str, List[List[int]]] = Field(default_factory=dict, description="RGB 曲线")
     colorGrading: Dict[str, Any] = Field(default_factory=dict, description="色彩分级")
     localAdjustments: List[Dict[str, Any]] = Field(default_factory=list, description="局部调整")
+    # 【新增】simulatedHistogram 字段：用于前端显示模拟直方图
+    simulatedHistogram: Optional[Dict[str, Any]] = Field(default=None, description="模拟直方图数据（包含 description、rgb_values、histogram_data）")
 
 
 class LightroomNaturalLanguageSchema(BaseModel):
@@ -592,6 +606,17 @@ class Part1RequestSchema(BaseModel):
     """
     uploadId: str = Field(..., description="上传记录 ID（必填）")
     optional_style: Optional[str] = Field(None, description="可选风格关键词（如 '日出暖光', '胶片感'）")
+
+
+class Part2RequestSchema(BaseModel):
+    """
+    Part2 分析请求 Schema
+    根据开发方案第 793 行实现，请求体为 JSON 格式 { taskId }
+    
+    Args:
+        taskId: 任务 ID（从 Part1 返回，必填）
+    """
+    taskId: str = Field(..., description="任务 ID（从 Part1 返回，必填）")
 
 
 class DiagnosisRequestSchema(BaseModel):

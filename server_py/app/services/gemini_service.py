@@ -614,7 +614,9 @@ def get_gemini_service() -> GeminiService:
         if "HTTP_PROXY" in os.environ or "HTTPS_PROXY" in os.environ:
             logger.info(f"【Gemini 代理】使用系统环境变量: HTTP_PROXY={os.environ.get('HTTP_PROXY', '未设置')}, HTTPS_PROXY={os.environ.get('HTTPS_PROXY', '未设置')}")
         else:
-            logger.warning("【Gemini 代理】未配置代理，如果无法访问 Gemini API，请检查网络或配置 ClashX 代理")
+            # 【重要提示】如果没有配置代理，Gemini API 在国内无法访问
+            # 建议用户配置 ClashX (7890) 或 Clash Verge (7897) 代理
+            logger.warning("【Gemini 代理】未配置代理，如果无法访问 Gemini API，请检查网络或配置代理 (ClashX: 7890, Clash Verge: 7897)")
     
     return GeminiService(
         api_key=settings.GEMINI_API_KEY,

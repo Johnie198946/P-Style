@@ -12,7 +12,7 @@ from loguru import logger
 
 from ..db import get_db
 from ..middleware.auth import get_current_user, security
-from ..services.upload_service import UploadService
+from ..services.upload_service import UploadService, extract_exif_from_image_data
 from ..services.storage_service import storage_service
 from ..utils.response import success_response, error_response
 from ..constants.error_codes import ErrorCode
@@ -72,11 +72,20 @@ async def upload_photos(
         source_data = await sourceImage.read()
         logger.info(f"[上传接口] 源图数据读取成功，大小: {len(source_data)} 字节")
         
+        # 【新增】提取源图（参考图）的 EXIF 数据
+        source_exif = extract_exif_from_image_data(source_data)
+        logger.info(f"[上传接口] 源图 EXIF 提取完成: {source_exif}")
+        
         target_data = None
+        target_exif = {}  # 【新增】用户图的 EXIF 数据
         if targetImage:
             logger.info(f"[上传接口] 开始读取目标图数据，文件名: {targetImage.filename}, 大小: {targetImage.size if hasattr(targetImage, 'size') else '未知'}")
             target_data = await targetImage.read()
             logger.info(f"[上传接口] 目标图数据读取成功，大小: {len(target_data)} 字节")
+            
+            # 【新增】提取用户图的 EXIF 数据（用于显示 ISO、光圈等拍摄参数）
+            target_exif = extract_exif_from_image_data(target_data)
+            logger.info(f"[上传接口] 用户图 EXIF 提取完成: {target_exif}")
         
         # 生成上传记录 ID（用于对象存储路径）
         upload_id = str(uuid.uuid4())
@@ -201,6 +210,9 @@ async def upload_photos(
                 "source_image_url": source_image_url,  # 优先返回对象存储 URL
                 "target_image_url": target_image_url,  # 优先返回对象存储 URL
                 "similarity_score": similarity,
+                # 【新增】返回 EXIF 元数据，用于前端显示 ISO、光圈等拍摄参数
+                "source_exif": source_exif,  # 参考图 EXIF（通常用不到，但提供完整性）
+                "target_exif": target_exif,   # 用户图 EXIF（用于 LightroomPanel 显示 ISO 800, f/2.8 等）
             },
         )
     except HTTPException:

@@ -16,9 +16,13 @@ const Wheel: React.FC<{ data: ColorGradingPoint; label: string; color: string; o
   const x = 50 + radius * Math.cos(angleRad);
   const y = 50 + radius * Math.sin(angleRad);
 
+  // 【功能】生成 hover 时显示的文本
+  // 优先显示 reason 字段（调整原因描述），如果没有则显示默认文本
   const getHoverText = () => {
+      // 【优先】如果有 reason 字段，直接显示（例如："高光注入微量青蓝，保持雪/浪花的冷洁感。"）
       if (data.reason) return `GRADING [${label.toUpperCase()}]: ${data.reason}`;
       
+      // 【后备】如果没有 reason 字段，使用默认文本（包含色相和饱和度信息）
       const fallback = t('color.grade.pushing')
         .replace('{label}', label)
         .replace('{hue}', Math.round(data.hue).toString())

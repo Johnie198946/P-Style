@@ -5,11 +5,145 @@
 """
 import uuid
 import base64
+import io
 from typing import Optional, Dict, Any
 from sqlalchemy.orm import Session
 from loguru import logger
+from PIL import Image
+from PIL.ExifTags import TAGS, GPSTAGS
 
 from ..models import Upload
+
+
+def extract_exif_from_image_data(image_data: bytes) -> Dict[str, Any]:
+    """
+    从图片二进制数据中提取 EXIF 元数据
+    
+    【功能说明】
+    提取用户上传图片的拍摄参数，包括 ISO、光圈、快门、焦距、相机型号等
+    这些数据用于在 Lightroom 面板中显示图片的原始拍摄信息
+    
+    Args:
+        image_data: 图片的二进制数据
+    
+    Returns:
+        Dict: 包含 EXIF 信息的字典，主要字段：
+            - iso: ISO 感光度（如 800）
+            - aperture: 光圈值（如 "f/2.8"）
+            - shutter_speed: 快门速度（如 "1/125"）
+            - focal_length: 焦距（如 "50mm"）
+            - camera_make: 相机品牌（如 "Sony"）
+            - camera_model: 相机型号（如 "A7M4"）
+            - lens: 镜头型号
+            - date_taken: 拍摄日期时间
+            - width: 图片宽度
+            - height: 图片高度
+    
+    Note:
+        - 如果图片没有 EXIF 数据（如截图、网络图片），返回空字典
+        - JPEG/TIFF 格式通常包含完整 EXIF，PNG 格式通常没有
+    """
+    exif_info = {}
+    
+    try:
+        # 使用 PIL 打开图片
+        image = Image.open(io.BytesIO(image_data))
+        
+        # 获取图片基本信息（即使没有 EXIF 也能获取）
+        exif_info["width"] = image.width
+        exif_info["height"] = image.height
+        exif_info["format"] = image.format
+        
+        # 尝试获取 EXIF 数据
+        exif_data = image._getexif()
+        
+        if not exif_data:
+            logger.info("[EXIF] 图片没有 EXIF 数据")
+            return exif_info
+        
+        # 解析 EXIF 标签
+        for tag_id, value in exif_data.items():
+            tag_name = TAGS.get(tag_id, tag_id)
+            
+            # 【ISO 感光度】
+            if tag_name == "ISOSpeedRatings":
+                # ISO 可能是单个值或元组
+                exif_info["iso"] = value[0] if isinstance(value, tuple) else value
+            
+            # 【光圈值】FNumber
+            elif tag_name == "FNumber":
+                if hasattr(value, 'numerator') and hasattr(value, 'denominator'):
+                    # EXIF 中光圈值通常是分数形式
+                    aperture = float(value.numerator) / float(value.denominator) if value.denominator else 0
+                    exif_info["aperture"] = f"f/{aperture:.1f}"
+                    exif_info["aperture_value"] = aperture
+                elif isinstance(value, (int, float)):
+                    exif_info["aperture"] = f"f/{value:.1f}"
+                    exif_info["aperture_value"] = value
+            
+            # 【快门速度】ExposureTime
+            elif tag_name == "ExposureTime":
+                if hasattr(value, 'numerator') and hasattr(value, 'denominator'):
+                    numerator = value.numerator
+                    denominator = value.denominator
+                    if numerator == 1:
+                        exif_info["shutter_speed"] = f"1/{denominator}"
+                    elif denominator == 1:
+                        exif_info["shutter_speed"] = f"{numerator}s"
+                    else:
+                        exif_info["shutter_speed"] = f"{numerator}/{denominator}"
+                elif isinstance(value, (int, float)):
+                    if value < 1:
+                        exif_info["shutter_speed"] = f"1/{int(1/value)}"
+                    else:
+                        exif_info["shutter_speed"] = f"{value}s"
+            
+            # 【焦距】FocalLength
+            elif tag_name == "FocalLength":
+                if hasattr(value, 'numerator') and hasattr(value, 'denominator'):
+                    focal = float(value.numerator) / float(value.denominator) if value.denominator else 0
+                    exif_info["focal_length"] = f"{focal:.0f}mm"
+                    exif_info["focal_length_value"] = focal
+                elif isinstance(value, (int, float)):
+                    exif_info["focal_length"] = f"{value:.0f}mm"
+                    exif_info["focal_length_value"] = value
+            
+            # 【相机品牌】Make
+            elif tag_name == "Make":
+                exif_info["camera_make"] = str(value).strip()
+            
+            # 【相机型号】Model
+            elif tag_name == "Model":
+                exif_info["camera_model"] = str(value).strip()
+            
+            # 【镜头型号】LensModel
+            elif tag_name == "LensModel":
+                exif_info["lens"] = str(value).strip()
+            
+            # 【拍摄日期】DateTimeOriginal
+            elif tag_name == "DateTimeOriginal":
+                exif_info["date_taken"] = str(value)
+            
+            # 【曝光补偿】ExposureBiasValue
+            elif tag_name == "ExposureBiasValue":
+                if hasattr(value, 'numerator') and hasattr(value, 'denominator'):
+                    ev = float(value.numerator) / float(value.denominator) if value.denominator else 0
+                    exif_info["exposure_compensation"] = f"{ev:+.1f} EV"
+                elif isinstance(value, (int, float)):
+                    exif_info["exposure_compensation"] = f"{value:+.1f} EV"
+            
+            # 【白平衡】WhiteBalance
+            elif tag_name == "WhiteBalance":
+                wb_modes = {0: "Auto", 1: "Manual"}
+                exif_info["white_balance_mode"] = wb_modes.get(value, str(value))
+        
+        logger.info(f"[EXIF] 成功提取 EXIF 数据: ISO={exif_info.get('iso')}, 光圈={exif_info.get('aperture')}, 快门={exif_info.get('shutter_speed')}")
+        
+    except Exception as e:
+        logger.warning(f"[EXIF] 提取 EXIF 数据失败: {type(e).__name__}: {str(e)}")
+        # 返回已提取的基本信息（即使 EXIF 提取失败）
+    
+    return exif_info
 
 
 class UploadService:

@@ -198,6 +198,15 @@ const AppContent = () => {
         const uploadRes = await api.photos.upload(formData);
         setUploadId(uploadRes.uploadId);
         console.log('[App] 图片上传完成，uploadId:', uploadRes.uploadId);
+        
+        // 【新增】存储用户图的 EXIF 数据（ISO、光圈等拍摄参数），用于 LightroomPanel 显示
+        // EXIF 数据来自后端从图片中提取的元数据
+        const targetExif = uploadRes.target_exif || {};
+        console.log('[App] 用户图 EXIF 数据:', targetExif);
+        // 存储到 sessionStorage，供 LightroomPanel 读取
+        if (Object.keys(targetExif).length > 0) {
+          sessionStorage.setItem('user_image_exif', JSON.stringify(targetExif));
+        }
 
         // Step B: Analyze Part 1（等待 50-60 秒）
         console.log('[App] 开始 Part1 分析（预计需要 50-60 秒）...');

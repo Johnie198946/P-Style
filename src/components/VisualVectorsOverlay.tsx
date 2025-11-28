@@ -184,3 +184,4 @@ export const VisualVectorsOverlay: React.FC<Props> = ({ data, width, height }) =
   );
 };
 
+

@@ -2,6 +2,9 @@ export interface ColorAdjustment {
   hue: number;
   saturation: number;
   luminance: number;
+  desc?: string;  // 【新增】HSL 调整原因描述（来自 Gemini 的 desc 字段）
+  note?: string;  // 【新增】HSL 调整原因描述（后端可能使用 note 字段，兼容）
+  reason?: string;  // 【向后兼容】HSL 调整原因描述（旧字段名）
 }
 
 export interface HSLData {
@@ -120,6 +123,17 @@ export interface LightroomData {
     shadows: number;
     midtones: number;
     highlights: number;
+  };
+  // 【新增】simulated_histogram 字段：用于显示 Gemini 输出的模拟直方图数据
+  simulated_histogram?: {
+    description?: string;  // 直方图形态描述（如："直方图呈现典型的'中间调堆积'形态..."）
+    rgb_values?: { r: number; g: number; b: number };  // RGB 平均值
+    histogram_data?: {  // 完整的直方图数据（256 个值，已插值）
+      r: number[];
+      g: number[];
+      b: number[];
+      l: number[];
+    };
   };
   basic_panel: {
     temp: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };

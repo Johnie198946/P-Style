@@ -323,13 +323,99 @@ const AdvancedCurveMonitor = ({ curveData }: { curveData: any }) => {
         blue: '#3b82f6'
     };
 
-    // Generate path d attribute from points (simplified linear interpolation for visual)
+    // 【修复】生成平滑的贝塞尔曲线路径（符合后期领域规范）
+    // 【重要】不自动增补点，严格按照 Gemini 输出的点绘制
     const getPath = (points: any[]) => {
-        if (!points || points.length === 0) return "M0,255 L255,0";
-        return `M ${points.map((p: any) => `${p.x},${255 - p.y}`).join(' L ')}`;
+        if (!points || points.length === 0) {
+            // 如果没有数据，返回 null（不绘制曲线）
+            return null;
+        }
+        
+        // 统一转换为 {x, y} 对象格式
+        let normalizedPoints = points.map((p: any) => {
+            if (Array.isArray(p)) {
+                return { x: p[0], y: p[1] };
+            }
+            return p.x !== undefined && p.y !== undefined ? p : null;
+        }).filter((p: any) => p !== null);
+        
+        // 【专业修复】直接使用 Gemini 给出的所有点，不强制添加 (0, 0) 和 (255, 255)
+        // Gemini 输出的点（如 {x: 0, y: 30}）已经是曲线的起点，不需要再添加 (0, 0)
+        // 只有当完全没有数据时，才返回 null
+        
+        // 按 x 坐标排序（确保点的顺序正确）
+        normalizedPoints.sort((a, b) => a.x - b.x);
+        
+        // SVG 坐标系：y 轴向下，需要翻转（255 - y）
+        const flippedPoints = normalizedPoints.map((p: any) => ({ x: p.x, y: 255 - p.y }));
+        
+        // 生成平滑的贝塞尔曲线路径
+        if (flippedPoints.length < 2) {
+            return null; // 不绘制，而不是默认直线
+        }
+        
+        if (flippedPoints.length === 2) {
+            // 两个点：直接连接
+            return `M ${flippedPoints[0].x},${flippedPoints[0].y} L ${flippedPoints[1].x},${flippedPoints[1].y}`;
+        }
+        
+        // 三个或更多点：使用 Catmull-Rom 样条曲线（通过三次贝塞尔曲线近似）
+        let path = `M ${flippedPoints[0].x},${flippedPoints[0].y}`;
+        
+        for (let i = 1; i < flippedPoints.length; i++) {
+            const prev = flippedPoints[i - 1];
+            const curr = flippedPoints[i];
+            const next = flippedPoints[i + 1] || curr;
+            
+            // 计算控制点（Catmull-Rom 样条曲线的切线）
+            const tension = 0.5; // 张力系数，控制曲线平滑度
+            const cp1x = prev.x + (curr.x - prev.x) * tension;
+            const cp1y = prev.y + (curr.y - prev.y) * tension;
+            const cp2x = curr.x - (next.x - prev.x) * tension;
+            const cp2y = curr.y - (next.y - prev.y) * tension;
+            
+            path += ` C ${cp1x},${cp1y} ${cp2x},${cp2y} ${curr.x},${curr.y}`;
+        }
+        
+        return path;
     };
 
-    const currentPoints = curveData?.[activeChannel] || [{x:0, y:0}, {x:255, y:255}];
+    // 【修复】确保 currentPoints 格式正确，兼容不同的数据格式
+    // 【重要】不自动增补点，严格按照 Gemini 输出的点绘制
+    const getCurrentPoints = (channel: string) => {
+        const channelData = curveData?.[channel];
+        if (!channelData || channelData.length === 0) {
+            // 如果没有数据，返回空数组（不绘制曲线）
+            return [];
+        }
+        
+        // 统一转换为 {x, y} 对象格式
+        let normalizedPoints = channelData.map((p: any) => {
+            if (Array.isArray(p)) {
+                return { x: p[0], y: p[1] };
+            }
+            return p.x !== undefined && p.y !== undefined ? p : null;
+        }).filter((p: any) => p !== null);
+        
+        // 【专业修复】直接使用 Gemini 给出的所有点，不强制添加 (0, 0) 和 (255, 255)
+        // Gemini 输出的点（如 {x: 0, y: 30}）已经是曲线的起点，不需要再添加 (0, 0)
+        // 只有当完全没有数据时，才返回空数组
+        
+        // 按 x 坐标排序（确保点的顺序正确）
+        normalizedPoints.sort((a, b) => a.x - b.x);
+        
+        return normalizedPoints;
+    };
+
+    const currentPoints = getCurrentPoints(activeChannel);
+    
+    // 【新增】获取所有通道的点数据，用于显示所有通道的点值标记
+    const allChannelPoints = {
+        rgb: getCurrentPoints('rgb'),
+        red: getCurrentPoints('red'),
+        green: getCurrentPoints('green'),
+        blue: getCurrentPoints('blue'),
+    };
 
     return (
         <div className="bg-[#0c0c0c] border border-white/10 rounded p-4 mb-4 shadow-lg">
@@ -371,17 +457,91 @@ const AdvancedCurveMonitor = ({ curveData }: { curveData: any }) => {
 
                     {/* Active Curve */}
                     <svg viewBox="0 0 255 255" className="absolute inset-0 w-full h-full p-4 z-10 overflow-visible">
+                        {/* 绘制所有通道的曲线（当前激活通道更明显） */}
+                        {allChannelPoints.rgb.length > 0 && getPath(allChannelPoints.rgb) && (
                         <path 
-                            d={getPath(currentPoints)} 
+                                d={getPath(allChannelPoints.rgb)} 
                             fill="none" 
-                            stroke={channelStroke[activeChannel]} 
-                            strokeWidth="2" 
+                                stroke={channelStroke.rgb} 
+                                strokeWidth={activeChannel === 'rgb' ? "2" : "1"} 
                             className="drop-shadow-[0_0_3px_rgba(0,0,0,1)]"
                             strokeLinecap="round"
-                        />
-                         {/* Points */}
-                         {currentPoints.map((p: any, i: number) => (
-                             <circle key={i} cx={p.x} cy={255 - p.y} r="3" fill="#000" stroke={channelStroke[activeChannel]} strokeWidth="1.5" className="hover:scale-150 transition-transform cursor-pointer" />
+                                opacity={activeChannel === 'rgb' ? 1 : 0.3}
+                            />
+                        )}
+                        {allChannelPoints.red.length > 0 && getPath(allChannelPoints.red) && (
+                            <path 
+                                d={getPath(allChannelPoints.red)} 
+                                fill="none" 
+                                stroke={channelStroke.red} 
+                                strokeWidth={activeChannel === 'red' ? "2" : "1"} 
+                                className="drop-shadow-[0_0_3px_rgba(0,0,0,1)]"
+                                strokeLinecap="round"
+                                opacity={activeChannel === 'red' ? 1 : 0.3}
+                            />
+                        )}
+                        {allChannelPoints.green.length > 0 && getPath(allChannelPoints.green) && (
+                            <path 
+                                d={getPath(allChannelPoints.green)} 
+                                fill="none" 
+                                stroke={channelStroke.green} 
+                                strokeWidth={activeChannel === 'green' ? "2" : "1"} 
+                                className="drop-shadow-[0_0_3px_rgba(0,0,0,1)]"
+                                strokeLinecap="round"
+                                opacity={activeChannel === 'green' ? 1 : 0.3}
+                            />
+                        )}
+                        {allChannelPoints.blue.length > 0 && getPath(allChannelPoints.blue) && (
+                            <path 
+                                d={getPath(allChannelPoints.blue)} 
+                                fill="none" 
+                                stroke={channelStroke.blue} 
+                                strokeWidth={activeChannel === 'blue' ? "2" : "1"} 
+                                className="drop-shadow-[0_0_3px_rgba(0,0,0,1)]"
+                                strokeLinecap="round"
+                                opacity={activeChannel === 'blue' ? 1 : 0.3}
+                            />
+                        )}
+                        {/* 绘制所有通道的点值和标签 */}
+                        {allChannelPoints.rgb.map((p: any, i: number) => (
+                            <g key={`rgb-${i}`} className="group cursor-pointer">
+                                <circle cx={p.x} cy={255 - p.y} r="3" fill="#000" stroke={channelStroke.rgb} strokeWidth="1.5" className="hover:scale-150 transition-transform" />
+                                <g transform={`translate(${p.x}, ${255 - p.y})`}>
+                                    <rect x="8" y="-8" width="50" height="40" fill="rgba(0,0,0,0.85)" rx="2" />
+                                    <text x="11" y="5" fill={channelStroke.rgb} fontSize="7" fontFamily="monospace" fontWeight="bold">RGB</text>
+                                    <text x="11" y="18" fill="white" fontSize="7" fontFamily="monospace">({p.x},{p.y})</text>
+                                </g>
+                            </g>
+                        ))}
+                        {allChannelPoints.red.map((p: any, i: number) => (
+                            <g key={`red-${i}`} className="group cursor-pointer">
+                                <circle cx={p.x} cy={255 - p.y} r="3" fill="#000" stroke={channelStroke.red} strokeWidth="1.5" className="hover:scale-150 transition-transform" />
+                                <g transform={`translate(${p.x}, ${255 - p.y})`}>
+                                    <rect x="8" y="-8" width="45" height="40" fill="rgba(0,0,0,0.85)" rx="2" />
+                                    <text x="11" y="5" fill={channelStroke.red} fontSize="7" fontFamily="monospace" fontWeight="bold">R</text>
+                                    <text x="11" y="18" fill="white" fontSize="7" fontFamily="monospace">({p.x},{p.y})</text>
+                                </g>
+                            </g>
+                        ))}
+                        {allChannelPoints.green.map((p: any, i: number) => (
+                            <g key={`green-${i}`} className="group cursor-pointer">
+                                <circle cx={p.x} cy={255 - p.y} r="3" fill="#000" stroke={channelStroke.green} strokeWidth="1.5" className="hover:scale-150 transition-transform" />
+                                <g transform={`translate(${p.x}, ${255 - p.y})`}>
+                                    <rect x="8" y="-8" width="45" height="40" fill="rgba(0,0,0,0.85)" rx="2" />
+                                    <text x="11" y="5" fill={channelStroke.green} fontSize="7" fontFamily="monospace" fontWeight="bold">G</text>
+                                    <text x="11" y="18" fill="white" fontSize="7" fontFamily="monospace">({p.x},{p.y})</text>
+                                </g>
+                            </g>
+                        ))}
+                        {allChannelPoints.blue.map((p: any, i: number) => (
+                            <g key={`blue-${i}`} className="group cursor-pointer">
+                                <circle cx={p.x} cy={255 - p.y} r="3" fill="#000" stroke={channelStroke.blue} strokeWidth="1.5" className="hover:scale-150 transition-transform" />
+                                <g transform={`translate(${p.x}, ${255 - p.y})`}>
+                                    <rect x="8" y="-8" width="45" height="40" fill="rgba(0,0,0,0.85)" rx="2" />
+                                    <text x="11" y="5" fill={channelStroke.blue} fontSize="7" fontFamily="monospace" fontWeight="bold">B</text>
+                                    <text x="11" y="18" fill="white" fontSize="7" fontFamily="monospace">({p.x},{p.y})</text>
+                                </g>
+                            </g>
                          ))}
                     </svg>
 
@@ -762,25 +922,128 @@ const ColorGradeWheel = ({ hue, saturation, label, onHover, reason }: any) => {
 
 // --- NEW VISUAL WIDGETS ---
 
+// 【重新设计】HSL 调整面板组件
+// 功能：显示 HSL 调整的重点颜色，每个色块显示颜色名称和 H/S/L 调整值
+// 用途：让用户直观看到哪些颜色需要在 LR 混色器中调整，以及调整方向
 const PaletteStrip = ({ hslData }: { hslData: any }) => {
-    // Extract meaningful colors from HSL tweaks (simplified logic)
-    // In a real app, this would come from the image analysis directly
-    const colors = [
-        { c: '#ff7b7b', label: 'Skin' }, // Red/Orange
-        { c: '#ffb347', label: 'Highlight' }, // Orange/Yellow
-        { c: '#00ced1', label: 'Teal' }, // Aqua
-        { c: '#1e90ff', label: 'Shadow' }, // Blue
-        { c: '#1a1a1a', label: 'Black' },
-    ];
+    const { t } = useLanguage();
+    
+    // 【优化】颜色映射配置：颜色键名 -> 显示颜色和中英文标签
+    const colorConfig: Record<string, { color: string; labelEn: string; labelCn: string }> = {
+        red: { color: '#ef4444', labelEn: 'Red', labelCn: '红' },
+        orange: { color: '#f97316', labelEn: 'Orange', labelCn: '橙' },
+        yellow: { color: '#eab308', labelEn: 'Yellow', labelCn: '黄' },
+        green: { color: '#22c55e', labelEn: 'Green', labelCn: '绿' },
+        aqua: { color: '#06b6d4', labelEn: 'Aqua', labelCn: '青' },
+        blue: { color: '#3b82f6', labelEn: 'Blue', labelCn: '蓝' },
+        purple: { color: '#8b5cf6', labelEn: 'Purple', labelCn: '紫' },
+        magenta: { color: '#ec4899', labelEn: 'Magenta', labelCn: '洋红' },
+    };
+    
+    // 【优化】提取有调整的颜色，并按调整幅度排序
+    const extractAdjustedColors = () => {
+        if (!hslData || typeof hslData !== 'object' || Object.keys(hslData).length === 0) {
+            return []; // 如果没有 HSL 数据，返回空数组
+        }
+        
+        const adjustedColors: Array<{
+            key: string;
+            color: string;
+            label: string;
+            h: number;
+            s: number;
+            l: number;
+            desc: string;
+            totalAdjustment: number; // 用于排序
+        }> = [];
+        
+        // 遍历所有颜色，提取有调整的颜色
+        for (const [key, config] of Object.entries(colorConfig)) {
+            const hslItem = hslData[key];
+            if (hslItem) {
+                const h = hslItem.hue || hslItem.h || 0;
+                const s = hslItem.saturation || hslItem.s || 0;
+                const l = hslItem.luminance || hslItem.l || 0;
+                const desc = hslItem.desc || hslItem.note || '';
+                
+                // 只显示有调整的颜色（任一值不为 0）
+                if (h !== 0 || s !== 0 || l !== 0) {
+                    adjustedColors.push({
+                        key,
+                        color: config.color,
+                        label: t('lang') === 'zh' ? config.labelCn : config.labelEn,
+                        h,
+                        s,
+                        l,
+                        desc,
+                        totalAdjustment: Math.abs(h) + Math.abs(s) + Math.abs(l),
+                    });
+                }
+            }
+        }
+        
+        // 按调整幅度降序排序，显示最重要的调整
+        adjustedColors.sort((a, b) => b.totalAdjustment - a.totalAdjustment);
+        
+        return adjustedColors;
+    };
+    
+    const adjustedColors = extractAdjustedColors();
+    
+    // 【优化】格式化调整值显示
+    const formatValue = (val: number) => {
+        if (val === 0) return '';
+        return val > 0 ? `+${val}` : `${val}`;
+    };
+
+    // 如果没有调整数据，显示提示信息
+    if (adjustedColors.length === 0) {
+        return (
+            <div className="flex h-14 w-full rounded overflow-hidden border border-white/10 shadow-lg mb-4 bg-[#0c0c0c] items-center justify-center">
+                <span className="text-[9px] text-white/30 font-mono uppercase tracking-wider">
+                    {t('lang') === 'zh' ? 'HSL 混色器：无显著调整' : 'HSL MIXER: No significant adjustments'}
+                </span>
+            </div>
+        );
+    }
 
     return (
-        <div className="flex h-12 w-full rounded overflow-hidden border border-white/10 shadow-lg mb-4">
-            {colors.map((col, i) => (
-                <div key={i} className="flex-1 relative group" style={{ backgroundColor: col.c }}>
-                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/20 transition-colors"></div>
-                    <div className="absolute bottom-1 left-1 text-[7px] font-mono text-white/80 uppercase opacity-0 group-hover:opacity-100 transition-opacity bg-black/50 px-1 rounded">
-                        {col.label}
+        <div className="flex h-14 w-full rounded overflow-hidden border border-white/10 shadow-lg mb-4">
+            {adjustedColors.slice(0, 5).map((item, i) => (
+                <div 
+                    key={item.key} 
+                    className="flex-1 relative group transition-all duration-300 hover:flex-[1.2]" 
+                    style={{ backgroundColor: item.color }}
+                    title={item.desc || `${item.label}: H${formatValue(item.h)} S${formatValue(item.s)} L${formatValue(item.l)}`}
+                >
+                    {/* 悬停时的遮罩效果 */}
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors duration-300"></div>
+                    
+                    {/* 颜色名称（始终显示） */}
+                    <div className="absolute top-1 left-1 right-1">
+                        <div className="text-[8px] font-bold text-white/90 uppercase tracking-wider drop-shadow-lg">
+                            {item.label}
+                        </div>
                     </div>
+                    
+                    {/* HSL 调整值（始终显示，核心信息） */}
+                    <div className="absolute bottom-1 left-1 right-1 flex flex-col gap-0">
+                        {/* H/S/L 调整值 - 使用醒目的显示方式 */}
+                        <div className="flex justify-between text-[7px] font-mono text-white/90 drop-shadow-lg">
+                            {item.h !== 0 && <span className="bg-black/50 px-0.5 rounded">H{formatValue(item.h)}</span>}
+                            {item.s !== 0 && <span className="bg-black/50 px-0.5 rounded">S{formatValue(item.s)}</span>}
+                            {item.l !== 0 && <span className="bg-black/50 px-0.5 rounded">L{formatValue(item.l)}</span>}
+                        </div>
+                    </div>
+                    
+                    {/* 悬停时显示详细说明 */}
+                    {item.desc && (
+                        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-300 p-1">
+                            <div className="text-[7px] text-white text-center leading-tight bg-black/70 p-1 rounded max-w-full overflow-hidden">
+                                {item.desc.length > 30 ? item.desc.substring(0, 30) + '...' : item.desc}
+                            </div>
+                        </div>
+                    )}
                 </div>
             ))}
         </div>
@@ -814,10 +1077,128 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
   const { t } = useLanguage();
   const [activeLog, setActiveLog] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<string | null>('basic');
+  
+  // 【新增】从 sessionStorage 读取用户图的 EXIF 数据（ISO、光圈、快门等拍摄参数）
+  // EXIF 数据由后端在图片上传时从原图中提取，存储在 sessionStorage 中
+  const [userExif, setUserExif] = useState<{
+    iso?: number;
+    aperture?: string;
+    shutter_speed?: string;
+    focal_length?: string;
+    camera_make?: string;
+    camera_model?: string;
+  }>({});
+  
+  // 组件挂载时读取 EXIF 数据
+  React.useEffect(() => {
+    try {
+      const exifStr = sessionStorage.getItem('user_image_exif');
+      if (exifStr) {
+        const exif = JSON.parse(exifStr);
+        setUserExif(exif);
+        console.log('[LightroomPanel] 读取用户图 EXIF:', exif);
+      }
+    } catch (e) {
+      console.warn('[LightroomPanel] 读取 EXIF 数据失败:', e);
+    }
+  }, []);
 
   const toggleSection = (id: string) => {
       setActiveSection(activeSection === id ? null : id);
   };
+  
+  // 【修复】安全检查：确保 data.basic_panel 及其所有必需字段都存在
+  // 如果数据不完整，使用默认值避免崩溃
+  // 定义默认值对象
+  const defaultBasicPanelValue = {
+    value: 0,
+    range: "+0",
+    reason: "",
+    target_min: undefined,
+    target_max: undefined,
+  };
+  
+  // 构建安全的 basic_panel，确保所有必需字段都有值
+  const safeBasicPanel = {
+    temp: data.basic_panel?.temp || defaultBasicPanelValue,
+    tint: data.basic_panel?.tint || defaultBasicPanelValue,
+    exposure: data.basic_panel?.exposure || defaultBasicPanelValue,
+    contrast: data.basic_panel?.contrast || defaultBasicPanelValue,
+    highlights: data.basic_panel?.highlights || defaultBasicPanelValue,
+    shadows: data.basic_panel?.shadows || defaultBasicPanelValue,
+    whites: data.basic_panel?.whites || defaultBasicPanelValue,
+    blacks: data.basic_panel?.blacks || defaultBasicPanelValue,
+    texture: data.basic_panel?.texture || defaultBasicPanelValue,
+    clarity: data.basic_panel?.clarity || defaultBasicPanelValue,
+    dehaze: data.basic_panel?.dehaze || defaultBasicPanelValue,
+    vibrance: data.basic_panel?.vibrance || defaultBasicPanelValue,
+    saturation: data.basic_panel?.saturation || defaultBasicPanelValue,
+    // 保留实际数据，覆盖默认值（如果存在）
+    ...(data.basic_panel || {}),
+  };
+  
+  // 构建安全的 data 对象，确保所有字段都有默认值
+  const safeData = {
+    ...data,
+    basic_panel: safeBasicPanel,
+    // 【修复】为其他字段也提供默认值，避免类似的 undefined 错误
+    histogram: data.histogram || {
+      r: [], g: [], b: [], l: [],
+      avg_l: 0, shadows: 0, midtones: 0, highlights: 0,
+    },
+    curve: data.curve || {
+      rgb: [],
+      red: [],
+      green: [],
+      blue: [],
+      reason: "",
+      analysis: "",
+    },
+    hsl: data.hsl || {},
+    split_toning: data.split_toning || {
+      highlights: { hue: 0, saturation: 0, reason: "" },
+      midtones: { hue: 0, saturation: 0, reason: "" },
+      shadows: { hue: 0, saturation: 0, reason: "" },
+      balance: { value: 0, reason: "" },
+    },
+  };
+  
+  // 【调试日志】记录数据检查（包含 simulated_histogram 数据）
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[LightroomPanel] 🔍 数据检查:', {
+      hasData: !!data,
+      hasBasicPanel: !!data.basic_panel,
+      basicPanelKeys: data.basic_panel ? Object.keys(data.basic_panel) : [],
+      safeBasicPanelKeys: Object.keys(safeBasicPanel),
+      hasTemp: !!data.basic_panel?.temp,
+      tempValue: data.basic_panel?.temp?.value,
+      safeTempValue: safeBasicPanel.temp.value,
+      missingFields: ['temp', 'tint', 'exposure', 'contrast', 'highlights', 'shadows', 'whites', 'blacks', 'texture', 'clarity', 'dehaze', 'vibrance', 'saturation'].filter(
+        field => !data.basic_panel?.[field]
+      ),
+      // 【新增】检查 simulated_histogram 数据
+      hasSimulatedHistogram: !!data.simulated_histogram,
+      simulatedHistogramKeys: data.simulated_histogram ? Object.keys(data.simulated_histogram) : [],
+      hasHistogramData: !!data.simulated_histogram?.histogram_data,
+      histogramDataKeys: data.simulated_histogram?.histogram_data ? Object.keys(data.simulated_histogram.histogram_data) : [],
+      histogramDataLengths: data.simulated_histogram?.histogram_data ? {
+        r: data.simulated_histogram.histogram_data.r?.length || 0,
+        g: data.simulated_histogram.histogram_data.g?.length || 0,
+        b: data.simulated_histogram.histogram_data.b?.length || 0,
+        l: data.simulated_histogram.histogram_data.l?.length || 0,
+      } : null,
+      hasDescription: !!data.simulated_histogram?.description,
+      descriptionPreview: data.simulated_histogram?.description?.substring(0, 50) || 'None',
+      // 【新增】检查 fallback histogram 数据
+      hasFallbackHistogram: !!data.histogram,
+      fallbackHistogramLengths: data.histogram ? {
+        r: data.histogram.r?.length || 0,
+        g: data.histogram.g?.length || 0,
+        b: data.histogram.b?.length || 0,
+        l: data.histogram.l?.length || 0,
+      } : null,
+    });
+  }
 
   return (
     <>
@@ -839,74 +1220,121 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
                 </div>
 
                 {/* A. TACTICAL BRIEF */}
+                {/* 【修复】使用 Gemini 输出的 simulated_histogram.description，如果没有则使用默认值 */}
+                {/* 从 data.simulated_histogram.description 中提取直方图描述，用于显示战术简报 */}
                 <TacticalBrief 
                     title={t('modal.lr.brief')} 
-                    content="Match reference image 'Cyberpunk 2077' aesthetic. Focus on crushing blacks while retaining neon highlight integrity. Shift skin tones towards teal-orange spectrum. Increase local contrast for grittiness." 
+                    content={data.simulated_histogram?.description || "根据用户图与参考图的差距，以下调整最为关键"} 
                 />
 
                 {/* B. WHITE BALANCE STRATEGY */}
+                {/* 【修复】使用 Gemini 输出的白平衡数据（从 color_science_scheme.white_balance 中提取），如果没有则使用默认值 */}
+                {/* 白平衡数据从色彩分级（color_scheme）中获取，显示在关键任务点下方 */}
+                {data.white_balance && (
                 <div className="mb-6">
                      <h5 className="text-[9px] text-emerald-500 uppercase font-bold border-l-2 border-emerald-500 pl-2 mb-3">{t('modal.color.wb_target')}</h5>
                      <TargetLockSlider 
                         label={t('modal.common.temp')} 
-                        value={5200} 
+                        value={data.white_balance.temp?.value || 5500} 
                         unit="K" 
                         min={2000} 
                         max={10000} 
-                        targetMin={5800} 
-                        targetMax={6400}
-                        reason="Warm up midtones to match golden hour reference."
+                        targetMin={data.white_balance.temp?.target_min || (data.white_balance.temp?.value ? data.white_balance.temp.value - 200 : 5300)} 
+                        targetMax={data.white_balance.temp?.target_max || (data.white_balance.temp?.value ? data.white_balance.temp.value + 200 : 5700)}
+                        reason={data.white_balance.temp?.reason || t('modal.lr.wb_temp_default')}
                         onHover={setActiveLog} 
                     />
                     <TargetLockSlider 
                         label={t('modal.common.tint')} 
-                        value={10} 
+                        value={data.white_balance.tint?.value || 0} 
                         min={-150} 
                         max={150} 
-                        targetMin={15} 
-                        targetMax={25}
-                        reason="Slight magenta shift to counteract green urban lighting."
+                        targetMin={data.white_balance.tint?.target_min || (data.white_balance.tint?.value ? data.white_balance.tint.value - 5 : -5)} 
+                        targetMax={data.white_balance.tint?.target_max || (data.white_balance.tint?.value ? data.white_balance.tint.value + 5 : 5)}
+                        reason={data.white_balance.tint?.reason || t('modal.lr.wb_tint_default')}
                         onHover={setActiveLog} 
                     />
                 </div>
+                )}
 
                 {/* C. TRINITY GRADING */}
+                {/* 【修复】使用 Gemini 输出的色彩分级数据，如果没有则使用默认值 */}
+                {data.color_grading && (
                 <div className="mb-6">
                     <h5 className="text-[9px] text-emerald-500 uppercase font-bold border-l-2 border-emerald-500 pl-2 mb-3">{t('modal.color.grading_vectors')}</h5>
                     <div className="grid grid-cols-3 gap-2 mb-4">
-                         <ColorGradeWheel hue={210} saturation={20} label={t('modal.common.shadows')} onHover={setActiveLog} reason="Cool shadows for depth." />
-                         <ColorGradeWheel hue={45} saturation={15} label={t('modal.common.midtones')} onHover={setActiveLog} reason="Golden skin tones." />
-                         <ColorGradeWheel hue={180} saturation={5} label={t('modal.common.highlights')} onHover={setActiveLog} reason="Clean whites." />
+                         <ColorGradeWheel 
+                            hue={data.color_grading.shadows?.hue || 210} 
+                            saturation={data.color_grading.shadows?.saturation || 20} 
+                            label={t('modal.common.shadows')} 
+                            onHover={setActiveLog} 
+                            reason={data.color_grading.shadows?.reason || t('modal.lr.shadows_default')} 
+                         />
+                         <ColorGradeWheel 
+                            hue={data.color_grading.midtones?.hue || 45} 
+                            saturation={data.color_grading.midtones?.saturation || 15} 
+                            label={t('modal.common.midtones')} 
+                            onHover={setActiveLog} 
+                            reason={data.color_grading.midtones?.reason || t('modal.lr.midtones_default')} 
+                         />
+                         <ColorGradeWheel 
+                            hue={data.color_grading.highlights?.hue || 180} 
+                            saturation={data.color_grading.highlights?.saturation || 5} 
+                            label={t('modal.common.highlights')} 
+                            onHover={setActiveLog} 
+                            reason={data.color_grading.highlights?.reason || t('modal.lr.highlights_default')} 
+                         />
                     </div>
                     <TargetLockSlider 
                         label={t('modal.color.balance')} 
-                        value={-10} 
+                        value={data.color_grading.balance || -10} 
                         min={-100} 
                         max={100} 
-                        targetMin={-15} 
-                        targetMax={-5} 
-                        reason="Bias towards shadows."
+                        targetMin={(data.color_grading.balance || -10) - 5} 
+                        targetMax={(data.color_grading.balance || -10) + 5} 
+                        reason={t('modal.lr.balance_default')}
                         onHover={setActiveLog}
                     />
                 </div>
+                )}
 
                  {/* D. SPECTRUM MATRIX (12 CHANNELS) */}
+                 {/* 【修复】使用 Gemini 输出的 HSL 数据，如果没有则使用默认值 */}
+                 {/* 从 data.hsl 中提取 HSL 数据，转换为 SpectrumMatrix 需要的格式 */}
                  <div>
                     <h5 className="text-[9px] text-emerald-500 uppercase font-bold border-l-2 border-emerald-500 pl-2 mb-3">{t('modal.color.spectrum')}</h5>
-                    <SpectrumMatrix channels={[
-                        { name: t('modal.color.reds'), h: 0, s: 10, l: -5, color: '#ff0000' },
-                        { name: t('modal.color.orange') || 'Orange', h: -5, s: 20, l: 0, color: '#ffa500' },
-                        { name: t('modal.color.yellows'), h: -10, s: -5, l: 5, color: '#ffff00' },
-                        { name: t('modal.color.yellow_green') || 'Yellow-Green', h: 15, s: -20, l: 0, color: '#9acd32' },
-                        { name: t('modal.color.greens'), h: 20, s: -40, l: -10, color: '#008000' },
-                        { name: t('modal.color.green_cyan') || 'Green-Cyan', h: 0, s: 0, l: 0, color: '#00a86b' },
-                        { name: t('modal.color.cyans'), h: 0, s: 15, l: 5, color: '#00ffff' },
-                        { name: t('modal.color.cyan_blue') || 'Cyan-Blue', h: -5, s: 10, l: 0, color: '#007fff' },
-                        { name: t('modal.color.blues'), h: -10, s: 25, l: -5, color: '#0000ff' },
-                        { name: t('modal.color.blue_purple') || 'Blue-Purple', h: 5, s: 0, l: 0, color: '#8a2be2' },
-                        { name: t('modal.color.magentas'), h: 10, s: -10, l: 0, color: '#800080' },
-                        { name: t('modal.color.purple_magenta') || 'Purple-Magenta', h: 0, s: 5, l: 0, color: '#c71585' },
-                    ]} />
+                    <SpectrumMatrix channels={(() => {
+                      // 【修复】从 data.hsl 中提取 HSL 数据，转换为 SpectrumMatrix 需要的格式
+                      // data.hsl 结构：{ red: { hue, saturation, luminance }, orange: {...}, ... }
+                      const hsl = data.hsl || {};
+                      // 颜色映射表：将后端颜色键映射到前端显示名称和颜色值
+                      const colorMap = [
+                        { key: 'red', name: t('modal.color.reds'), color: '#ff0000' },
+                        { key: 'orange', name: t('modal.color.orange') || 'Orange', color: '#ffa500' },
+                        { key: 'yellow', name: t('modal.color.yellows'), color: '#ffff00' },
+                        { key: 'yellow_green', name: t('modal.color.yellow_green') || 'Yellow-Green', color: '#9acd32' },
+                        { key: 'green', name: t('modal.color.greens'), color: '#008000' },
+                        { key: 'green_cyan', name: t('modal.color.green_cyan') || 'Green-Cyan', color: '#00a86b' },
+                        { key: 'cyan', name: t('modal.color.cyans'), color: '#00ffff' },
+                        { key: 'cyan_blue', name: t('modal.color.cyan_blue') || 'Cyan-Blue', color: '#007fff' },
+                        { key: 'blue', name: t('modal.color.blues'), color: '#0000ff' },
+                        { key: 'blue_purple', name: t('modal.color.blue_purple') || 'Blue-Purple', color: '#8a2be2' },
+                        { key: 'magenta', name: t('modal.color.magentas'), color: '#800080' },
+                        { key: 'purple_magenta', name: t('modal.color.purple_magenta') || 'Purple-Magenta', color: '#c71585' },
+                      ];
+                      
+                      // 将后端 HSL 数据转换为前端 SpectrumMatrix 需要的格式
+                      return colorMap.map(({ key, name, color }) => {
+                        const hslData = hsl[key] || {};
+                        return {
+                          name,
+                          h: hslData.hue || hslData.h || 0,  // 色相调整值
+                          s: hslData.saturation || hslData.s || 0,  // 饱和度调整值
+                          l: hslData.luminance || hslData.l || 0,  // 明度调整值
+                          color,
+                        };
+                      });
+                    })()} />
                  </div>
             </div>
 
@@ -924,16 +1352,29 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
                     </div>
                     <span className="text-[9px] text-white/20 font-mono pl-3.5">{t('modal.lr.rgb_parade')}</span>
                 </div>
+                {/* 【修复】使用从图片 EXIF 中提取的 ISO 和光圈值，WB 使用 Gemini 推荐的白平衡值 */}
                 <div className="flex gap-4 text-[9px] font-mono text-white/40 bg-white/5 px-2 py-1 rounded border border-white/10 backdrop-blur-sm shadow-lg">
-                    <span className="flex items-center gap-1"><Sun className="w-2.5 h-2.5" /> ISO 800</span>
-                    <span className="flex items-center gap-1"><Aperture className="w-2.5 h-2.5" /> f/2.8</span>
-                    <span className="text-blue-400 border-l border-white/10 pl-4 ml-2">WB {data.basic_panel.temp.value}K</span>
+                    <span className="flex items-center gap-1">
+                      <Sun className="w-2.5 h-2.5" /> 
+                      {userExif.iso ? `ISO ${userExif.iso}` : 'ISO --'}
+                    </span>
+                    <span className="flex items-center gap-1">
+                      <Aperture className="w-2.5 h-2.5" /> 
+                      {userExif.aperture || '--'}
+                    </span>
+                    <span className="text-blue-400 border-l border-white/10 pl-4 ml-2">
+                      WB {safeData.basic_panel.temp.value}K
+                    </span>
                 </div>
             </div>
             
             {/* NEW PRO HISTOGRAM CONTAINER */}
+            {/* 【修复】信号监视器：使用 Gemini 输出的 simulated_histogram 数据渲染直方图 */}
             <div className="mb-4 relative group transition-all duration-500" 
-                 onMouseEnter={() => setActiveLog("HISTOGRAM: Visualizing tonal distribution across channels.")} 
+                 onMouseEnter={() => {
+                   const desc = data.simulated_histogram?.description || t('modal.lr.signal') + ": " + (t('vad.hist_desc') || "Visualizing tonal distribution across channels.");
+                   setActiveLog(desc);
+                 }} 
                  onMouseLeave={() => setActiveLog(null)}>
                 
                 {/* Holographic Glow Behind */}
@@ -943,12 +1384,38 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
                      {/* Grid Background */}
                     <div className="absolute inset-0 opacity-10 bg-[linear-gradient(0deg,transparent_24%,rgba(255,255,255,.3)_25%,rgba(255,255,255,.3)_26%,transparent_27%,transparent_74%,rgba(255,255,255,.3)_75%,rgba(255,255,255,.3)_76%,transparent_77%,transparent),linear-gradient(90deg,transparent_24%,rgba(255,255,255,.3)_25%,rgba(255,255,255,.3)_26%,transparent_27%,transparent_74%,rgba(255,255,255,.3)_75%,rgba(255,255,255,.3)_76%,transparent_77%,transparent)] bg-[length:30px_30px]"></div>
                     
-                    <ProfessionalHistogram 
-                        r={data.histogram.r} 
-                        g={data.histogram.g} 
-                        b={data.histogram.b} 
-                        l={data.histogram.l} 
-                    />
+                    {/* 【修复】优先使用 simulated_histogram.histogram_data，如果没有则使用 fallback histogram */}
+                    {(() => {
+                      // 提取直方图数据（优先使用 simulated_histogram，否则使用 fallback）
+                      const histogramR = data.simulated_histogram?.histogram_data?.r || safeData.histogram.r || [];
+                      const histogramG = data.simulated_histogram?.histogram_data?.g || safeData.histogram.g || [];
+                      const histogramB = data.simulated_histogram?.histogram_data?.b || safeData.histogram.b || [];
+                      const histogramL = data.simulated_histogram?.histogram_data?.l || safeData.histogram.l || [];
+                      
+                      // 【调试日志】记录传递给 ProfessionalHistogram 的数据
+                      if (process.env.NODE_ENV === 'development') {
+                        console.log('[LightroomPanel] 📊 传递给 ProfessionalHistogram 的数据:', {
+                          source: data.simulated_histogram?.histogram_data ? 'simulated_histogram' : 'fallback_histogram',
+                          rLength: histogramR.length,
+                          gLength: histogramG.length,
+                          bLength: histogramB.length,
+                          lLength: histogramL.length,
+                          rSample: histogramR.slice(0, 5),
+                          gSample: histogramG.slice(0, 5),
+                          bSample: histogramB.slice(0, 5),
+                          lSample: histogramL.slice(0, 5),
+                        });
+                      }
+                      
+                      return (
+                        <ProfessionalHistogram 
+                          r={histogramR} 
+                          g={histogramG} 
+                          b={histogramB} 
+                          l={histogramL} 
+                        />
+                      );
+                    })()}
                     {/* Corner Brackets inside Histogram */}
                     <div className="absolute bottom-1 right-1 w-2 h-2 border-b border-r border-white/30"></div>
                     <div className="absolute bottom-1 left-1 w-2 h-2 border-b border-l border-white/30"></div>
@@ -956,21 +1423,68 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
             </div>
 
             {/* PALETTE STRIP (Visual Context) */}
-            <div className="mb-2 relative z-20" onMouseEnter={() => setActiveLog("COLOR PALETTE: Extracted key dominant tones.")} onMouseLeave={() => setActiveLog(null)}>
-                 <PaletteStrip hslData={data.hsl} />
+            {/* 【修复】使用 Gemini 输出的 palette_strip_description，如果没有则使用默认值 */}
+            <div className="mb-2 relative z-20" 
+                 onMouseEnter={() => {
+                   const desc = data.simulated_histogram?.palette_strip_description || "COLOR PALETTE: Extracted key dominant tones.";
+                   setActiveLog(desc);
+                 }} 
+                 onMouseLeave={() => setActiveLog(null)}>
+                 <PaletteStrip hslData={safeData.hsl} />
             </div>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-4 gap-px border border-white/5 rounded bg-white/5 overflow-hidden backdrop-blur-md">
+            {/* 【修复】使用 Gemini 输出的 stats_grid_description，如果没有则使用默认值 */}
+            {/* 【优化】添加可视化进度条，让数值更直观 */}
+            <div className="grid grid-cols-4 gap-px border border-white/5 rounded bg-white/5 overflow-hidden backdrop-blur-md"
+                 onMouseEnter={() => {
+                   const desc = data.simulated_histogram?.stats_grid_description || "STATS GRID: Histogram statistics showing shadows, exposure, and highlights distribution.";
+                   setActiveLog(desc);
+                 }}
+                 onMouseLeave={() => setActiveLog(null)}>
                  {[
-                     { label: t('modal.common.blacks'), val: data.histogram.shadows },
-                     { label: t('modal.common.exposure'), val: data.histogram.avg_l },
-                     { label: t('modal.common.whites'), val: data.histogram.highlights },
-                     { label: "Clipping", val: "NONE", color: "text-emerald-500" }
+                     { 
+                       label: t('modal.common.blacks'), 
+                       val: safeData.histogram.shadows,
+                       maxVal: 100, // 阴影区域占比，最大 100%
+                       color: "bg-gray-800", // 暗色调
+                       barColor: "bg-gray-600"
+                     },
+                     { 
+                       label: t('modal.common.exposure'), 
+                       val: safeData.histogram.avg_l,
+                       maxVal: 255, // 平均亮度，最大 255
+                       color: "bg-blue-900/30",
+                       barColor: "bg-blue-500"
+                     },
+                     { 
+                       label: t('modal.common.whites'), 
+                       val: safeData.histogram.highlights,
+                       maxVal: 100, // 高光区域占比，最大 100%
+                       color: "bg-gray-700",
+                       barColor: "bg-gray-400"
+                     },
+                     { 
+                       label: "Clipping", 
+                       val: "NONE", 
+                       color: "text-emerald-500",
+                       isClipping: true // 特殊处理，不显示进度条
+                     }
                  ].map((stat, i) => (
                      <div key={i} className="p-1.5 text-center bg-[#0c0c0c] hover:bg-[#151515] transition-colors relative overflow-hidden group">
                          <div className="absolute top-0 left-0 w-full h-[1px] bg-gradient-to-r from-transparent via-white/10 to-transparent opacity-0 group-hover:opacity-100"></div>
                          <div className="text-[7px] text-white/30 uppercase tracking-wider mb-0.5 font-bold">{stat.label}</div>
+                         
+                         {/* 【优化】添加可视化进度条（仅对数值类型显示） */}
+                         {!stat.isClipping && typeof stat.val === 'number' && (
+                             <div className="relative w-full h-1 bg-black/50 rounded-full mb-1 overflow-hidden">
+                                 <div 
+                                     className={cn("h-full transition-all duration-500", stat.barColor || "bg-white/40")}
+                                     style={{ width: `${Math.min(100, (stat.val / stat.maxVal) * 100)}%` }}
+                                 ></div>
+                             </div>
+                         )}
+                         
                          <div className={cn("text-[10px] font-mono", stat.color || "text-white")}>{stat.val}</div>
                      </div>
                  ))}
@@ -979,113 +1493,10 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
 
         {/* 2. DEVELOP MODULES */}
         <div className="flex-1 relative z-10">
-            {/* BASIC */}
-            <PanelStrip title={t('modal.lr.basic')} icon={Sliders} isActive={activeSection === 'basic'} onToggle={() => toggleSection('basic')}>
-                <div className="space-y-6">
-                     {/* ZONE TOPOLOGY MAP */}
-                    <ZoneTopologyMap activeZone={activeLog?.split(':')[0] || null} />
-
-                    {/* WB Sub-section */}
-                    <div className="bg-white/5 rounded p-3 border border-white/5 mb-4">
-                        <div className="flex items-center justify-between mb-3">
-                            <span className="text-[9px] font-bold text-white/40 uppercase">{t('modal.color.wb')}</span>
-                            <RotateCcw className="w-3 h-3 text-white/20 hover:text-white cursor-pointer" />
-                        </div>
-                        {/* Visual WB Gradient Background for sliders? Maybe overkill, keeping clean. */}
-                        <CyberSlider label={t('modal.common.temp')} value={data.basic_panel.temp.value} unit="K" min={2000} max={10000} range={data.basic_panel.temp.range} targetMin={data.basic_panel.temp.target_min} targetMax={data.basic_panel.temp.target_max} reason={data.basic_panel.temp.reason} onHover={setActiveLog} />
-                        <CyberSlider label={t('modal.common.tint')} value={data.basic_panel.tint.value} min={-150} max={150} range={data.basic_panel.tint.range} targetMin={data.basic_panel.tint.target_min} targetMax={data.basic_panel.tint.target_max} reason={data.basic_panel.tint.reason} onHover={setActiveLog} />
-                    </div>
-
-                    {/* 1. TONE & LIGHTING (Enhanced) */}
-                    <ControlGroup 
-                        title={t('modal.lr.exp_dr')} 
-                        visualizer={<LumaSphere exposure={data.basic_panel.exposure.value} contrast={data.basic_panel.contrast.value} />}
-                    >
-                        {/* ZONE SYSTEM VISUALIZER */}
-                        <ZoneSystemStrip exposure={data.basic_panel.exposure.value} />
-
-                        <CyberSlider 
-                            label={t('modal.common.exposure')} 
-                            value={data.basic_panel.exposure.value} 
-                            min={-5} max={5} 
-                            range={data.basic_panel.exposure.range} 
-                            targetMin={data.basic_panel.exposure.target_min} targetMax={data.basic_panel.exposure.target_max}
-                            reason={data.basic_panel.exposure.reason} 
-                            onHover={setActiveLog} 
-                        />
-                        <CyberSlider 
-                            label={t('modal.common.contrast')} 
-                            value={data.basic_panel.contrast.value} 
-                            range={data.basic_panel.contrast.range} 
-                            targetMin={data.basic_panel.contrast.target_min} targetMax={data.basic_panel.contrast.target_max}
-                            reason={data.basic_panel.contrast.reason} 
-                            onHover={setActiveLog} 
-                        />
-                        
-                        <div className="grid grid-cols-2 gap-x-6 gap-y-1 pt-2 border-t border-white/5 mt-2">
-                            <CyberSlider label={t('modal.common.highlights')} value={data.basic_panel.highlights.value} range={data.basic_panel.highlights.range} targetMin={data.basic_panel.highlights.target_min} targetMax={data.basic_panel.highlights.target_max} reason={data.basic_panel.highlights.reason} onHover={setActiveLog} />
-                            <CyberSlider label={t('modal.common.shadows')} value={data.basic_panel.shadows.value} range={data.basic_panel.shadows.range} targetMin={data.basic_panel.shadows.target_min} targetMax={data.basic_panel.shadows.target_max} reason={data.basic_panel.shadows.reason} onHover={setActiveLog} />
-                            <CyberSlider label={t('modal.common.whites')} value={data.basic_panel.whites.value} range={data.basic_panel.whites.range} targetMin={data.basic_panel.whites.target_min} targetMax={data.basic_panel.whites.target_max} reason={data.basic_panel.whites.reason} onHover={setActiveLog} />
-                            <CyberSlider label={t('modal.common.blacks')} value={data.basic_panel.blacks.value} range={data.basic_panel.blacks.range} targetMin={data.basic_panel.blacks.target_min} targetMax={data.basic_panel.blacks.target_max} reason={data.basic_panel.blacks.reason} onHover={setActiveLog} />
-                        </div>
-                    </ControlGroup>
-
-                    {/* 2. PRESENCE & ATMOSPHERE (Enhanced) */}
-                    <ControlGroup 
-                        title={t('modal.lr.presence')}
-                        visualizer={<DetailMesh texture={data.basic_panel.texture.value} clarity={data.basic_panel.clarity.value} />}
-                    >
-                        <CyberSlider 
-                            label={t('modal.common.texture')} 
-                            value={data.basic_panel.texture.value} 
-                            range={data.basic_panel.texture.range} 
-                            targetMin={data.basic_panel.texture.target_min} targetMax={data.basic_panel.texture.target_max}
-                            reason={data.basic_panel.texture.reason} 
-                            onHover={setActiveLog} 
-                        />
-                        <CyberSlider 
-                            label={t('modal.common.clarity')} 
-                            value={data.basic_panel.clarity.value} 
-                            range={data.basic_panel.clarity.range} 
-                            targetMin={data.basic_panel.clarity.target_min} targetMax={data.basic_panel.clarity.target_max}
-                            reason={data.basic_panel.clarity.reason} 
-                            onHover={setActiveLog} 
-                        />
-                        <CyberSlider 
-                            label={t('modal.common.dehaze')} 
-                            value={data.basic_panel.dehaze.value} 
-                            range={data.basic_panel.dehaze.range} 
-                            targetMin={data.basic_panel.dehaze.target_min} targetMax={data.basic_panel.dehaze.target_max}
-                            reason={data.basic_panel.dehaze.reason} 
-                            onHover={setActiveLog} 
-                        />
-                        <div className="pt-2 mt-2 border-t border-white/5">
-                             <CyberSlider label={t('modal.common.vibrance')} value={data.basic_panel.vibrance.value} range={data.basic_panel.vibrance.range} targetMin={data.basic_panel.vibrance.target_min} targetMax={data.basic_panel.vibrance.target_max} reason={data.basic_panel.vibrance.reason} onHover={setActiveLog} />
-                             <CyberSlider label={t('modal.common.saturation')} value={data.basic_panel.saturation.value} range={data.basic_panel.saturation.range} targetMin={data.basic_panel.saturation.target_min} targetMax={data.basic_panel.saturation.target_max} reason={data.basic_panel.saturation.reason} onHover={setActiveLog} />
-                        </div>
-                    </ControlGroup>
-
-                    <ControlGroup
-                        title={t('modal.lr.grading')}
-                        visualizer={<ColorPrism sat={data.basic_panel.saturation.value} vib={data.basic_panel.vibrance.value} />}
-                    >
-                        {/* Moved Sat/Vib to Presence group as per user 'Texture & Clarity' grouping request, 
-                            but keeping this group for separate color grading if needed, 
-                            or we can merge. Let's keep it for advanced color specific tweaks if data allows. 
-                            For now, I'll hide it to avoid duplication since I moved Sat/Vib up. 
-                            Actually, let's just keep it but maybe for HSL specific things later.
-                            User asked for 'Texture, Clarity, Dehaze, Saturation, Vibrance' in one group.
-                        */}
-                        <div className="text-[9px] text-white/30 italic p-2 text-center">
-                            Global Color adjustments merged into Presence & Atmosphere matrix.
-                        </div>
-                    </ControlGroup>
-                </div>
-            </PanelStrip>
 
             {/* CURVE (REPLACED WITH ADVANCED MONITOR) */}
             <PanelStrip title={t('modal.lr.curve')} icon={Activity} isActive={activeSection === 'curve'} onToggle={() => toggleSection('curve')}>
-                <AdvancedCurveMonitor curveData={data.curve} />
+                <AdvancedCurveMonitor curveData={safeData.curve} />
             </PanelStrip>
 
             {/* COMPOSITION ANALYSIS (NEW) */}
@@ -1112,22 +1523,22 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
                      <div className="absolute top-1/2 left-1/4 right-1/4 h-px bg-gradient-to-r from-transparent via-white/10 to-transparent"></div>
                      
                      <ColorGradeWheel 
-                        hue={data.split_toning.shadows.hue} 
-                        saturation={data.split_toning.shadows.saturation} 
+                        hue={safeData.split_toning.shadows.hue} 
+                        saturation={safeData.split_toning.shadows.saturation} 
                         label={t('modal.common.shadows')} 
-                        reason={data.split_toning.shadows.reason}
+                        reason={safeData.split_toning.shadows.reason}
                         onHover={setActiveLog} 
                      />
                      <ColorGradeWheel 
-                        hue={data.split_toning.highlights.hue} 
-                        saturation={data.split_toning.highlights.saturation} 
+                        hue={safeData.split_toning.highlights.hue} 
+                        saturation={safeData.split_toning.highlights.saturation} 
                         label={t('modal.common.highlights')} 
-                        reason={data.split_toning.highlights.reason}
+                        reason={safeData.split_toning.highlights.reason}
                         onHover={setActiveLog} 
                      />
                  </div>
                  <div className="bg-black/20 p-4 rounded border border-white/5 mx-2">
-                    <CyberSlider label={t('modal.color.balance')} value={data.split_toning.balance.value} reason={data.split_toning.balance.reason} onHover={setActiveLog} />
+                    <CyberSlider label={t('modal.color.balance')} value={safeData.split_toning.balance.value} reason={safeData.split_toning.balance.reason} onHover={setActiveLog} />
                  </div>
             </PanelStrip>
 
@@ -1137,26 +1548,28 @@ export const LightroomPanel: React.FC<LightroomPanelProps> = ({ data }) => {
         <div className="h-24 w-full shrink-0"></div>
 
         {/* FOOTER TERMINAL */}
+        {/* 【优化】SYS.LOG 区域：支持多行显示，长文本自动换行，最大高度限制 */}
         <div className="sticky bottom-0 left-0 right-0 z-30 bg-[#0a0a0a]/95 backdrop-blur border-t border-white/10 p-1 shadow-[0_-10px_40px_rgba(0,0,0,1)]">
              {/* Progress / Beat Line */}
              <div className="absolute top-0 left-0 right-0 h-px bg-gradient-to-r from-transparent via-blue-500 to-transparent opacity-50"></div>
              <div className="absolute -top-[1px] left-[20%] w-10 h-px bg-blue-400 shadow-[0_0_10px_#3b82f6] animate-[pulse_2s_infinite]"></div>
 
-             <div className="flex items-center gap-3 px-2 py-1">
-                <div className="p-1 bg-blue-500/10 rounded border border-blue-500/20 shrink-0 relative overflow-hidden">
+             <div className="flex items-start gap-3 px-2 py-1">
+                <div className="p-1 bg-blue-500/10 rounded border border-blue-500/20 shrink-0 relative overflow-hidden mt-0.5">
                     <div className="absolute inset-0 bg-blue-500/20 animate-ping opacity-20"></div>
                     <Terminal className="w-3 h-3 text-blue-400" />
                 </div>
-                <div className="flex-1 font-mono text-[9px] leading-relaxed overflow-hidden whitespace-nowrap text-ellipsis flex items-center">
+                {/* 【修复】移除 whitespace-nowrap 和 text-ellipsis，支持多行显示 */}
+                <div className="flex-1 font-mono text-[9px] leading-relaxed overflow-hidden max-h-16 overflow-y-auto">
                     <span className="text-blue-500/50 mr-2 font-bold">&gt; SYS.LOG:</span>
                     {activeLog ? (
-                        <span className="text-blue-300 animate-pulse tracking-wide">{activeLog}</span>
+                        <span className="text-blue-300 tracking-wide break-words">{activeLog}</span>
                     ) : (
                         <span className="text-white/20 italic tracking-widest opacity-50">AWAITING INPUT_</span>
                     )}
                 </div>
                 {/* Fake Graph Mini */}
-                <div className="hidden sm:flex gap-px items-end h-3 opacity-30">
+                <div className="hidden sm:flex gap-px items-end h-3 opacity-30 shrink-0">
                      {[...Array(10)].map((_, i) => (
                          <div key={i} className="w-1 bg-blue-500" style={{ height: `${Math.random() * 100}%` }}></div>
                      ))}

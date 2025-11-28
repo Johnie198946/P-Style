@@ -731,6 +731,13 @@ class AnalysisFormatter:
             try:
                 lightroom_result = self._format_lightroom(raw_data)
                 logger.info(f"【format_part2】_format_lightroom 成功: has structured = {bool(lightroom_result.get('structured') if isinstance(lightroom_result, dict) else False)}, panels count = {len(lightroom_result.get('structured', {}).get('panels', [])) if isinstance(lightroom_result, dict) and isinstance(lightroom_result.get('structured'), dict) else 0}")
+                # 【新增】检查 simulatedHistogram 是否成功提取
+                lightroom_structured = lightroom_result.get('structured', {}) if isinstance(lightroom_result, dict) else {}
+                has_simulated_histogram = bool(lightroom_structured.get('simulatedHistogram'))
+                logger.info(f"【format_part2】_format_lightroom simulatedHistogram 检查: 存在={has_simulated_histogram}")
+                if has_simulated_histogram:
+                    sim_hist = lightroom_structured.get('simulatedHistogram')
+                    logger.info(f"【format_part2】simulatedHistogram 内容: description={bool(sim_hist.get('description'))}, rgb_values={bool(sim_hist.get('rgb_values'))}, histogram_data存在={sim_hist.get('histogram_data') is not None}")
             except Exception as e:
                 logger.error(f"_format_lightroom 失败: {e}", exc_info=True)
                 # 返回空结构，避免整个流程失败
@@ -742,6 +749,7 @@ class AnalysisFormatter:
                         "rgbCurves": {},
                         "colorGrading": {},
                         "localAdjustments": [],
+                        "simulatedHistogram": None,  # 【修复】添加 simulatedHistogram 字段，即使为 None
                     },
                 }
                 logger.warning(f"【format_part2】_format_lightroom 使用空结构兜底")
@@ -762,10 +770,20 @@ class AnalysisFormatter:
             
             try:
                 color_result = self._format_color_part2(raw_data)
-                logger.info(f"【format_part2】_format_color_part2 成功: has structured = {bool(color_result.get('structured') if isinstance(color_result, dict) else False)}, structured keys = {list(color_result.get('structured', {}).keys()) if isinstance(color_result, dict) and isinstance(color_result.get('structured'), dict) else []}")
+                color_structured = color_result.get('structured', {}) if isinstance(color_result, dict) else {}
+                logger.info(f"【format_part2】_format_color_part2 成功: has structured = {bool(color_structured)}, structured keys = {list(color_structured.keys()) if isinstance(color_structured, dict) else []}")
+                # 【关键】检查三个新字段是否成功提取
+                logger.info(f"【format_part2】_format_color_part2 phase_1_extraction 字段: master_style_recap = {bool(color_structured.get('master_style_recap'))}, style_summary_recap = {bool(color_structured.get('style_summary_recap'))}, key_adjustment_strategy = {bool(color_structured.get('key_adjustment_strategy'))}")
+                if color_structured.get('master_style_recap'):
+                    logger.info(f"【format_part2】master_style_recap 内容: {color_structured.get('master_style_recap')[:100]}...")
+                if color_structured.get('style_summary_recap'):
+                    logger.info(f"【format_part2】style_summary_recap 内容: {color_structured.get('style_summary_recap')[:100]}...")
+                if color_structured.get('key_adjustment_strategy'):
+                    logger.info(f"【format_part2】key_adjustment_strategy 内容: {color_structured.get('key_adjustment_strategy')[:100]}...")
             except Exception as e:
                 logger.error(f"_format_color_part2 失败: {e}", exc_info=True)
                 # 返回空结构，避免整个流程失败
+                # 【修复】在异常处理的兜底逻辑中也包含三个字段，确保前端不会因为 undefined 而崩溃
                 color_result = {
                     "naturalLanguage": {},
                     "structured": {
@@ -775,12 +793,16 @@ class AnalysisFormatter:
                             "tint": {"range": "+0"},
                         },
                         "grading": {
-                            "highlights": {"hue": 0, "saturation": 0},
-                            "midtones": {"hue": 0, "saturation": 0},
-                            "shadows": {"hue": 0, "saturation": 0},
+                            "highlights": {"hue": 0, "saturation": 0, "reason": ""},  # 【修复】添加 reason 字段
+                            "midtones": {"hue": 0, "saturation": 0, "reason": ""},  # 【修复】添加 reason 字段
+                            "shadows": {"hue": 0, "saturation": 0, "reason": ""},  # 【修复】添加 reason 字段
                             "balance": 0,
                         },
                         "hsl": [],
+                        # 【修复】确保三个字段至少是空字符串，而不是 undefined
+                        "master_style_recap": "",
+                        "style_summary_recap": "",
+                        "key_adjustment_strategy": "",
                     },
                 }
                 logger.warning(f"【format_part2】_format_color_part2 使用空结构兜底")
@@ -2477,15 +2499,49 @@ class AnalysisFormatter:
                 }
             
             # 提取色调曲线数据
+            # 【修复】确保曲线点格式统一为对象数组格式 {x, y}，兼容 Gemini 输出的两种格式：
+            # 1. 对象数组格式：[{ "x": 0, "y": 30 }, { "x": 64, "y": 100 }]
+            # 2. 数组格式：[[0, 30], [64, 100]]
+            # 【重要】曲线必须符合后期领域规范：必须包含起点 (0, 0) 和终点 (255, 255)
+            def normalize_curve_points(points):
+                """将曲线点统一转换为 {x, y} 对象数组格式，并确保包含起点和终点"""
+                if not points or not isinstance(points, list):
+                    # 如果为空，返回默认的起点和终点
+                    return [{"x": 0, "y": 0}, {"x": 255, "y": 255}]
+                
+                normalized = []
+                for point in points:
+                    if isinstance(point, dict):
+                        # 已经是对象格式，直接使用
+                        normalized.append({"x": int(point.get("x", 0)), "y": int(point.get("y", 0))})
+                    elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                        # 数组格式 [x, y]，转换为对象格式
+                        normalized.append({"x": int(point[0]), "y": int(point[1])})
+                
+                # 【重要修复】确保曲线必须包含起点 (0, 0) 和终点 (255, 255)
+                # 如果第一个点不是 (0, 0)，在开头添加
+                if not normalized or normalized[0]["x"] != 0 or normalized[0]["y"] != 0:
+                    normalized.insert(0, {"x": 0, "y": 0})
+                
+                # 如果最后一个点不是 (255, 255)，在末尾添加
+                if not normalized or normalized[-1]["x"] != 255 or normalized[-1]["y"] != 255:
+                    normalized.append({"x": 255, "y": 255})
+                
+                # 按 x 坐标排序，确保曲线点顺序正确
+                normalized.sort(key=lambda p: p["x"])
+                
+                return normalized
+            
             tone_curves_data = {}
             if isinstance(tone_curves, dict):
                 tone_curves_data = {
                     "explanation": tone_curves.get("explanation", ""),
-                    "points_rgb": tone_curves.get("points_rgb", []),
-                    "points_red": tone_curves.get("points_red", []),
-                    "points_green": tone_curves.get("points_green", []),
-                    "points_blue": tone_curves.get("points_blue", []),
+                    "points_rgb": normalize_curve_points(tone_curves.get("points_rgb", [])),  # 【修复】统一格式
+                    "points_red": normalize_curve_points(tone_curves.get("points_red", [])),  # 【修复】统一格式
+                    "points_green": normalize_curve_points(tone_curves.get("points_green", [])),  # 【修复】统一格式
+                    "points_blue": normalize_curve_points(tone_curves.get("points_blue", [])),  # 【修复】统一格式
                 }
+                logger.info(f"_format_lighting: ✅ 已提取色调曲线数据: points_rgb={len(tone_curves_data['points_rgb'])}, points_red={len(tone_curves_data['points_red'])}, points_green={len(tone_curves_data['points_green'])}, points_blue={len(tone_curves_data['points_blue'])}")
             
             # 【新增】提取 action_priorities 数据（行动优先级）
             action_priorities = module_3.get("action_priorities", {})
@@ -2625,6 +2681,17 @@ class AnalysisFormatter:
         logger.info(f"【_format_lightroom】raw 数据 keys: {list(raw.keys()) if isinstance(raw, dict) else 'not dict'}")
         logger.info(f"【_format_lightroom】是否存在 lightroom_workflow: {bool(lr_workflow)}, lightroom_workflow keys: {list(lr_workflow.keys()) if isinstance(lr_workflow, dict) else 'not dict'}")
         
+        # 【新增】检查 lightroom_workflow 中是否包含 simulated_histogram
+        if isinstance(lr_workflow, dict):
+            has_sim_hist_in_lr_workflow = "simulated_histogram" in lr_workflow
+            logger.info(f"【_format_lightroom】lightroom_workflow 中是否包含 simulated_histogram: {has_sim_hist_in_lr_workflow}")
+            if has_sim_hist_in_lr_workflow:
+                sim_hist_raw = lr_workflow.get("simulated_histogram")
+                logger.info(f"【_format_lightroom】simulated_histogram 原始数据: 类型={type(sim_hist_raw).__name__}, 是否为字典={isinstance(sim_hist_raw, dict)}")
+                if isinstance(sim_hist_raw, dict):
+                    logger.info(f"【_format_lightroom】simulated_histogram keys: {list(sim_hist_raw.keys())}")
+                    logger.info(f"【_format_lightroom】simulated_histogram 内容检查: description={bool(sim_hist_raw.get('description'))}, rgb_values={bool(sim_hist_raw.get('rgb_values'))}, histogram_data={bool(sim_hist_raw.get('histogram_data'))}")
+        
         if lr_workflow:
             # 【新结构】使用 lightroom_workflow
             logger.info("【_format_lightroom】使用新 Part2 Prompt 结构 (lightroom_workflow)")
@@ -2735,11 +2802,39 @@ class AnalysisFormatter:
             
             # 4. 色调曲线（tone_curve）
             tone_curve_obj = lr_workflow.get("tone_curve", {})
-            tone_curve_points = tone_curve_obj.get("rgb_points", [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]])
+            # 【修复】兼容两种格式：数组格式 [[x, y], ...] 和对象格式 [{"x": 0, "y": 0}, ...]
+            # 从 tone_curve_obj 中提取 rgb_points，如果不存在则使用默认值
+            raw_rgb_points = tone_curve_obj.get("rgb_points", [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]])
+            # 统一转换为数组格式，便于后续处理
+            if raw_rgb_points and len(raw_rgb_points) > 0:
+                # 检查第一个点的格式
+                first_point = raw_rgb_points[0]
+                if isinstance(first_point, dict):
+                    # 对象格式，转换为数组格式
+                    tone_curve_points = [[int(p.get("x", 0)), int(p.get("y", 0))] for p in raw_rgb_points]
+                else:
+                    # 已经是数组格式，直接使用
+                    tone_curve_points = raw_rgb_points
+            else:
+                tone_curve_points = [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]]
+            
+            # 【修复】同样处理单通道曲线，兼容两种格式
+            def normalize_channel_points(channel_points):
+                """将通道曲线点统一转换为数组格式"""
+                if not channel_points or len(channel_points) == 0:
+                    return []
+                first_point = channel_points[0]
+                if isinstance(first_point, dict):
+                    # 对象格式，转换为数组格式
+                    return [[int(p.get("x", 0)), int(p.get("y", 0))] for p in channel_points]
+                else:
+                    # 已经是数组格式，直接使用
+                    return channel_points
+            
             rgb_curves = {
-                "red": tone_curve_obj.get("red_channel", []),
-                "green": tone_curve_obj.get("green_channel", []),
-                "blue": tone_curve_obj.get("blue_channel", []),
+                "red": normalize_channel_points(tone_curve_obj.get("red_channel", [])),
+                "green": normalize_channel_points(tone_curve_obj.get("green_channel", [])),
+                "blue": normalize_channel_points(tone_curve_obj.get("blue_channel", [])),
             }
             
             # 5. 分离色调（split_toning_detail）
@@ -2764,20 +2859,26 @@ class AnalysisFormatter:
                 shadows = split_toning.get("shadows", {})
                 balance = split_toning.get("balance", {})
                 
+                # 【修复】提取 split_toning_detail 的 reason 字段，用于前端显示描述
+                # 根据开发方案，split_toning_detail 的每个字段（highlights、shadows、balance）都应包含 reason 字段
                 color_grading = {
                     "highlights": {
                         "hue": extract_number(highlights.get("h", 0)) if isinstance(highlights, dict) else 0,
                         "saturation": extract_number(highlights.get("s", 0)) if isinstance(highlights, dict) else 0,
+                        "reason": highlights.get("reason", "") if isinstance(highlights, dict) else "",  # 【新增】提取高光调整原因描述
                     },
                     "midtones": {
                         "hue": 0,
                         "saturation": 0,
+                        "reason": "",  # 【新增】中间调通常不在 split_toning_detail 中，设为空字符串
                     },
                     "shadows": {
                         "hue": extract_number(shadows.get("h", 0)) if isinstance(shadows, dict) else 0,
                         "saturation": extract_number(shadows.get("s", 0)) if isinstance(shadows, dict) else 0,
+                        "reason": shadows.get("reason", "") if isinstance(shadows, dict) else "",  # 【新增】提取阴影调整原因描述
                     },
                     "balance": extract_number(balance.get("val", "0")) if isinstance(balance, dict) else 0,
+                    "balance_reason": balance.get("reason", "") if isinstance(balance, dict) else "",  # 【新增】提取平衡调整原因描述（单独字段，因为 balance 是数值）
                 }
             
             # 构建 panels 数组
@@ -3052,6 +3153,8 @@ class AnalysisFormatter:
                 if tone_curve_points and len(tone_curve_points) > 0:
                     # 【修复】将曲线点转换为参数描述，格式："(x, y), (x, y), ..."
                     # 前端 parseCurveParams 会解析这个格式，并拆分成多个点
+                    # 【关键修复】tone_curve_points 已经在上面统一转换为数组格式 [[x, y], ...]
+                    # 所以这里可以直接访问 p[0] 和 p[1]
                     points_str = ", ".join([f"({p[0]}, {p[1]})" for p in tone_curve_points[:5]])  # 最多显示 5 个点
                     curve_params.append({
                         "name": "RGB 曲线",  # 【重要】名称必须包含 "RGB" 或 "rgb"，前端才能识别
@@ -3060,11 +3163,15 @@ class AnalysisFormatter:
                     })
                     logger.info(f"【_format_lightroom】RGB 曲线已添加，点数: {len(tone_curve_points[:5])}, 值: {points_str}")
                 else:
-                    logger.warning("【_format_lightroom】RGB 曲线点为空，tone_curve_points = {tone_curve_points}")
+                    # 【修复】使用 f-string 或 repr() 安全输出，避免字符串格式化错误
+                    # 如果使用普通字符串，Python 会将 {tone_curve_points} 解析为格式化占位符
+                    # 当 tone_curve_points 包含 JSON 格式数据（如 [{"x": 0, "y": 0}]）时，会导致 "Invalid format specifier" 错误
+                    logger.warning(f"【_format_lightroom】RGB 曲线点为空，tone_curve_points = {repr(tone_curve_points)}")
                 
                 # 如果有红色通道曲线
                 if rgb_curves.get("red") and len(rgb_curves["red"]) > 0:
                     red_points = rgb_curves["red"][:5]  # 最多显示 5 个点
+                    # 【修复】rgb_curves["red"] 已经在上面统一转换为数组格式，可以直接访问 p[0] 和 p[1]
                     red_str = ", ".join([f"({p[0]}, {p[1]})" for p in red_points])
                     curve_params.append({
                         "name": "红色通道曲线",
@@ -3075,6 +3182,7 @@ class AnalysisFormatter:
                 # 如果有绿色通道曲线
                 if rgb_curves.get("green") and len(rgb_curves["green"]) > 0:
                     green_points = rgb_curves["green"][:5]
+                    # 【修复】rgb_curves["green"] 已经在上面统一转换为数组格式，可以直接访问 p[0] 和 p[1]
                     green_str = ", ".join([f"({p[0]}, {p[1]})" for p in green_points])
                     curve_params.append({
                         "name": "绿色通道曲线",
@@ -3085,6 +3193,7 @@ class AnalysisFormatter:
                 # 如果有蓝色通道曲线
                 if rgb_curves.get("blue") and len(rgb_curves["blue"]) > 0:
                     blue_points = rgb_curves["blue"][:5]
+                    # 【修复】rgb_curves["blue"] 已经在上面统一转换为数组格式，可以直接访问 p[0] 和 p[1]
                     blue_str = ", ".join([f"({p[0]}, {p[1]})" for p in blue_points])
                     curve_params.append({
                         "name": "蓝色通道曲线",
@@ -3120,6 +3229,141 @@ class AnalysisFormatter:
                 panels[1]["title"] = "细节与质感"
                 logger.info("【_format_lightroom】面板标题已修正：存在感 -> 细节与质感")
             
+            # 【新增】提取 simulated_histogram 数据（直方图描述和 RGB 值）
+            # 从 lightroom_workflow.simulated_histogram 中提取直方图描述、RGB 值和完整的直方图数据
+            # 用于前端 Lightroom 面板显示模拟直方图信息
+            simulated_histogram = lr_workflow.get("simulated_histogram", {})
+            histogram_data = None  # 【修复】初始化为 None，只有真正有数据时才创建对象
+            
+            # 【调试日志】记录原始 simulated_histogram 数据
+            logger.info(f"【_format_lightroom】🔍 开始提取 simulated_histogram: 存在={bool(simulated_histogram)}, 类型={type(simulated_histogram).__name__}")
+            if isinstance(simulated_histogram, dict):
+                logger.info(f"【_format_lightroom】simulated_histogram keys: {list(simulated_histogram.keys())}")
+                description = simulated_histogram.get("description", "")  # 直方图形态描述（如："直方图整体大幅向右移动（高调）"）
+                rgb_values = simulated_histogram.get("rgb_values", {})  # RGB 值（如：{"r": 200, "g": 200, "b": 210}）
+                histogram_data_raw = simulated_histogram.get("histogram_data", {})  # 【新增】完整的直方图数据（256 个值）
+                
+                # 【新增】提取 histogram_data 中的 r、g、b、l 数组（每个数组包含 256 个值，对应亮度级别 0-255）
+                histogram_r = histogram_data_raw.get("r", []) if isinstance(histogram_data_raw, dict) else []
+                histogram_g = histogram_data_raw.get("g", []) if isinstance(histogram_data_raw, dict) else []
+                histogram_b = histogram_data_raw.get("b", []) if isinstance(histogram_data_raw, dict) else []
+                histogram_l = histogram_data_raw.get("l", []) if isinstance(histogram_data_raw, dict) else []
+                
+                # 【修复】支持非256长度的histogram_data数组，进行线性插值扩展到256个值
+                # Gemini 可能输出少于256个值（如16个值），需要插值扩展以匹配标准直方图格式
+                def interpolate_histogram(data: list, target_length: int = 256) -> list:
+                    """
+                    将直方图数据插值扩展到目标长度（256个值）
+                    使用线性插值方法，确保数据平滑过渡
+                    
+                    Args:
+                        data: 原始直方图数据数组（可能少于256个值）
+                        target_length: 目标长度（默认256）
+                    
+                    Returns:
+                        插值后的直方图数据数组（长度为target_length）
+                    """
+                    if not isinstance(data, list) or len(data) == 0:
+                        return []
+                    
+                    # 如果已经是目标长度，直接返回
+                    if len(data) == target_length:
+                        return data
+                    
+                    # 如果数据长度大于目标长度，进行降采样
+                    if len(data) > target_length:
+                        step = len(data) / target_length
+                        return [data[int(i * step)] for i in range(target_length)]
+                    
+                    # 如果数据长度小于目标长度，进行线性插值
+                    result = []
+                    source_length = len(data)
+                    for i in range(target_length):
+                        # 计算在源数组中的位置（浮点数）
+                        source_pos = (i / (target_length - 1)) * (source_length - 1)
+                        # 获取相邻两个点的索引
+                        idx_low = int(source_pos)
+                        idx_high = min(idx_low + 1, source_length - 1)
+                        # 计算插值权重
+                        weight = source_pos - idx_low
+                        # 线性插值
+                        interpolated_value = data[idx_low] * (1 - weight) + data[idx_high] * weight
+                        result.append(interpolated_value)
+                    
+                    return result
+                
+                # 【修复】对每个通道进行插值扩展
+                histogram_r_interpolated = interpolate_histogram(histogram_r) if histogram_r else []
+                histogram_g_interpolated = interpolate_histogram(histogram_g) if histogram_g else []
+                histogram_b_interpolated = interpolate_histogram(histogram_b) if histogram_b else []
+                histogram_l_interpolated = interpolate_histogram(histogram_l) if histogram_l else []
+                
+                # 【日志记录】记录插值前后的数据长度
+                if histogram_r and len(histogram_r) != 256:
+                    logger.info(f"【_format_lightroom】histogram_data.r 插值: {len(histogram_r)} -> 256")
+                if histogram_g and len(histogram_g) != 256:
+                    logger.info(f"【_format_lightroom】histogram_data.g 插值: {len(histogram_g)} -> 256")
+                if histogram_b and len(histogram_b) != 256:
+                    logger.info(f"【_format_lightroom】histogram_data.b 插值: {len(histogram_b)} -> 256")
+                if histogram_l and len(histogram_l) != 256:
+                    logger.info(f"【_format_lightroom】histogram_data.l 插值: {len(histogram_l)} -> 256")
+                
+                # 【修复】即使只有 histogram_data_raw（没有 description），也应该创建 histogram_data 对象
+                # 因为前端需要 histogram_data 来渲染直方图
+                # 【修复】检查条件：只要有 description、rgb_values 或 histogram_data_raw 中的任何一个，就创建对象
+                if description or rgb_values or histogram_data_raw:
+                    # 【修复】检查插值后的数组是否有效（长度大于0）
+                    # 注意：histogram_data_raw 可能是空字典 {}，需要检查是否真的包含数据
+                    has_histogram_data_raw = (
+                        histogram_data_raw and 
+                        isinstance(histogram_data_raw, dict) and 
+                        (histogram_r or histogram_g or histogram_b or histogram_l)
+                    )
+                    
+                    has_valid_histogram_data = (
+                        has_histogram_data_raw and 
+                        (len(histogram_r_interpolated) > 0 or 
+                         len(histogram_g_interpolated) > 0 or 
+                         len(histogram_b_interpolated) > 0 or 
+                         len(histogram_l_interpolated) > 0)
+                    )
+                    
+                    # 【调试日志】记录原始数据检查
+                    logger.info(f"【_format_lightroom】histogram_data_raw 检查: 存在={bool(histogram_data_raw)}, 类型={type(histogram_data_raw).__name__}, r长度={len(histogram_r)}, g长度={len(histogram_g)}, b长度={len(histogram_b)}, l长度={len(histogram_l)}")
+                    
+                    # 【修复】只要有 description、rgb_values 或有效的 histogram_data，就创建 histogram_data 对象
+                    # 即使 histogram_data 为 None，也应该创建对象（前端需要 description 和 rgb_values）
+                    if description or rgb_values or has_valid_histogram_data:
+                        # 【新增】提取 stats_grid_description 和 palette_strip_description
+                        stats_grid_description = simulated_histogram.get("stats_grid_description", "")
+                        palette_strip_description = simulated_histogram.get("palette_strip_description", "")
+                        
+                        histogram_data = {
+                            "description": description,
+                            "rgb_values": rgb_values if isinstance(rgb_values, dict) else {},
+                            # 【修复】添加插值后的完整直方图数据数组（256个值，用于前端绘制直方图）
+                            # 只有当插值后的数组有效时才添加 histogram_data
+                            "histogram_data": {
+                                "r": histogram_r_interpolated,
+                                "g": histogram_g_interpolated,
+                                "b": histogram_b_interpolated,
+                                "l": histogram_l_interpolated,
+                            } if has_valid_histogram_data else None,
+                            # 【新增】添加 Stats Grid 和 Palette Strip 的说明
+                            "stats_grid_description": stats_grid_description,
+                            "palette_strip_description": palette_strip_description,
+                        }
+                        logger.info(f"【_format_lightroom】✅ 已创建 simulated_histogram 对象: description={description[:50] if description else 'None'}, rgb_values={rgb_values}, histogram_data存在={has_valid_histogram_data}")
+                        if has_valid_histogram_data:
+                            logger.info(f"【_format_lightroom】✅ histogram_data 插值后数组长度: r={len(histogram_r_interpolated)}, g={len(histogram_g_interpolated)}, b={len(histogram_b_interpolated)}, l={len(histogram_l_interpolated)}")
+                            logger.info(f"【_format_lightroom】histogram_data 原始数组长度: r={len(histogram_r)}, g={len(histogram_g)}, b={len(histogram_b)}, l={len(histogram_l)}")
+                            # 【新增】记录前几个值，用于验证数据正确性
+                            logger.debug(f"【_format_lightroom】histogram_data 插值后前5个值: r={histogram_r_interpolated[:5]}, g={histogram_g_interpolated[:5]}, b={histogram_b_interpolated[:5]}, l={histogram_l_interpolated[:5]}")
+                        else:
+                            logger.warning(f"【_format_lightroom】⚠️ histogram_data 无效或为空，但已创建对象（包含 description 和 rgb_values）: histogram_data_raw存在={bool(histogram_data_raw)}, has_histogram_data_raw={has_histogram_data_raw}, 插值后r长度={len(histogram_r_interpolated)}, g长度={len(histogram_g_interpolated)}, b长度={len(histogram_b_interpolated)}, l长度={len(histogram_l_interpolated)}")
+                    else:
+                        logger.warning(f"【_format_lightroom】⚠️ simulated_histogram 数据完全为空，不创建对象: description={bool(description)}, rgb_values={bool(rgb_values)}, histogram_data_raw={bool(histogram_data_raw)}")
+            
             # 【日志记录】记录构建的 panels 数量
             logger.info(f"【_format_lightroom】构建的 panels 数量: {len(panels)}, taskId=unknown")
             logger.info(f"【_format_lightroom】panels 标题列表: {[p.get('title') for p in panels]}")
@@ -3133,6 +3377,14 @@ class AnalysisFormatter:
                 if not has_title or not has_params:
                     logger.warning(f"【_format_lightroom】⚠️ panel[{idx}] 内容不完整: {json.dumps(panel, ensure_ascii=False)[:200]}")
             
+            # 【新增】记录最终返回的 simulatedHistogram 状态
+            logger.info(f"【_format_lightroom】📊 最终返回的 simulatedHistogram 状态: histogram_data存在={histogram_data is not None}, histogram_data类型={type(histogram_data).__name__ if histogram_data else 'None'}")
+            if histogram_data:
+                logger.info(f"【_format_lightroom】simulatedHistogram 内容: description={bool(histogram_data.get('description'))}, rgb_values={bool(histogram_data.get('rgb_values'))}, histogram_data={histogram_data.get('histogram_data') is not None}")
+                if histogram_data.get('histogram_data'):
+                    hist_data = histogram_data.get('histogram_data')
+                    logger.info(f"【_format_lightroom】histogram_data 数组长度: r={len(hist_data.get('r', []))}, g={len(hist_data.get('g', []))}, b={len(hist_data.get('b', []))}, l={len(hist_data.get('l', []))}")
+            
             return {
                 "naturalLanguage": {
                     "panelSummary": "",
@@ -3144,6 +3396,7 @@ class AnalysisFormatter:
                     "rgbCurves": rgb_curves,
                     "colorGrading": color_grading,
                     "localAdjustments": raw.get("lightroom_local_adjustments", []),
+                    "simulatedHistogram": histogram_data,  # 【修复】直接返回 histogram_data，即使为 None 也返回（前端需要判断）
                 },
             }
         else:
@@ -3763,21 +4016,33 @@ class AnalysisFormatter:
             elif isinstance(balance_str, (int, float)):
                 balance_value = int(balance_str)
             
+            # 【修复】提取 color_grading_wheels 的 reason 字段（用于前端显示描述）
+            # 根据开发方案，color_grading_wheels 的每个字段（highlights、midtones、shadows）都应包含 reason 字段
             grading_result = {
                 "highlights": {
                     "hue": extract_number(highlights.get("hue", 0)),
                     "saturation": extract_number(highlights.get("saturation", 0)),
+                    "reason": highlights.get("reason", ""),  # 【新增】提取高光调整原因描述
                 },
                 "midtones": {
                     "hue": extract_number(midtones.get("hue", 0)),
                     "saturation": extract_number(midtones.get("saturation", 0)),
+                    "reason": midtones.get("reason", ""),  # 【新增】提取中间调调整原因描述
                 },
                 "shadows": {
                     "hue": extract_number(shadows.get("hue", 0)),
                     "saturation": extract_number(shadows.get("saturation", 0)),
+                    "reason": shadows.get("reason", ""),  # 【新增】提取阴影调整原因描述
                 },
                 "balance": balance_value,
             }
+            
+            # 【新增】记录 color_grading_wheels 提取结果，用于调试
+            logger.info(f"_format_color_part2: ✅ 提取 color_grading_wheels 数据:")
+            logger.info(f"  - highlights: hue={grading_result['highlights']['hue']}, saturation={grading_result['highlights']['saturation']}, reason={grading_result['highlights']['reason'][:50] if grading_result['highlights']['reason'] else 'EMPTY'}...")
+            logger.info(f"  - midtones: hue={grading_result['midtones']['hue']}, saturation={grading_result['midtones']['saturation']}, reason={grading_result['midtones']['reason'][:50] if grading_result['midtones']['reason'] else 'EMPTY'}...")
+            logger.info(f"  - shadows: hue={grading_result['shadows']['hue']}, saturation={grading_result['shadows']['saturation']}, reason={grading_result['shadows']['reason'][:50] if grading_result['shadows']['reason'] else 'EMPTY'}...")
+            logger.info(f"  - balance: {balance_value}")
             
             # 3. HSL 12 色详细调整（hsl_detailed_12_colors）
             hsl_12_colors = color_scheme.get("hsl_detailed_12_colors", {})
@@ -3835,17 +4100,78 @@ class AnalysisFormatter:
                     })
             
             # 4. styleKey（从 phase_1_extraction 或 color_mapping 中提取）
+            # 【关键修复】首先检查 raw 的顶层结构，记录所有键
+            logger.info(f"_format_color_part2: 🔍 raw 数据顶层键: {list(raw.keys()) if isinstance(raw, dict) else 'not dict'}")
+            
             phase_1_extraction = raw.get("phase_1_extraction", {})
+            
+            # 【关键修复】添加详细日志，记录 phase_1_extraction 的提取情况
+            logger.info(f"_format_color_part2: raw 数据检查: has phase_1_extraction = {bool(phase_1_extraction)}, phase_1_extraction type = {type(phase_1_extraction)}")
+            if phase_1_extraction:
+                logger.info(f"_format_color_part2: phase_1_extraction keys = {list(phase_1_extraction.keys()) if isinstance(phase_1_extraction, dict) else 'not dict'}")
+                if isinstance(phase_1_extraction, dict):
+                    master_style_recap_raw = phase_1_extraction.get('master_style_recap', 'NOT_FOUND')
+                    style_summary_recap_raw = phase_1_extraction.get('style_summary_recap', 'NOT_FOUND')
+                    key_adjustment_strategy_raw = phase_1_extraction.get('key_adjustment_strategy', 'NOT_FOUND')
+                    
+                    logger.info(f"_format_color_part2: phase_1_extraction.master_style_recap = {master_style_recap_raw[:100] if master_style_recap_raw and master_style_recap_raw != 'NOT_FOUND' else 'EMPTY/NOT_FOUND'}")
+                    logger.info(f"_format_color_part2: phase_1_extraction.style_summary_recap = {style_summary_recap_raw[:100] if style_summary_recap_raw and style_summary_recap_raw != 'NOT_FOUND' else 'EMPTY/NOT_FOUND'}")
+                    logger.info(f"_format_color_part2: phase_1_extraction.key_adjustment_strategy = {key_adjustment_strategy_raw[:100] if key_adjustment_strategy_raw and key_adjustment_strategy_raw != 'NOT_FOUND' else 'EMPTY/NOT_FOUND'}")
+            else:
+                logger.warning(f"_format_color_part2: ⚠️ raw 数据中没有 phase_1_extraction 字段！raw keys = {list(raw.keys()) if isinstance(raw, dict) else 'not dict'}")
+                # 【新增】尝试从其他可能的位置查找 phase_1_extraction
+                if isinstance(raw, dict):
+                    for key in raw.keys():
+                        if 'phase' in key.lower() or 'extraction' in key.lower():
+                            logger.warning(f"_format_color_part2: 🔍 发现可能的 phase_1_extraction 字段: {key}")
+            
             # 【新增】优先使用 master_style_recap（流派识别），如果没有则使用 key_adjustment_strategy
-            master_style_recap = phase_1_extraction.get("master_style_recap", "")
-            style_key = phase_1_extraction.get("key_adjustment_strategy", "")
+            master_style_recap = phase_1_extraction.get("master_style_recap", "") if isinstance(phase_1_extraction, dict) else ""
+            style_key = phase_1_extraction.get("key_adjustment_strategy", "") if isinstance(phase_1_extraction, dict) else ""
             # 如果 master_style_recap 存在，优先使用它作为 styleKey
             if master_style_recap:
                 style_key = master_style_recap
             elif not style_key:
                 # 如果没有，尝试从旧结构的 color_mapping 中获取
                 color_mapping_old = raw.get("color_mapping", {})
-                style_key = color_mapping_old.get("suggested_LUT", "")
+                style_key = color_mapping_old.get("suggested_LUT", "") if isinstance(color_mapping_old, dict) else ""
+            
+            # 【新增】提取 phase_1_extraction 的三个字段，用于前端色彩策略卡片展示
+            # 根据开发方案，这三个字段需要在色彩策略中展示：
+            # - master_style_recap: 主风格回顾（流派识别）
+            # - style_summary_recap: 风格总结回顾（Phase 1 核心指导思想）
+            # - key_adjustment_strategy: 关键调整策略（三大动作）
+            style_summary_recap = phase_1_extraction.get("style_summary_recap", "") if isinstance(phase_1_extraction, dict) else ""
+            key_adjustment_strategy = phase_1_extraction.get("key_adjustment_strategy", "") if isinstance(phase_1_extraction, dict) else ""
+            
+            # 【关键修复】确保三个字段至少是空字符串，而不是 None
+            master_style_recap = master_style_recap or ""
+            style_summary_recap = style_summary_recap or ""
+            key_adjustment_strategy = key_adjustment_strategy or ""
+            
+            logger.info(f"_format_color_part2: 提取 phase_1_extraction 字段: master_style_recap={bool(master_style_recap)}, style_summary_recap={bool(style_summary_recap)}, key_adjustment_strategy={bool(key_adjustment_strategy)}")
+            if master_style_recap:
+                logger.info(f"_format_color_part2: master_style_recap 内容: {master_style_recap[:100]}...")
+            if style_summary_recap:
+                logger.info(f"_format_color_part2: style_summary_recap 内容: {style_summary_recap[:100]}...")
+            if key_adjustment_strategy:
+                logger.info(f"_format_color_part2: key_adjustment_strategy 内容: {key_adjustment_strategy[:100]}...")
+            
+            # 【关键修复】构建返回结构，确保三个字段都被包含
+            result_structured = {
+                "styleKey": style_key,
+                "whiteBalance": white_balance_result,
+                "grading": grading_result,
+                "hsl": hsl_list,
+                # 【新增】phase_1_extraction 三个字段，用于前端色彩策略卡片展示
+                "master_style_recap": master_style_recap,  # 主风格回顾
+                "style_summary_recap": style_summary_recap,  # 风格总结回顾
+                "key_adjustment_strategy": key_adjustment_strategy,  # 关键调整策略
+            }
+            
+            # 【关键修复】记录最终返回结构中的三个字段值
+            logger.info(f"_format_color_part2: ✅ 最终返回 structured 中的三个字段: master_style_recap={bool(result_structured.get('master_style_recap'))}, style_summary_recap={bool(result_structured.get('style_summary_recap'))}, key_adjustment_strategy={bool(result_structured.get('key_adjustment_strategy'))}")
+            logger.info(f"_format_color_part2: ✅ 最终返回 structured keys: {list(result_structured.keys())}")
             
             return {
                 "naturalLanguage": {
@@ -3854,12 +4180,7 @@ class AnalysisFormatter:
                     "colorGrading": "",
                     "hslAdjustments": "",
                 },
-                "structured": {
-                    "styleKey": style_key,
-                    "whiteBalance": white_balance_result,
-                    "grading": grading_result,
-                    "hsl": hsl_list,
-                },
+                "structured": result_structured,
             }
         else:
             # 【旧结构】向后兼容：使用 lightroom 和 color_mapping

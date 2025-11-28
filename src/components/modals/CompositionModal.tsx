@@ -2,14 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { BaseModal } from './BaseModal';
 import { Target, GitGraph, Layers, Percent, Maximize, Layout, Activity, ArrowRight } from "lucide-react";
 import { useLanguage } from '../../src/contexts/LanguageContext';
-import { VisualVectorsOverlay } from '../VisualVectorsOverlay';
-import { DirectorViewfinder } from '../DirectorViewfinder'; // 【重构】导入新的 AI 导演取景器组件（沉浸式 AR 指导）
-import { CompositionAnalysisPanel } from '../CompositionAnalysisPanel'; // 【重构】导入新的构图分析面板组件（双宇宙模式）
 
 export const CompositionModal = ({ data, images, onClose }: any) => {
   const { t } = useLanguage();
   const [overlayMode, setOverlayMode] = useState<'lines' | 'grid' | 'mask' | null>(null);
-  const [viewMode, setViewMode] = useState<'analysis' | 'clinic'>('analysis'); // 【新增】视图模式：分析视图 vs 诊疗室视图
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [imageBounds, setImageBounds] = useState<{x: number, y: number, width: number, height: number} | null>(null);
@@ -441,68 +437,6 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
     return null;
   };
 
-  // 【重构】如果切换到诊疗室视图，显示 DirectorViewfinder（AI 导演取景器）
-  // 从 data 或 comp 中提取 composition_clinic 数据（支持多种数据路径）
-  // 【重要】所有坐标基于用户图，使用 images.target（用户图）而不是 images.source（参考图）
-  const clinicData = data?.composition?.composition_clinic || 
-                     data?.composition?.structured?.composition_clinic ||
-                     data?.module_2_composition?.composition_clinic ||
-                     comp?.composition_clinic;
-  
-  // 【重构】提取 reference_analysis 数据（新双宇宙结构）
-  const refAnalysisData = data?.composition?.structured?.reference_analysis ||
-                          data?.module_2_composition?.reference_analysis;
-  
-  // 【重构】检查是否使用新双宇宙结构
-  const useNewDualUniverse = !!(refAnalysisData || (data?.module_2_composition?.reference_analysis));
-  
-  if (viewMode === 'clinic') {
-    return (
-      <BaseModal title={t('modal.composition.clinic_title') || "AI 导演取景器"} onClose={onClose}>
-        <div className="h-full relative">
-          <DirectorViewfinder 
-            data={{ 
-              ...data, 
-              composition: { 
-                ...data?.composition, 
-                composition_clinic: clinicData 
-              },
-              module_2_composition: {
-                ...data?.module_2_composition,
-                composition_clinic: clinicData
-              },
-              composition_clinic: clinicData
-            }} 
-            userImageUrl={images.target} // 【关键】使用用户图，不是参考图
-          />
-          {/* 切换按钮 */}
-          <div className="absolute top-4 right-4 z-50">
-            <button
-              onClick={() => setViewMode('analysis')}
-              className="px-4 py-2 bg-gray-800 text-gray-300 rounded-lg text-sm hover:bg-gray-700 transition-colors"
-            >
-              {t('modal.composition.back_to_analysis') || '返回分析视图'}
-            </button>
-          </div>
-        </div>
-      </BaseModal>
-    );
-  }
-
-  // 【重构】如果使用新双宇宙结构，显示 CompositionAnalysisPanel
-  if (useNewDualUniverse) {
-    return (
-      <BaseModal title={t('modal.composition.title')} onClose={onClose}>
-        <CompositionAnalysisPanel 
-          data={data}
-          refImageUrl={images.source}
-          userImageUrl={images.target}
-        />
-      </BaseModal>
-    );
-  }
-
-  // 【向后兼容】如果使用旧结构，显示原有的分析视图
   return (
     <BaseModal title={t('modal.composition.title')} onClose={onClose}>
       <div className="flex h-full bg-[#050505]">
@@ -553,39 +487,6 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
                 }}
               />
               {renderOverlay()}
-              {/* 【新增】Visual Vectors Overlay - X-Ray Vision 效果 */}
-              {/* 当点击"向量"按钮时，显示几何透视眼效果 */}
-              {/* 【🔍 调试点】确保读取路径正确 */}
-              {(() => {
-                // 路径 A: 如果直接传了整个大对象
-                const flowData = comp?.visual_flow || 
-                                comp?.lines?.vectors || 
-                                data?.composition?.visual_flow ||
-                                data?.composition?.lines?.vectors;
-                
-                // 【调试日志】仅在开发环境记录
-                if (process.env.NODE_ENV === 'development') {
-                  console.log('[CompositionModal] 🔍 Composition Panel Data:', {
-                    hasComp: !!comp,
-                    compKeys: comp ? Object.keys(comp) : [],
-                    hasVisualFlow: !!comp?.visual_flow,
-                    hasLinesVectors: !!comp?.lines?.vectors,
-                    hasDataComposition: !!data?.composition,
-                    flowData: flowData,
-                  });
-                }
-                
-                if (overlayMode === 'lines' && flowData) {
-                  return (
-                    <VisualVectorsOverlay 
-                      data={flowData} 
-                      width={containerRef.current?.clientWidth || 100} 
-                      height={containerRef.current?.clientHeight || 100} 
-                    />
-                  );
-                }
-                return null;
-              })()}
            </div>
            
            <div className="absolute bottom-8 left-0 w-full flex justify-center gap-4">
@@ -618,16 +519,6 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
                 {styleMethod}
               </div>
-              {/* 【新增】切换到诊疗室视图按钮 */}
-              {comp?.composition_clinic && (
-                <button
-                  onClick={() => setViewMode('clinic')}
-                  className="mt-4 w-full px-4 py-2 bg-red-600/20 border border-red-500/50 text-red-400 rounded-lg text-sm font-bold uppercase tracking-wider hover:bg-red-600/30 transition-colors flex items-center justify-center gap-2"
-                >
-                  <Activity className="w-4 h-4" />
-                  {t('modal.composition.open_clinic') || '进入构图诊疗室'}
-                </button>
-              )}
            </div>
            
            <div className="p-6 space-y-8">
@@ -727,46 +618,19 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
                    </h4>
                    <div className="space-y-2 relative pl-2">
                        <div className="absolute top-2 bottom-2 left-[7px] w-px bg-white/10"></div>
-                       {/* 【修复】优先显示 visual_flow.vectors 数组，如果没有则显示 path 数组 */}
-                       {(() => {
-                         // 优先从 visual_flow.vectors 提取路径描述
-                         if (comp.lines?.vectors?.vectors && Array.isArray(comp.lines.vectors.vectors) && comp.lines.vectors.vectors.length > 0) {
-                           return comp.lines.vectors.vectors.map((vec: any, i: number) => {
-                             const type = vec.type || 'leading';
-                             const start = vec.start ? `(${vec.start.x?.toFixed(1)}, ${vec.start.y?.toFixed(1)})` : '';
-                             const end = vec.end ? `(${vec.end.x?.toFixed(1)}, ${vec.end.y?.toFixed(1)})` : '';
-                             const strength = vec.strength || 0;
-                             return (
-                               <div key={i} className="relative flex items-start gap-3 group">
-                                   <div className="w-3 h-3 rounded-full bg-[#0A0A0A] border border-yellow-500/50 z-10 flex items-center justify-center shrink-0 mt-0.5 group-hover:border-yellow-400 transition-colors">
-                                       <div className="w-1 h-1 bg-yellow-500 rounded-full"></div>
-                                   </div>
-                                   <span className="text-[10px] text-gray-400 font-mono group-hover:text-white transition-colors leading-tight">
-                                     {type}: {start} → {end} (强度: {strength})
-                                   </span>
+                       {Array.isArray(comp.lines?.path) ? comp.lines.path.map((step: string, i: number) => (
+                           <div key={i} className="relative flex items-start gap-3 group">
+                               <div className="w-3 h-3 rounded-full bg-[#0A0A0A] border border-yellow-500/50 z-10 flex items-center justify-center shrink-0 mt-0.5 group-hover:border-yellow-400 transition-colors">
+                                   <div className="w-1 h-1 bg-yellow-500 rounded-full"></div>
                                </div>
-                             );
-                           });
-                         }
-                         // 如果没有 vectors，则显示 path 数组
-                         if (Array.isArray(comp.lines?.path) && comp.lines.path.length > 0) {
-                           return comp.lines.path.map((step: string, i: number) => (
-                               <div key={i} className="relative flex items-start gap-3 group">
-                                   <div className="w-3 h-3 rounded-full bg-[#0A0A0A] border border-yellow-500/50 z-10 flex items-center justify-center shrink-0 mt-0.5 group-hover:border-yellow-400 transition-colors">
-                                       <div className="w-1 h-1 bg-yellow-500 rounded-full"></div>
-                                   </div>
-                                   <span className="text-[10px] text-gray-400 font-mono group-hover:text-white transition-colors leading-tight">{step}</span>
-                               </div>
-                           ));
-                         }
-                         // 如果都没有，显示空状态
-                         return (
-                           <div className="text-[10px] text-white/20 italic pl-4">{t('modal.composition.calculating_trajectory') || 'Calculating trajectory...'}</div>
-                         );
-                       })()}
+                               <span className="text-[10px] text-gray-400 font-mono group-hover:text-white transition-colors leading-tight">{step}</span>
+                           </div>
+                       )) : (
+                           <div className="text-[10px] text-white/20 italic pl-4">Calculating trajectory...</div>
+                       )}
                    </div>
-                   {/* 【新增】Visual Flow 坐标点展示（旧格式支持） */}
-                   {comp.lines?.vectors && (comp.lines.vectors.entry || comp.lines.vectors.focal || comp.lines.vectors.exit) && (
+                   {/* 【新增】Visual Flow 坐标点展示 */}
+                   {comp.lines?.vectors && (
                    <div className="mt-3 space-y-1.5">
                        {comp.lines.vectors.entry && (
                        <div className="bg-white/5 px-2 py-1.5 rounded border border-white/5 flex justify-between items-center">

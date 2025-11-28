@@ -87,20 +87,20 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
 
           {/* 核心图片 */}
           <div className="relative max-w-full max-h-full transition-transform duration-700 ease-out hover:scale-[1.01]">
-            <img 
-              src={refImageUrl} 
+          <img 
+            src={refImageUrl} 
               className="max-h-[80vh] max-w-full object-contain shadow-2xl" 
               alt="Reference Analysis" 
-            />
-            
+          />
+          
             {/* 图层 A: 视觉向量 (Vectors) */}
             {activeLayer === 'vector' && refData?.visual_flow && (
-              <VisualVectorsOverlay 
-                data={refData.visual_flow} 
-                width={100} 
-                height={100} 
-              />
-            )}
+            <VisualVectorsOverlay 
+              data={refData.visual_flow} 
+              width={100} 
+              height={100} 
+            />
+          )}
 
             {/* 图层 B: 三分构图 (Grid) */}
             {activeLayer === 'grid' && (
@@ -122,67 +122,67 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
                 
                 {/* 视觉权重图层（Weight Boxes）- 保留原有功能 */}
                 {refData?.visual_weight?.layers_visual_map?.map((layer: any, idx: number) => {
-                  const box = layer.box;
-                  if (!box) return null;
-                  
-                  const isSelected = selectedWeightLayer === idx;
-                  
-                  return (
-                    <div 
-                      key={idx}
-                      onClick={() => setSelectedWeightLayer(isSelected ? null : idx)}
-                      className={`absolute border-2 flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all ${
-                        isSelected 
-                          ? 'border-yellow-400 bg-yellow-400/30 shadow-lg shadow-yellow-400/50' 
-                          : 'border-yellow-400/50 bg-yellow-400/10 hover:bg-yellow-400/20'
-                      }`}
-                      style={{
-                        left: `${box.x}%`, 
-                        top: `${box.y}%`,
-                        width: `${box.w}%`, 
-                        height: `${box.h}%`
-                      }}
-                    >
-                      <span className="text-yellow-400">{layer.label} ({layer.score})</span>
-                    </div>
-                  );
-                })}
-
+            const box = layer.box;
+            if (!box) return null;
+            
+            const isSelected = selectedWeightLayer === idx;
+            
+            return (
+              <div 
+                key={idx}
+                onClick={() => setSelectedWeightLayer(isSelected ? null : idx)}
+                className={`absolute border-2 flex items-center justify-center text-[10px] font-bold cursor-pointer transition-all ${
+                  isSelected 
+                    ? 'border-yellow-400 bg-yellow-400/30 shadow-lg shadow-yellow-400/50' 
+                    : 'border-yellow-400/50 bg-yellow-400/10 hover:bg-yellow-400/20'
+                }`}
+                style={{
+                  left: `${box.x}%`, 
+                  top: `${box.y}%`,
+                  width: `${box.w}%`, 
+                  height: `${box.h}%`
+                }}
+              >
+                <span className="text-yellow-400">{layer.label} ({layer.score})</span>
+              </div>
+            );
+          })}
+          
                 {/* 空间深度图层（保留原有功能，但只在 mass 模式下作为辅助显示） */}
                 {refData?.spatial_depth && (
-                  <svg 
-                    className="absolute inset-0 w-full h-full pointer-events-auto" 
-                    viewBox="0 0 100 100" 
-                    preserveAspectRatio="none"
-                  >
-                    {['foreground', 'midground', 'background'].map((plane, idx) => {
-                      const poly = refData?.spatial_depth?.[plane]?.polygon;
-                      if (!poly || !Array.isArray(poly) || poly.length === 0) return null;
-                      
-                      const points = poly.map((p: any) => {
-                        const x = typeof p.x === 'string' ? parseFloat(p.x.replace('%', '')) : p.x;
-                        const y = typeof p.y === 'string' ? parseFloat(p.y.replace('%', '')) : p.y;
-                        return `${x},${y}`;
-                      }).join(' ');
-                      
+            <svg 
+              className="absolute inset-0 w-full h-full pointer-events-auto" 
+              viewBox="0 0 100 100" 
+              preserveAspectRatio="none"
+            >
+              {['foreground', 'midground', 'background'].map((plane, idx) => {
+                const poly = refData?.spatial_depth?.[plane]?.polygon;
+                if (!poly || !Array.isArray(poly) || poly.length === 0) return null;
+                
+                const points = poly.map((p: any) => {
+                  const x = typeof p.x === 'string' ? parseFloat(p.x.replace('%', '')) : p.x;
+                  const y = typeof p.y === 'string' ? parseFloat(p.y.replace('%', '')) : p.y;
+                  return `${x},${y}`;
+                }).join(' ');
+                
                       const colors = ['#F87171', '#60A5FA', '#34D399'];
-                      const isSelected = selectedDepthPlane === plane;
-                      
-                      return (
-                        <polygon 
-                          key={plane} 
-                          points={points} 
-                          fill={colors[idx]} 
+                const isSelected = selectedDepthPlane === plane;
+                
+                return (
+                  <polygon 
+                    key={plane} 
+                    points={points} 
+                    fill={colors[idx]} 
                           fillOpacity={isSelected ? 0.4 : 0.2}
-                          stroke={colors[idx]} 
+                    stroke={colors[idx]} 
                           strokeWidth={isSelected ? 0.8 : 0.4}
-                          className="cursor-pointer transition-all"
-                          onClick={() => setSelectedDepthPlane(isSelected ? null : plane)}
-                        />
-                      );
-                    })}
-                  </svg>
-                )}
+                    className="cursor-pointer transition-all"
+                    onClick={() => setSelectedDepthPlane(isSelected ? null : plane)}
+                  />
+                );
+              })}
+            </svg>
+          )}
               </>
             )}
           </div>
@@ -205,7 +205,7 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
               icon={<ArrowRight />} 
               label={t('modal.composition.layer_flow') || '视觉向量'}
               hotkey="1"
-            />
+          />
             
             <DockButton 
               active={activeLayer === 'grid'} 
@@ -213,7 +213,7 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
               icon={<Grid />} 
               label={t('modal.composition.rule_of_thirds') || '三分构图'}
               hotkey="2"
-            />
+          />
             
             <DockButton 
               active={activeLayer === 'mass'} 
@@ -281,13 +281,13 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
           
           {/* Section 1: 视觉评价（visual_quality_assessment） */}
           {/* 【修复】确保 visual_quality_assessment 有独立的显示位置 */}
-          {refData?.visual_quality_assessment && (
+        {refData?.visual_quality_assessment && (
             <Section title={t('modal.composition.visual_quality_assessment') || 'VISUAL QUALITY ASSESSMENT'}>
               <p className="text-sm text-gray-400 leading-relaxed border-l-2 border-white/10 pl-3">
-                {refData.visual_quality_assessment}
-              </p>
+              {refData.visual_quality_assessment}
+            </p>
             </Section>
-          )}
+        )}
 
           {/* Section 2: 视觉质量（composition_quality）- 顶级摄影师角度评价 */}
           {/* 【修复】视觉质量字段：composition_quality，需要Gemini站在顶级摄影师角度评价构图质量 */}
@@ -307,37 +307,37 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
                 {refData?.visual_weight?.score !== undefined && (
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500 uppercase">{t('modal.composition.score') || '分数'}:</span>
-                    <span className="text-yellow-500 font-mono text-xl font-bold">
+              <span className="text-yellow-500 font-mono text-xl font-bold">
                       {refData.visual_weight.score}
-                    </span>
-                  </div>
+              </span>
+            </div>
                 )}
-                {refData?.visual_weight?.method && (
+            {refData?.visual_weight?.method && (
                   <div className="flex items-center justify-between">
                     <span className="text-xs text-gray-500 uppercase">{t('modal.composition.method') || '方法'}:</span>
-                    <span className="text-xs text-gray-300">{refData.visual_weight.method}</span>
-                  </div>
-                )}
+                <span className="text-xs text-gray-300">{refData.visual_weight.method}</span>
               </div>
             )}
-            {/* 【修复】Description 显示在 score 下方（符合用户要求） */}
-            {refData?.visual_weight?.description && (
-              <p className="text-xs text-gray-400 mb-4 leading-relaxed">
-                {refData.visual_weight.description}
-              </p>
+          </div>
             )}
+            {/* 【修复】Description 显示在 score 下方（符合用户要求） */}
+          {refData?.visual_weight?.description && (
+              <p className="text-xs text-gray-400 mb-4 leading-relaxed">
+              {refData.visual_weight.description}
+            </p>
+          )}
             {/* 【修复】layers_visual_map 可点击列表 - 点击后会在图中标记（已有实现，124-149行） */}
             <div className="space-y-3">
               {refData?.visual_weight?.layers_visual_map?.length > 0 ? (
                 refData.visual_weight.layers_visual_map.map((layer: any, idx: number) => {
-                  const isSelected = selectedWeightLayer === idx;
-                  return (
-                    <div 
-                      key={idx} 
-                      onClick={() => {
-                        setSelectedWeightLayer(isSelected ? null : idx);
+              const isSelected = selectedWeightLayer === idx;
+              return (
+                <div 
+                  key={idx} 
+                  onClick={() => {
+                    setSelectedWeightLayer(isSelected ? null : idx);
                         setActiveLayer('mass'); // 切换到视觉质量图层，显示标记框
-                      }}
+                  }}
                       className={`group flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/5 hover:border-blue-500/30 transition-colors cursor-pointer ${
                         isSelected ? 'border-yellow-500/50 bg-yellow-500/10' : ''
                       }`}
@@ -350,10 +350,10 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
                             : 'bg-white/10 text-gray-400 group-hover:bg-blue-500 group-hover:text-white'
                         }`}>
                           {idx + 1}
-                        </span>
+                  </span>
                         <span className={`text-xs font-medium ${isSelected ? 'text-yellow-400' : 'text-gray-300'}`}>
                           {layer.label || `${t('modal.composition.layer') || 'Layer'} ${idx + 1}`}
-                        </span>
+                  </span>
                       </div>
                       <div className="w-16 h-1 bg-gray-800 rounded-full overflow-hidden">
                         <div 
@@ -361,78 +361,78 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
                           style={{ width: `${Math.min(layer.score || 0, 100)}%` }} 
                         />
                       </div>
-                    </div>
-                  );
+                </div>
+              );
                 })
               ) : (
-                <div className="text-xs text-gray-500">
-                  {t('modal.composition.no_data') || '暂无数据'}
-                </div>
-              )}
-            </div>
+              <div className="text-xs text-gray-500">
+                {t('modal.composition.no_data') || '暂无数据'}
+              </div>
+            )}
+          </div>
           </Section>
 
           {/* Section 4: 视觉路径（visual_flow.description）- 基于顶级摄影师角度深入浅出描述 */}
           {/* 【修复】视觉路径：已经通过向量在图中画出来了，但需要Gemini基于顶级摄影师角度深入浅出描述 */}
-          {refData?.visual_flow?.description && (
+        {refData?.visual_flow?.description && (
             <Section title={t('modal.composition.visual_flow_path') || 'VISUAL FLOW'}>
               <p className="text-sm text-gray-400 leading-relaxed border-l-2 border-cyan-500/50 pl-3">
-                {refData.visual_flow.description}
-              </p>
+              {refData.visual_flow.description}
+            </p>
             </Section>
-          )}
+        )}
 
           {/* Section 5: 空间深度（spatial_depth）- 需要Gemini在图中画出来对应的位置，需要有交互 */}
           {/* 【修复】空间深度：字段为 spatial_depth，需要Gemini在图中画出来对应的位置，需要有交互 */}
           {/* 【已有实现】图中绘制：152-185行，支持点击交互 */}
-          {refData?.spatial_depth && (
+        {refData?.spatial_depth && (
             <Section title={t('modal.composition.spatial_depth') || 'SPATIAL DEPTH'}>
               <div className="space-y-3">
-                {['foreground', 'midground', 'background'].map((plane) => {
-                  const planeData = refData.spatial_depth[plane];
-                  if (!planeData) return null;
-                  
-                  const isSelected = selectedDepthPlane === plane;
-                  const planeLabels: Record<string, string> = {
-                    foreground: t('modal.composition.foreground') || '前景',
-                    midground: t('modal.composition.midground') || '中景',
-                    background: t('modal.composition.background') || '背景'
-                  };
-                  
-                  return (
-                    <div 
-                      key={plane}
-                      onClick={() => {
-                        setSelectedDepthPlane(isSelected ? null : plane);
+              {['foreground', 'midground', 'background'].map((plane) => {
+                const planeData = refData.spatial_depth[plane];
+                if (!planeData) return null;
+                
+                const isSelected = selectedDepthPlane === plane;
+                const planeLabels: Record<string, string> = {
+                  foreground: t('modal.composition.foreground') || '前景',
+                  midground: t('modal.composition.midground') || '中景',
+                  background: t('modal.composition.background') || '背景'
+                };
+                
+                return (
+                  <div 
+                    key={plane}
+                    onClick={() => {
+                      setSelectedDepthPlane(isSelected ? null : plane);
                         setActiveLayer('mass'); // 切换到视觉质量图层以显示深度多边形
-                      }}
+                    }}
                       className={`p-3 bg-white/5 rounded-lg border border-white/5 cursor-pointer transition-colors hover:border-blue-500/30 ${
                         isSelected ? 'border-blue-500/50 bg-blue-500/10' : ''
                       }`}
                       title={t('modal.composition.click_to_highlight_depth') || '点击在图中高亮显示空间深度区域'}
-                    >
-                      <div className="flex items-center justify-between mb-1">
-                        <span className={`text-xs font-semibold ${isSelected ? 'text-blue-400' : 'text-gray-300'}`}>
-                          {planeLabels[plane]}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className={`text-xs font-semibold ${isSelected ? 'text-blue-400' : 'text-gray-300'}`}>
+                        {planeLabels[plane]}
+                      </span>
+                      {planeData.depth_range && Array.isArray(planeData.depth_range) && (
+                        <span className="text-xs text-gray-500">
+                          {planeData.depth_range[0]}-{planeData.depth_range[1]}
                         </span>
-                        {planeData.depth_range && Array.isArray(planeData.depth_range) && (
-                          <span className="text-xs text-gray-500">
-                            {planeData.depth_range[0]}-{planeData.depth_range[1]}
-                          </span>
-                        )}
-                      </div>
-                      {planeData.content && (
-                        <p className="text-xs text-gray-400 leading-relaxed">
-                          {planeData.content}
-                        </p>
                       )}
                     </div>
-                  );
-                })}
-              </div>
+                    {planeData.content && (
+                      <p className="text-xs text-gray-400 leading-relaxed">
+                        {planeData.content}
+                      </p>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
             </Section>
-          )}
-
+        )}
+        
           {/* Section 6: 留白分析（negative_space 和 ratios_negative_space） */}
           {/* 【修复】留白：negative_space 和 ratios_negative_space 字段 */}
           <Section title={t('modal.composition.negative_space') || 'NEGATIVE SPACE'}>
@@ -450,11 +450,11 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
               />
             </div>
             {/* 水平平衡详情 */}
-            {refData?.negative_space?.horizontal_balance && (
+          {refData?.negative_space?.horizontal_balance && (
               <p className="text-xs text-gray-400 mt-3">
                 {t('modal.composition.h_balance') || '水平平衡'}: {refData.negative_space.horizontal_balance}
               </p>
-            )}
+          )}
             {/* ratios_negative_space 显示 - 支持多种数据路径 */}
             {/* 【修复】ratios_negative_space 可能在不同的路径中 */}
             {(() => {
@@ -466,24 +466,24 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
               return (
                 <div className="mt-4 space-y-2 text-xs text-gray-400">
                   {ratiosData.entity_ratio && (
-                    <div>
-                      <span className="text-gray-500">{t('modal.composition.entity_ratio') || '实体比例'}:</span>
+                <div>
+                  <span className="text-gray-500">{t('modal.composition.entity_ratio') || '实体比例'}:</span>
                       <span className="ml-2 text-gray-300">{ratiosData.entity_ratio}</span>
-                    </div>
-                  )}
+                </div>
+              )}
                   {ratiosData.space_ratio && (
-                    <div>
-                      <span className="text-gray-500">{t('modal.composition.space_ratio') || '留白比例'}:</span>
+                <div>
+                  <span className="text-gray-500">{t('modal.composition.space_ratio') || '留白比例'}:</span>
                       <span className="ml-2 text-gray-300">{ratiosData.space_ratio}</span>
-                    </div>
-                  )}
+                </div>
+              )}
                   {ratiosData.distribution && (
                     <div className="mt-2 pt-2 border-t border-white/5">
-                      <span className="text-gray-500">{t('modal.composition.distribution') || '分布'}:</span>
+                  <span className="text-gray-500">{t('modal.composition.distribution') || '分布'}:</span>
                       <p className="text-gray-300 mt-1">{ratiosData.distribution}</p>
-                    </div>
-                  )}
                 </div>
+              )}
+            </div>
               );
             })()}
           </Section>

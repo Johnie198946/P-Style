@@ -368,10 +368,10 @@ const api = {
       
       try {
         const result = await apiClient('/auth/login-with-code', { 
-          method: 'POST', 
+        method: 'POST', 
           body: JSON.stringify(data),
           signal: controller.signal
-        });
+      });
         clearTimeout(timeoutId);
         return result;
       } catch (error: any) {

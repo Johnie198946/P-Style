@@ -63,5 +63,27 @@
     server: {
       port: 3001, // 【强制要求】根据开发方案第 78 行，前端端口必须为 3001
       open: true, // 自动在浏览器中打开
+      // 【关键修复】添加代理配置，将前端的 /api 请求转发到后端 8081 端口
+      // 这样前端可以使用相对路径 /api/*，Vite 会自动转发到 http://localhost:8081/api/*
+      proxy: {
+        '/api': {
+          target: 'http://localhost:8081',
+          changeOrigin: true,
+          secure: false,
+          ws: true, // 支持 WebSocket（如果未来需要）
+          // 【日志】可选：在开发环境中打印代理请求日志
+          configure: (proxy, _options) => {
+            proxy.on('error', (err, _req, _res) => {
+              console.log('[Vite Proxy] 代理错误:', err);
+            });
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              console.log(`[Vite Proxy] 转发请求: ${req.method} ${req.url} -> ${proxyReq.path}`);
+            });
+            proxy.on('proxyRes', (proxyRes, req, _res) => {
+              console.log(`[Vite Proxy] 收到响应: ${req.method} ${req.url} - ${proxyRes.statusCode}`);
+            });
+          },
+        },
+      },
     },
   });

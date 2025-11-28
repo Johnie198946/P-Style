@@ -147,23 +147,38 @@ class AnalysisFormatter:
         解析范围字符串，支持多种格式
         
         支持的格式：
-        1. 范围+描述："+0.3～+0.6，轻微提升使高光有"柔光"" → range: "+0.45", note: "轻微提升使高光有"柔光""
-        2. 范围："+0.2 ~ +0.5" → range: "+0.35", note: ""
-        3. 单个值："+0.3" → range: "+0.30", note: ""
-        4. 描述："微调" → range: "+0", note: "微调"
+        1. 【新格式】Action(Value)|Reason："压暗 (-1.5) | 匹配低调氛围" → range: "-1.50", note: "匹配低调氛围", action: "压暗"
+        2. 范围+描述："+0.3～+0.6，轻微提升使高光有"柔光"" → range: "+0.45", note: "轻微提升使高光有"柔光""
+        3. 范围："+0.2 ~ +0.5" → range: "+0.35", note: ""
+        4. 单个值："+0.3" → range: "+0.30", note: ""
+        5. 描述："微调" → range: "+0", note: "微调"
         
         Args:
             range_str: 范围字符串
             
         Returns:
-            {"range": str, "note": str}
+            {"range": str, "note": str, "action": str}  # action 字段可选
         """
         if not range_str or not isinstance(range_str, str):
             return {"range": "+0", "note": ""}
         
         range_str = range_str.strip()
         
-        # 1. 尝试提取范围+描述格式（如："+0.3～+0.6，轻微提升使高光有"柔光""）
+        # 【新增】1. 尝试提取 "Action(Value)|Reason" 格式（新差距分析格式）
+        # 例如："压暗 (-1.5) | 匹配低调氛围" 或 "提亮暗部 (+60) | 大幅提亮暗部"
+        # 支持中英文括号和竖线分隔符
+        action_value_reason_match = re.search(r'(.+?)\s*[（(]\s*([+-]?\d+\.?\d*)\s*[）)]\s*[|｜]\s*(.+)', range_str)
+        if action_value_reason_match:
+            action = action_value_reason_match.group(1).strip()
+            val = float(action_value_reason_match.group(2))
+            reason = action_value_reason_match.group(3).strip()
+            return {
+                "range": f"{val:+.2f}" if val != 0 else "+0",
+                "note": reason,
+                "action": action  # 【新增】保存动作描述
+            }
+        
+        # 2. 尝试提取范围+描述格式（如："+0.3～+0.6，轻微提升使高光有"柔光""）
         # 使用正则表达式匹配：范围部分（可能包含～或~）和描述部分（逗号后的内容）
         range_desc_match = re.search(r'([+-]?\d+\.?\d*)\s*[～~]\s*([+-]?\d+\.?\d*)\s*[，,]\s*(.+)', range_str)
         if range_desc_match:
@@ -176,7 +191,7 @@ class AnalysisFormatter:
                 "note": description
             }
         
-        # 2. 尝试提取范围格式（如："+0.2 ~ +0.5"）
+        # 3. 尝试提取范围格式（如："+0.2 ~ +0.5"）
         range_match = re.search(r'([+-]?\d+\.?\d*)\s*[～~]\s*([+-]?\d+\.?\d*)', range_str)
         if range_match:
             val1 = float(range_match.group(1))
@@ -187,7 +202,18 @@ class AnalysisFormatter:
                 "note": ""
             }
         
-        # 3. 尝试提取单个数值（如："+0.3" 或 "约 +0.3EV"）
+        # 4. 尝试提取 "范围 (描述)" 格式（如："-30 (保护高光细节)" 或 "+60 (大幅提亮暗部)"）
+        # 【新增】支持 Gemini 返回的格式：数值后跟括号内的描述
+        paren_match = re.search(r'([+-]?\d+\.?\d*)\s*[（(]\s*(.+?)\s*[）)]', range_str)
+        if paren_match:
+            val = float(paren_match.group(1))
+            description = paren_match.group(2).strip()
+            return {
+                "range": f"{val:+.2f}" if val != 0 else "+0",
+                "note": description
+            }
+        
+        # 5. 尝试提取单个数值（如："+0.3" 或 "约 +0.3EV"）
         single_match = re.search(r'([+-]?\d+\.?\d*)', range_str)
         if single_match:
             val = float(single_match.group(1))
@@ -1754,170 +1780,221 @@ class AnalysisFormatter:
             
             # 如果存在 reference_analysis，说明是新双宇宙结构
             if reference_analysis:
-                logger.info("使用新双宇宙结构 (module_2_composition: reference_analysis + composition_clinic)")
-                
-                # ==========================================================
-                # 🛠️ 清洗 Reference Analysis 数据（参考图分析 - 教科书标准）
-                # ==========================================================
-                if reference_analysis and isinstance(reference_analysis, dict):
-                    # 1. 清洗空间深度多边形 (Spatial Depth Polygons)
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    spatial_depth = reference_analysis.get("spatial_depth", {})
-                    if spatial_depth and isinstance(spatial_depth, dict):
-                        for plane in ["foreground", "midground", "background"]:
-                            if plane in spatial_depth and isinstance(spatial_depth[plane], dict):
-                                polygon = spatial_depth[plane].get("polygon", [])
-                                if polygon and isinstance(polygon, list):
-                                    for p in polygon:
-                                        # 【防御性检查】确保 p 是字典类型，且包含 x, y 键
-                                        if isinstance(p, dict):
-                                            # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                            p["x"] = self._normalize_point(p.get("x"), image_width)
-                                            p["y"] = self._normalize_point(p.get("y"), image_height)
-                                    logger.debug(f"_format_composition: ✅ reference_analysis.spatial_depth.{plane}.polygon 已归一化，共 {len(polygon)} 个点")
+                    logger.info("使用新双宇宙结构 (module_2_composition: reference_analysis + composition_clinic)")
                     
-                    # 2. 清洗视觉权重图层 (Visual Weight Layers)
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    visual_weight = reference_analysis.get("visual_weight", {})
-                    if visual_weight and isinstance(visual_weight, dict):
-                        layers_visual_map = visual_weight.get("layers_visual_map", [])
-                        if layers_visual_map and isinstance(layers_visual_map, list):
-                            for layer in layers_visual_map:
-                                # 【防御性检查】确保 layer 是字典类型，且包含 box 键
-                                if isinstance(layer, dict) and "box" in layer:
-                                    box = layer["box"]
-                                    # 【防御性检查】确保 box 是字典类型
-                                    if isinstance(box, dict):
+                    # 【新增】详细日志：记录 reference_analysis 中的所有字段
+                    if isinstance(reference_analysis, dict):
+                        logger.info(f"_format_composition: reference_analysis 字段列表: {list(reference_analysis.keys())}")
+                        # 记录关键字段是否存在
+                        logger.info(f"_format_composition: classification = {reference_analysis.get('classification', 'N/A')}")
+                        logger.info(f"_format_composition: geometric_structure = {reference_analysis.get('geometric_structure', 'N/A')}")
+                        logger.info(f"_format_composition: visual_quality_assessment = {bool(reference_analysis.get('visual_quality_assessment'))}")
+                        logger.info(f"_format_composition: composition_quality = {bool(reference_analysis.get('composition_quality'))}")
+                        logger.info(f"_format_composition: visual_weight = {bool(reference_analysis.get('visual_weight'))}")
+                        logger.info(f"_format_composition: visual_flow = {bool(reference_analysis.get('visual_flow'))}")
+                        logger.info(f"_format_composition: spatial_depth = {bool(reference_analysis.get('spatial_depth'))}")
+                        logger.info(f"_format_composition: negative_space = {bool(reference_analysis.get('negative_space'))}")
+                        # 记录 visual_weight 的详细字段
+                        visual_weight = reference_analysis.get("visual_weight", {})
+                        if isinstance(visual_weight, dict):
+                            logger.info(f"_format_composition: visual_weight.score = {visual_weight.get('score', 'N/A')}")
+                            logger.info(f"_format_composition: visual_weight.method = {visual_weight.get('method', 'N/A')}")
+                            logger.info(f"_format_composition: visual_weight.description = {bool(visual_weight.get('description'))}")
+                            logger.info(f"_format_composition: visual_weight.layers_visual_map = {len(visual_weight.get('layers_visual_map', []))} 个图层")
+                        # 记录 visual_flow 的详细字段
+                        visual_flow = reference_analysis.get("visual_flow", {})
+                        if isinstance(visual_flow, dict):
+                            logger.info(f"_format_composition: visual_flow.description = {bool(visual_flow.get('description'))}")
+                            logger.info(f"_format_composition: visual_flow.vectors = {len(visual_flow.get('vectors', []))} 条向量")
+                
+            # ==========================================================
+            # 🛠️ 清洗 Reference Analysis 数据（参考图分析 - 教科书标准）
+            # ==========================================================
+            if reference_analysis and isinstance(reference_analysis, dict):
+                # 1. 清洗空间深度多边形 (Spatial Depth Polygons)
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                spatial_depth = reference_analysis.get("spatial_depth", {})
+                if spatial_depth and isinstance(spatial_depth, dict):
+                    for plane in ["foreground", "midground", "background"]:
+                        if plane in spatial_depth and isinstance(spatial_depth[plane], dict):
+                            polygon = spatial_depth[plane].get("polygon", [])
+                            if polygon and isinstance(polygon, list):
+                                for p in polygon:
+                                    # 【防御性检查】确保 p 是字典类型，且包含 x, y 键
+                                    if isinstance(p, dict):
                                         # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                        box["x"] = self._normalize_point(box.get("x"), image_width)
-                                        box["y"] = self._normalize_point(box.get("y"), image_height)
-                                        box["w"] = self._normalize_point(box.get("w"), image_width)
-                                        box["h"] = self._normalize_point(box.get("h"), image_height)
-                            logger.info(f"_format_composition: ✅ reference_analysis.visual_weight.layers_visual_map 已归一化，共 {len(layers_visual_map)} 个图层")
-                    
-                    # 3. 清洗视觉流向量 (Visual Flow Vectors) - 复用之前的逻辑
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    visual_flow = reference_analysis.get("visual_flow", {})
-                    if visual_flow and isinstance(visual_flow, dict):
-                        # 清洗消失点
-                        vp = visual_flow.get("vanishing_point")
-                        # 【防御性检查】确保 vp 是字典类型
-                        if vp and isinstance(vp, dict):
-                            # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                            vp["x"] = self._normalize_point(vp.get("x"), image_width)
-                            vp["y"] = self._normalize_point(vp.get("y"), image_height)
-                            logger.debug(f"_format_composition: ✅ reference_analysis.visual_flow.vanishing_point 已归一化: x={vp.get('x', 'N/A')}, y={vp.get('y', 'N/A')}")
-                        
-                        # 清洗向量数组
-                        vectors = visual_flow.get("vectors", [])
-                        if vectors and isinstance(vectors, list):
-                            for v in vectors:
-                                # 【防御性检查】确保 v 是字典类型
-                                if not isinstance(v, dict):
-                                    continue
-                                # 清洗 start 点
-                                if "start" in v and isinstance(v["start"], dict):
-                                    # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                    v["start"]["x"] = self._normalize_point(v["start"].get("x"), image_width)
-                                    v["start"]["y"] = self._normalize_point(v["start"].get("y"), image_height)
-                                # 清洗 end 点
-                                if "end" in v and isinstance(v["end"], dict):
-                                    # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                    v["end"]["x"] = self._normalize_point(v["end"].get("x"), image_width)
-                                    v["end"]["y"] = self._normalize_point(v["end"].get("y"), image_height)
-                                # 确保 strength 存在
-                                if "strength" not in v or v.get("strength") is None:
-                                    v["strength"] = 70
-                            logger.info(f"_format_composition: ✅ reference_analysis.visual_flow.vectors 已归一化，共 {len(vectors)} 条向量")
+                                        p["x"] = self._normalize_point(p.get("x"), image_width)
+                                        p["y"] = self._normalize_point(p.get("y"), image_height)
+                                logger.debug(f"_format_composition: ✅ reference_analysis.spatial_depth.{plane}.polygon 已归一化，共 {len(polygon)} 个点")
                 
-                # ==========================================================
-                # 🛠️ 清洗 Composition Clinic 数据（用户图诊疗 - 手术台）
-                # ==========================================================
-                # 复用之前的 composition_clinic 清洗逻辑
-                if composition_clinic and isinstance(composition_clinic, dict):
-                    # 清洗 suggested_crop 坐标
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    suggested_crop = composition_clinic.get("suggested_crop")
-                    if suggested_crop and isinstance(suggested_crop, dict):
+                # 2. 清洗视觉权重图层 (Visual Weight Layers)
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                visual_weight = reference_analysis.get("visual_weight", {})
+                if visual_weight and isinstance(visual_weight, dict):
+                    layers_visual_map = visual_weight.get("layers_visual_map", [])
+                    if layers_visual_map and isinstance(layers_visual_map, list):
+                        for layer in layers_visual_map:
+                            # 【防御性检查】确保 layer 是字典类型，且包含 box 键
+                            if isinstance(layer, dict) and "box" in layer:
+                                box = layer["box"]
+                                # 【防御性检查】确保 box 是字典类型
+                                if isinstance(box, dict):
+                                    # 【修复】使用 .get() 方法安全获取值，防止 KeyError
+                                    box["x"] = self._normalize_point(box.get("x"), image_width)
+                                    box["y"] = self._normalize_point(box.get("y"), image_height)
+                                    box["w"] = self._normalize_point(box.get("w"), image_width)
+                                    box["h"] = self._normalize_point(box.get("h"), image_height)
+                        logger.info(f"_format_composition: ✅ reference_analysis.visual_weight.layers_visual_map 已归一化，共 {len(layers_visual_map)} 个图层")
+                
+                # 3. 清洗视觉流向量 (Visual Flow Vectors) - 复用之前的逻辑
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                visual_flow = reference_analysis.get("visual_flow", {})
+                if visual_flow and isinstance(visual_flow, dict):
+                    # 清洗消失点
+                    vp = visual_flow.get("vanishing_point")
+                    # 【防御性检查】确保 vp 是字典类型
+                    if vp and isinstance(vp, dict):
                         # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                        suggested_crop["x"] = self._normalize_point(suggested_crop.get("x"), image_width)
-                        suggested_crop["y"] = self._normalize_point(suggested_crop.get("y"), image_height)
-                        suggested_crop["w"] = self._normalize_point(suggested_crop.get("w"), image_width)
-                        suggested_crop["h"] = self._normalize_point(suggested_crop.get("h"), image_height)
-                        logger.debug(f"_format_composition: ✅ composition_clinic.suggested_crop 已归一化")
+                        vp["x"] = self._normalize_point(vp.get("x"), image_width)
+                        vp["y"] = self._normalize_point(vp.get("y"), image_height)
+                        logger.debug(f"_format_composition: ✅ reference_analysis.visual_flow.vanishing_point 已归一化: x={vp.get('x', 'N/A')}, y={vp.get('y', 'N/A')}")
                     
-                    # 清洗 action_guides 坐标
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    action_guides = composition_clinic.get("action_guides", [])
-                    if action_guides and isinstance(action_guides, list):
-                        for guide in action_guides:
-                            # 【防御性检查】确保 guide 是字典类型
-                            if isinstance(guide, dict):
+                    # 清洗向量数组
+                    vectors = visual_flow.get("vectors", [])
+                    if vectors and isinstance(vectors, list):
+                        for v in vectors:
+                            # 【防御性检查】确保 v 是字典类型
+                            if not isinstance(v, dict):
+                                continue
+                            # 清洗 start 点
+                            if "start" in v and isinstance(v["start"], dict):
                                 # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                guide["x"] = self._normalize_point(guide.get("x"), image_width)
-                                guide["y"] = self._normalize_point(guide.get("y"), image_height)
-                        logger.debug(f"_format_composition: ✅ composition_clinic.action_guides 已归一化，共 {len(action_guides)} 个指导")
-                    
-                    # 清洗 grading_masks 坐标
-                    # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
-                    grading_masks = composition_clinic.get("grading_masks", [])
-                    if grading_masks and isinstance(grading_masks, list):
-                        for mask in grading_masks:
-                            # 【防御性检查】确保 mask 是字典类型
-                            if isinstance(mask, dict):
-                                area_polygon = mask.get("area_polygon", [])
-                                if area_polygon and isinstance(area_polygon, list):
-                                    for p in area_polygon:
-                                        # 【防御性检查】确保 p 是字典类型
-                                        if isinstance(p, dict):
-                                            # 【修复】使用 .get() 方法安全获取值，防止 KeyError
-                                            p["x"] = self._normalize_point(p.get("x"), image_width)
-                                            p["y"] = self._normalize_point(p.get("y"), image_height)
-                        logger.debug(f"_format_composition: ✅ composition_clinic.grading_masks 已归一化，共 {len(grading_masks)} 个蒙版")
-                
-                # 构建新双宇宙结构
-                structured = {
-                    "reference_analysis": reference_analysis if isinstance(reference_analysis, dict) else None,
-                    "composition_clinic": composition_clinic if isinstance(composition_clinic, dict) else None,
-                }
-                
-                # 【向后兼容】为了兼容旧的前端代码，也保留一些旧字段
-                # 从 reference_analysis 中提取数据填充旧字段
-                if reference_analysis and isinstance(reference_analysis, dict):
-                    structured["main_structure"] = reference_analysis.get("geometric_structure", "")
-                    structured["style_class"] = reference_analysis.get("classification", "")
-                    
-                    # 提取 visual_weight 数据到旧字段
-                    ref_visual_weight = reference_analysis.get("visual_weight", {})
-                    if ref_visual_weight:
-                        structured["subject_weight"] = {
-                            "score": ref_visual_weight.get("score", 0),
-                            "method": ref_visual_weight.get("method", ""),
-                            "description": ref_visual_weight.get("description", ""),
-                            "layers": ""  # 旧字段，从 layers_visual_map 可以推导
-                        }
-                    
-                    # 提取 visual_flow 和 spatial_depth
-                    structured["visual_flow"] = reference_analysis.get("visual_flow", {})
-                    structured["spatial_depth"] = reference_analysis.get("spatial_depth", {})
-                    structured["negative_space"] = reference_analysis.get("negative_space", {})
-                
-                return {
-                    "naturalLanguage": {
-                        "framework": structured.get("main_structure", ""),
-                        "subjectWeight": structured.get("subject_weight", {}).get("description", "") if isinstance(structured.get("subject_weight"), dict) else "",
-                        "leadingLines": reference_analysis.get("visual_flow", {}).get("description", "") if isinstance(reference_analysis.get("visual_flow"), dict) else "",
-                        "spaceLayers": "",
-                        "proportion": "",
-                        "balanceDynamics": "",
-                    },
-                    "structured": structured,
-                }
+                                v["start"]["x"] = self._normalize_point(v["start"].get("x"), image_width)
+                                v["start"]["y"] = self._normalize_point(v["start"].get("y"), image_height)
+                            # 清洗 end 点
+                            if "end" in v and isinstance(v["end"], dict):
+                                # 【修复】使用 .get() 方法安全获取值，防止 KeyError
+                                v["end"]["x"] = self._normalize_point(v["end"].get("x"), image_width)
+                                v["end"]["y"] = self._normalize_point(v["end"].get("y"), image_height)
+                            # 确保 strength 存在
+                            if "strength" not in v or v.get("strength") is None:
+                                v["strength"] = 70
+                        logger.info(f"_format_composition: ✅ reference_analysis.visual_flow.vectors 已归一化，共 {len(vectors)} 条向量")
             
-            # 【向后兼容】如果不存在 reference_analysis，使用旧的 5 字段结构
-            else:
-                logger.info("使用旧 Prompt 结构 (module_2_composition) - 5字段结构（向后兼容）")
+            # ==========================================================
+            # 🛠️ 清洗 Composition Clinic 数据（用户图诊疗 - 手术台）
+            # ==========================================================
+            # 复用之前的 composition_clinic 清洗逻辑
+            if composition_clinic and isinstance(composition_clinic, dict):
+                # 清洗 suggested_crop 坐标
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                suggested_crop = composition_clinic.get("suggested_crop")
+                if suggested_crop and isinstance(suggested_crop, dict):
+                    # 【修复】使用 .get() 方法安全获取值，防止 KeyError
+                    suggested_crop["x"] = self._normalize_point(suggested_crop.get("x"), image_width)
+                    suggested_crop["y"] = self._normalize_point(suggested_crop.get("y"), image_height)
+                    suggested_crop["w"] = self._normalize_point(suggested_crop.get("w"), image_width)
+                    suggested_crop["h"] = self._normalize_point(suggested_crop.get("h"), image_height)
+                    logger.debug(f"_format_composition: ✅ composition_clinic.suggested_crop 已归一化")
+                
+                # 清洗 action_guides 坐标
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                action_guides = composition_clinic.get("action_guides", [])
+                if action_guides and isinstance(action_guides, list):
+                    for guide in action_guides:
+                        # 【防御性检查】确保 guide 是字典类型
+                        if isinstance(guide, dict):
+                            # 【修复】使用 .get() 方法安全获取值，防止 KeyError
+                            guide["x"] = self._normalize_point(guide.get("x"), image_width)
+                            guide["y"] = self._normalize_point(guide.get("y"), image_height)
+                    logger.debug(f"_format_composition: ✅ composition_clinic.action_guides 已归一化，共 {len(action_guides)} 个指导")
+                
+                # 清洗 grading_masks 坐标
+                # 【修复】确保所有坐标值在使用前都已正确初始化，防止 NameError
+                grading_masks = composition_clinic.get("grading_masks", [])
+                if grading_masks and isinstance(grading_masks, list):
+                    for mask in grading_masks:
+                        # 【防御性检查】确保 mask 是字典类型
+                        if isinstance(mask, dict):
+                            area_polygon = mask.get("area_polygon", [])
+                            if area_polygon and isinstance(area_polygon, list):
+                                for p in area_polygon:
+                                    # 【防御性检查】确保 p 是字典类型
+                                    if isinstance(p, dict):
+                                        # 【修复】使用 .get() 方法安全获取值，防止 KeyError
+                                        p["x"] = self._normalize_point(p.get("x"), image_width)
+                                        p["y"] = self._normalize_point(p.get("y"), image_height)
+                    logger.debug(f"_format_composition: ✅ composition_clinic.grading_masks 已归一化，共 {len(grading_masks)} 个蒙版")
             
+            # 构建新双宇宙结构
+            structured = {
+                "reference_analysis": reference_analysis if isinstance(reference_analysis, dict) else None,
+                "composition_clinic": composition_clinic if isinstance(composition_clinic, dict) else None,
+            }
+            
+            # 【向后兼容】为了兼容旧的前端代码，也保留一些旧字段
+            # 从 reference_analysis 中提取数据填充旧字段
+            if reference_analysis and isinstance(reference_analysis, dict):
+                # 【修复】字段映射关系：
+                # - classification（构图类型，如"环境人像、风光、人文街景"）→ main_structure（分类）
+                # - geometric_structure（几何结构，如"中心构图、三分法"）→ 保持原字段名
+                structured["main_structure"] = reference_analysis.get("classification", "")  # 【修复】分类字段：classification 映射到 main_structure
+                structured["style_class"] = reference_analysis.get("classification", "")  # 风格分类也使用 classification
+                # 【新增】确保 geometric_structure 也传递到 structured 中（用于前端显示）
+                structured["geometric_structure"] = reference_analysis.get("geometric_structure", "")
+                
+                # 提取 visual_weight 数据到旧字段
+                ref_visual_weight = reference_analysis.get("visual_weight", {})
+                if ref_visual_weight:
+                    structured["subject_weight"] = {
+                        "score": ref_visual_weight.get("score", 0),
+                        "method": ref_visual_weight.get("method", ""),
+                        "description": ref_visual_weight.get("description", ""),
+                        "layers": ""  # 旧字段，从 layers_visual_map 可以推导
+                    }
+                
+                # 提取 visual_flow 和 spatial_depth
+                structured["visual_flow"] = reference_analysis.get("visual_flow", {})
+                structured["spatial_depth"] = reference_analysis.get("spatial_depth", {})
+                structured["negative_space"] = reference_analysis.get("negative_space", {})
+                
+                # 【新增】提取 ratios_negative_space 数据（用于前端显示留白比例详情）
+                # 【修复】ratios_negative_space 可能在 reference_analysis 中，也可能在 module_2 的顶层
+                ratios_negative_space = reference_analysis.get("ratios_negative_space", {}) or module_2.get("ratios_negative_space", {})
+                if ratios_negative_space:
+                    structured["ratios_negative_space"] = ratios_negative_space
+                    logger.info(f"_format_composition: ✅ 已提取 ratios_negative_space: entity_ratio={ratios_negative_space.get('entity_ratio', 'N/A')}, space_ratio={ratios_negative_space.get('space_ratio', 'N/A')}, distribution={bool(ratios_negative_space.get('distribution'))}")
+                else:
+                    logger.warning(f"_format_composition: ⚠️ ratios_negative_space 字段不存在，前端可能无法显示留白比例详情")
+                
+                # 【新增】确保完整的 reference_analysis 对象被添加到 module_2_composition 中
+                # 这样前端 CompositionAnalysisPanel 可以直接访问所有字段（包括 composition_quality）
+                if "module_2_composition" not in structured:
+                    structured["module_2_composition"] = {}
+                structured["module_2_composition"]["reference_analysis"] = reference_analysis
+                if composition_clinic:
+                    structured["module_2_composition"]["composition_clinic"] = composition_clinic
+                
+                # 【新增】确保 ratios_negative_space 也传递到 structured 中（用于前端显示）
+                if ratios_negative_space and "ratios_negative_space" not in structured:
+                    structured["ratios_negative_space"] = ratios_negative_space
+            
+            return {
+                "naturalLanguage": {
+                    "framework": structured.get("main_structure", ""),
+                    "subjectWeight": structured.get("subject_weight", {}).get("description", "") if isinstance(structured.get("subject_weight"), dict) else "",
+                    "leadingLines": reference_analysis.get("visual_flow", {}).get("description", "") if isinstance(reference_analysis.get("visual_flow"), dict) else "",
+                    "spaceLayers": "",
+                    "proportion": "",
+                    "balanceDynamics": "",
+                },
+                "structured": structured,
+            }
+        
+        # 【向后兼容】如果不存在 reference_analysis，使用旧的 5 字段结构
+        else:
+            logger.info("使用旧 Prompt 结构 (module_2_composition) - 5字段结构（向后兼容）")
+        
             main_structure = module_2.get("main_structure", "")
             subject_weight = module_2.get("subject_weight", {})
             visual_guidance = module_2.get("visual_guidance", {})
@@ -2410,6 +2487,18 @@ class AnalysisFormatter:
                     "points_blue": tone_curves.get("points_blue", []),
                 }
             
+            # 【新增】提取 action_priorities 数据（行动优先级）
+            action_priorities = module_3.get("action_priorities", {})
+            action_priorities_data = {}
+            if isinstance(action_priorities, dict):
+                action_priorities_data = {
+                    "note": action_priorities.get("note", ""),
+                    "primary_action": action_priorities.get("primary_action", {}),
+                    "secondary_action": action_priorities.get("secondary_action", {}),
+                    "tertiary_action": action_priorities.get("tertiary_action", {}),
+                }
+                logger.info(f"_format_lighting: ✅ 已提取 action_priorities: primary={action_priorities_data.get('primary_action', {}).get('tool', 'N/A')}")
+            
             structured = {
                 "basic": basic,
                 "texture": texture,
@@ -2418,6 +2507,10 @@ class AnalysisFormatter:
             # 如果有色调曲线数据，添加到 structured
             if tone_curves_data and (tone_curves_data.get("points_rgb") or tone_curves_data.get("points_red")):
                 structured["toneCurves"] = tone_curves_data
+            
+            # 【新增】如果有 action_priorities 数据，添加到 structured
+            if action_priorities_data and action_priorities_data.get("primary_action"):
+                structured["action_priorities"] = action_priorities_data
             
             return {
                 "naturalLanguage": {

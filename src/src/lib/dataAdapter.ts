@@ -459,8 +459,17 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     // 【🔴 关键修复】从 photoReview.structured.module_2_composition 中提取 visual_flow 和 composition_clinic
     // 因为 _format_photo_review 现在将 module_2_composition 放在 photoReview.structured 中
     // 【新增】同时检查 structured 顶层是否有 composition_clinic（_format_photo_review 也会直接添加到顶层）
-    const module_2_composition = sections.photoReview?.structured?.module_2_composition;
-    const composition_clinic_from_top = sections.photoReview?.structured?.composition_clinic; // 【新增】从顶层提取
+    const module_2_composition = sections.photoReview?.structured?.module_2_composition || structured.module_2_composition;
+    const composition_clinic_from_top = sections.photoReview?.structured?.composition_clinic || structured.composition_clinic; // 【新增】从顶层提取
+    
+    // 【新增】确保 module_2_composition 数据传递到前端（用于 CompositionAnalysisPanel）
+    if (module_2_composition) {
+      // 将 module_2_composition 添加到 result.composition 中，供前端使用
+      if (!result.composition) {
+        result.composition = {};
+      }
+      result.composition.module_2_composition = module_2_composition;
+    }
     
     if (module_2_composition || composition_clinic_from_top) {
       // 【调试日志】记录 module_2_composition 数据（仅在开发环境）
@@ -812,14 +821,47 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     const basic = structured.basic || {};
     const texture = structured.texture || {};
     
+    // 【新增】解析 action_priorities 数据（行动优先级）
+    const action_priorities = structured.action_priorities || {};
+    
     result.lighting = {
       exposure_control: [
-        { param: "曝光", range: basic.exposure?.range || "+0", desc: basic.exposure?.note || "" },
-        { param: "对比度", range: basic.contrast?.range || "+0", desc: basic.contrast?.note || "" },
-        { param: "高光", range: basic.highlights?.range || "+0", desc: basic.highlights?.note || "" },
-        { param: "阴影", range: basic.shadows?.range || "+0", desc: basic.shadows?.note || "" },
-        { param: "白色", range: basic.whites?.range || "+0", desc: basic.whites?.note || "" },
-        { param: "黑色", range: basic.blacks?.range || "+0", desc: basic.blacks?.note || "" },
+        { 
+          param: "曝光", 
+          range: basic.exposure?.range || "+0", 
+          desc: basic.exposure?.note || "",
+          action: basic.exposure?.action || "", // 【新增】动作描述（如："压暗"、"提亮"）
+        },
+        { 
+          param: "对比度", 
+          range: basic.contrast?.range || "+0", 
+          desc: basic.contrast?.note || "",
+          action: basic.contrast?.action || "",
+        },
+        { 
+          param: "高光", 
+          range: basic.highlights?.range || "+0", 
+          desc: basic.highlights?.note || "",
+          action: basic.highlights?.action || "",
+        },
+        { 
+          param: "阴影", 
+          range: basic.shadows?.range || "+0", 
+          desc: basic.shadows?.note || "",
+          action: basic.shadows?.action || "",
+        },
+        { 
+          param: "白色", 
+          range: basic.whites?.range || "+0", 
+          desc: basic.whites?.note || "",
+          action: basic.whites?.action || "",
+        },
+        { 
+          param: "黑色", 
+          range: basic.blacks?.range || "+0", 
+          desc: basic.blacks?.note || "",
+          action: basic.blacks?.action || "",
+        },
       ],
       tone_curves: structured.toneCurves ? {
         explanation: structured.toneCurves.explanation || "",
@@ -828,10 +870,32 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
         points_blue: structured.toneCurves.points_blue || [],
       } : undefined,
       texture_clarity: [
-        { param: "纹理", range: texture.texture?.range || "+0", desc: texture.texture?.note || "" },
-        { param: "清晰度", range: texture.clarity?.range || "+0", desc: texture.clarity?.note || "" },
-        { param: "去雾", range: texture.dehaze?.range || "+0", desc: texture.dehaze?.note || "" },
+        { 
+          param: "纹理", 
+          range: texture.texture?.range || "+0", 
+          desc: texture.texture?.note || "",
+          action: texture.texture?.action || "",
+        },
+        { 
+          param: "清晰度", 
+          range: texture.clarity?.range || "+0", 
+          desc: texture.clarity?.note || "",
+          action: texture.clarity?.action || "",
+        },
+        { 
+          param: "去雾", 
+          range: texture.dehaze?.range || "+0", 
+          desc: texture.dehaze?.note || "",
+          action: texture.dehaze?.action || "",
+        },
       ],
+      // 【新增】行动优先级（Top 3 Actions）
+      action_priorities: action_priorities.primary_action ? {
+        note: action_priorities.note || "",
+        primary_action: action_priorities.primary_action || {},
+        secondary_action: action_priorities.secondary_action || {},
+        tertiary_action: action_priorities.tertiary_action || {},
+      } : undefined,
     };
   }
 
@@ -917,55 +981,98 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     const lightroom = sections.lightroom;
     const structured = lightroom.structured || lightroom;
     
-    // 转换 panels 数组为 basic_panel 对象
+    // 【修复】优先从 structured.basic 中提取数据（新 Prompt 结构）
+    // 如果没有，则从 panels 数组中提取（旧结构）
+    const basic = structured.basic || {};
     const panels = structured.panels || [];
     const basicPanel: any = {};
     
-    // 参数名称映射（英文 -> 小写，中文 -> 英文）
-    const paramNameMap: Record<string, string> = {
-      "Temp": "temp", "Temperature": "temp", "色温": "temp",
-      "Tint": "tint", "色调": "tint",
-      "Exposure": "exposure", "曝光": "exposure",
-      "Contrast": "contrast", "对比度": "contrast",
-      "Highlights": "highlights", "高光": "highlights",
-      "Shadows": "shadows", "阴影": "shadows",
-      "Whites": "whites", "白色": "whites",
-      "Blacks": "blacks", "黑色": "blacks",
-      "Texture": "texture", "纹理": "texture",
-      "Clarity": "clarity", "清晰度": "clarity",
-      "Dehaze": "dehaze", "去雾": "dehaze",
-      "Vibrance": "vibrance", "自然饱和度": "vibrance",
-      "Saturation": "saturation", "饱和度": "saturation",
-    };
-    
-    // 遍历所有面板，合并参数到 basic_panel
-    panels.forEach((panel: any) => {
-      if (panel.params && Array.isArray(panel.params)) {
-        panel.params.forEach((param: any) => {
-          const paramName = param.name || param.label || "";
-          const mappedName = paramNameMap[paramName] || paramName.toLowerCase();
-          
-          // 解析数值（支持 "+0.3"、"-20" 等格式）
-          const valueStr = param.value || "+0";
+    // 【优先】从 structured.basic 中提取数据（新 Prompt 结构）
+    // 后端返回格式：{ highlights: { range: "-30", note: "保护高光细节" }, ... }
+    if (basic && Object.keys(basic).length > 0) {
+      const paramMap: Record<string, string> = {
+        "exposure": "exposure",
+        "contrast": "contrast",
+        "highlights": "highlights",
+        "shadows": "shadows",
+        "whites": "whites",
+        "blacks": "blacks",
+        "texture": "texture",
+        "clarity": "clarity",
+        "dehaze": "dehaze",
+        "vibrance": "vibrance",
+        "saturation": "saturation",
+        "temp": "temp",
+        "tint": "tint",
+      };
+      
+      Object.keys(basic).forEach((key) => {
+        const param = basic[key];
+        if (param && typeof param === 'object' && param.range !== undefined) {
+          const valueStr = param.range || "+0";
           const value = parseFloat(valueStr.replace(/[^0-9.-]/g, '') || "0");
-          
-          // 如果参数已存在，保留第一个（或合并逻辑）
-          if (!basicPanel[mappedName]) {
-            basicPanel[mappedName] = {
-              value,
-              range: valueStr,
-              reason: param.reason || param.purpose || "",
-              target_min: param.target_min,
-              target_max: param.target_max,
-            };
-          }
-        });
-      }
-    });
+          basicPanel[key] = {
+            value,
+            range: valueStr,
+            reason: param.note || "", // 【修复】使用 note 字段作为描述
+            target_min: param.target_min,
+            target_max: param.target_max,
+          };
+        }
+      });
+    }
+    
+    // 【向后兼容】如果没有从 basic 中提取到数据，则从 panels 数组中提取（旧结构）
+    if (Object.keys(basicPanel).length === 0) {
+      // 参数名称映射（英文 -> 小写，中文 -> 英文）
+      const paramNameMap: Record<string, string> = {
+        "Temp": "temp", "Temperature": "temp", "色温": "temp",
+        "Tint": "tint", "色调": "tint",
+        "Exposure": "exposure", "曝光": "exposure",
+        "Contrast": "contrast", "对比度": "contrast",
+        "Highlights": "highlights", "高光": "highlights",
+        "Shadows": "shadows", "阴影": "shadows",
+        "Whites": "whites", "白色": "whites",
+        "Blacks": "blacks", "黑色": "blacks",
+        "Texture": "texture", "纹理": "texture",
+        "Clarity": "clarity", "清晰度": "clarity",
+        "Dehaze": "dehaze", "去雾": "dehaze",
+        "Vibrance": "vibrance", "自然饱和度": "vibrance",
+        "Saturation": "saturation", "饱和度": "saturation",
+      };
+      
+      // 遍历所有面板，合并参数到 basic_panel
+      panels.forEach((panel: any) => {
+        if (panel.params && Array.isArray(panel.params)) {
+          panel.params.forEach((param: any) => {
+            const paramName = param.name || param.label || "";
+            const mappedName = paramNameMap[paramName] || paramName.toLowerCase();
+            
+            // 解析数值（支持 "+0.3"、"-20" 等格式）
+            const valueStr = param.value || "+0";
+            const value = parseFloat(valueStr.replace(/[^0-9.-]/g, '') || "0");
+            
+            // 如果参数已存在，保留第一个（或合并逻辑）
+            if (!basicPanel[mappedName]) {
+              basicPanel[mappedName] = {
+                value,
+                range: valueStr,
+                reason: param.reason || param.purpose || "",
+                target_min: param.target_min,
+                target_max: param.target_max,
+              };
+            }
+          });
+        }
+      });
+    }
     
     // 转换曲线数据
     const curveData = structured.toneCurve || structured.curve || {};
     const curvePoints = Array.isArray(curveData) ? curveData : curveData.points_rgb || [];
+    
+    // 【新增】从 toneCurves 中提取 explanation（曲线描述）
+    const toneCurvesExplanation = structured.toneCurves?.explanation || "";
     
     result.lightroom = {
       histogram: structured.histogram || {
@@ -979,7 +1086,8 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
         red: structured.rgbCurves?.red || [],
         green: structured.rgbCurves?.green || [],
         blue: structured.rgbCurves?.blue || [],
-        reason: "",
+        reason: toneCurvesExplanation, // 【修复】使用 toneCurves.explanation 作为曲线描述
+        analysis: toneCurvesExplanation, // 【新增】同时设置 analysis 字段，用于 AdvancedCurveMonitor 组件
       },
       split_toning: structured.colorGrading ? {
         highlights: {

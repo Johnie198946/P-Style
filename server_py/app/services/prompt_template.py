@@ -125,6 +125,7 @@ PART1_TEMPLATE = """
       "classification": "STRING: e.g., Environmental Portrait, Minimalist Architecture",
       "geometric_structure": "STRING: e.g., Center Composition, Golden Spiral, Triangle",
       "visual_quality_assessment": "STRING: Top-tier critique of WHY this composition is good. (Description only)",
+      "composition_quality": "STRING: Stand in the shoes of a top-tier photographer. Evaluate the overall composition quality from a professional perspective. Provide a detailed description of why this composition works well, focusing on advanced compositional techniques, visual harmony, and artistic excellence. (Description only, no scores)",
       "visual_weight": {
         "score": 0,
         "method": "STRING: e.g., Rule of Thirds, Golden Ratio",
@@ -180,6 +181,11 @@ PART1_TEMPLATE = """
         "percentage": 0,
         "horizontal_balance": "STRING",
         "vertical_balance": "STRING"
+      },
+      "ratios_negative_space": {
+        "entity_ratio": "STRING: e.g., 70%",
+        "space_ratio": "STRING: e.g., 30%",
+        "distribution": "STRING: Detailed description of negative space distribution"
       }
     },
     "composition_clinic": {
@@ -213,24 +219,42 @@ PART1_TEMPLATE = """
   },
   "module_3_lighting_params": {
     "exposure_control": {
-      "exposure": "STRING",
-      "contrast": "STRING",
-      "highlights": "STRING",
-      "shadows": "STRING",
-      "whites": "STRING",
-      "blacks": "STRING"
+      "exposure": "STRING: Calculate EV gap. Format: 'Action(Value)|Reason'. Ref brighter? '+'. Ref darker? '-'. Example: '压暗 (-1.5) | 匹配低调氛围'",
+      "contrast": "STRING: Calculate Contrast gap. Format: 'Action(Value)|Reason'. Ref punchier? '+'. Ref flatter? '-'. Example: '降低对比度 (-20) | 模仿柔光效果'",
+      "highlights": "STRING: Highlight recovery gap. Format: 'Action(Value)|Reason'. User blown out? '-'. Ref crisp? '+'. Example: '保护高光 (-30) | 保护高光细节'",
+      "shadows": "STRING: Shadow tone gap. Format: 'Action(Value)|Reason'. Ref matte? '+' (Lift). Ref deep? '-' (Crush). Example: '提亮暗部 (+60) | 大幅提亮暗部'",
+      "whites": "STRING: White point clipping gap. Format: 'Action(Value)|Reason'. Example: '柔化 (-10) | 柔化白色'",
+      "blacks": "STRING: Black point anchoring gap. Format: 'Action(Value)|Reason'. Example: '制造灰度感 (+30) | 制造灰度感'"
     },
     "tone_curves": {
-      "explanation": "STRING: Explain curve shape (e.g. Fade Black, S-Curve).",
+      "explanation": "STRING: Explain the curve needed to bridge the gap. e.g., '哑光胶片曲线：左下角黑点大幅上提（Fade Black），中间调平缓提升，高光轻微压暗。'",
       "points_rgb": [],
       "points_red": [],
       "points_green": [],
       "points_blue": []
     },
     "texture_clarity": {
-      "texture": "STRING",
-      "clarity": "STRING",
-      "dehaze": "STRING"
+      "texture": "STRING: Skin/Surface gap. Format: 'Action(Value)|Reason'. Example: '柔化纹理 (-15) | 柔化纹理'",
+      "clarity": "STRING: Midtone structure gap. Format: 'Action(Value)|Reason'. Example: '增加朦胧感 (-25) | 增加朦胧感'",
+      "dehaze": "STRING: Atmospheric gap. Format: 'Action(Value)|Reason'. Example: '模拟空气感 (-15) | 模拟空气感'"
+    },
+    "action_priorities": {
+      "note": "STRING: Identify the top 3 most critical adjustments needed. Example: '根据用户图与参考图的差距，以下三个调整最为关键'",
+      "primary_action": {
+        "tool": "STRING: e.g., '整体曝光', '白平衡', '色调曲线'",
+        "value": "STRING: e.g., '-1.5 EV', '+1500K', 'S-Curve'",
+        "instruction": "STRING: Short guide, e.g., '由于你的照片过亮，需要大幅压暗以接近参考图的深夜氛围'"
+      },
+      "secondary_action": {
+        "tool": "STRING",
+        "value": "STRING",
+        "instruction": "STRING"
+      },
+      "tertiary_action": {
+        "tool": "STRING",
+        "value": "STRING",
+        "instruction": "STRING"
+      }
     }
   }
 }
@@ -423,6 +447,57 @@ class PromptTemplateService:
 
 ---
 
+## Phase 3: 光影参数分析 - 差距计算协议 (Lighting Parameters - Gap Analysis Protocol)
+
+**🚨 核心原则：你不是在猜测参考图的原始参数，而是在计算将用户图转换为参考图所需的调整差值 (ADJUSTMENT DELTA)**
+
+### 🔧 GAP ANALYSIS PROTOCOL (FOR MODULE 3)
+
+**CRITICAL INSTRUCTION:**
+
+You are NOT guessing the original parameters of the Reference Image.
+
+You are calculating the **ADJUSTMENT DELTA** required to transform the [User Image] into the [Reference Image].
+
+**Logic:**
+
+1.  **Analyze User Image State:** e.g., "Too Bright (High-Key), Low Saturation".
+
+2.  **Analyze Reference Target:** e.g., "Dark (Low-Key), High Saturation".
+
+3.  **Calculate the Move:**
+
+    *   Exposure: User is Bright -> Target is Dark = **Output Negative Value (e.g., "-1.5 EV")**.
+
+    *   Temp: User is Cool -> Target is Warm = **Output Positive Value (e.g., "+1500K")**.
+
+**Format Constraint:**
+
+All numerical fields in `module_3_lighting_params` MUST follow this format:
+
+`"Action Direction (Value) | Motivation"`
+
+*   Example: `"压暗 (-1.5) | 匹配低调氛围"`
+
+*   Example: `"增暖 (+1500K) | 模拟日落色调"`
+
+*   Example: `"提亮暗部 (+60) | 大幅提亮暗部以恢复细节"`
+
+**Action Priorities (行动优先级):**
+
+在 `action_priorities` 字段中，识别出最关键的 3 个调整动作，按重要性排序：
+
+*   `primary_action`: 最重要的调整（例如：整体曝光、白平衡）
+*   `secondary_action`: 次要调整（例如：对比度、高光恢复）
+*   `tertiary_action`: 第三重要调整（例如：纹理、清晰度）
+
+每个 action 包含：
+*   `tool`: 工具名称（例如："整体曝光"、"白平衡"、"色调曲线"）
+*   `value`: 调整数值（例如："-1.5 EV"、"+1500K"）
+*   `instruction`: 简短指导语（例如："由于你的照片过亮，需要大幅压暗以接近参考图的深夜氛围"）
+
+---
+
 # ============================================================================
 # CRITICAL TONE (暴论与毒舌模式：拒绝废话，一针见血)
 # ============================================================================
@@ -482,6 +557,7 @@ class PromptTemplateService:
 2.  **视觉质量评价 (Visual Quality Assessment)**：
     - `visual_quality_assessment`：顶级摄影师视角的深度评价，解释**为什么这个构图是好的**。
     - 使用专业术语，分析构图的高级之处。
+    - `composition_quality`：站在顶级摄影师的角度，深入浅出地评价当前构图的质量。提供详细的描述，说明为什么这个构图在专业层面是优秀的，重点关注高级构图技巧、视觉和谐和艺术卓越性。（仅描述，不包含分数）
 
 3.  **视觉权重 (Visual Weight)**：
     - `visual_weight.score`：整体视觉权重分数（0-100）。
@@ -491,7 +567,7 @@ class PromptTemplateService:
     - 每个图层包含：`label`（标签）、`score`（权重分数）、`box`（坐标框，x,y,w,h 为 0-100%）。
 
 4.  **视觉流 (Visual Flow)**：
-    - `visual_flow.description`：深度解释视线移动路径。
+    - `visual_flow.description`：基于顶级摄影师视角，深入浅出地描述视觉路径。解释视线如何在画面中移动，从入口点到焦点再到出口点，分析引导线的设计意图和视觉流动的艺术性。使用通俗易懂的语言，让非专业用户也能理解构图的高级之处。
     - `visual_flow.vanishing_point`：消失点坐标（x, y 为 0-100%）。
     - `visual_flow.vectors`：在参考图上**画出向量线**，显示视线如何移动。
     - 向量类型：`leading`（引导线）、`perspective`（透视线）、`horizon`（地平线）、`distraction`（干扰线）。
@@ -507,6 +583,10 @@ class PromptTemplateService:
     - `negative_space.percentage`：留白比例。
     - `negative_space.horizontal_balance`：水平平衡（例如："Left Heavy", "Balanced"）。
     - `negative_space.vertical_balance`：垂直平衡（例如："Top Heavy", "Bottom Heavy"）。
+    - `ratios_negative_space`：留白比例详情
+      - `entity_ratio`：实体比例（例如："70%"）。
+      - `space_ratio`：留白比例（例如："30%"）。
+      - `distribution`：留白分布描述（例如："前景遮挡过多，导致呼吸感不足。"）。
 
 **⚠️ 重要：所有坐标（box, polygon, vectors）必须基于参考图（Reference Image），不是用户图！**
 

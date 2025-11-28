@@ -136,6 +136,13 @@ const TargetLockSlider = ({ label, value, unit = '', min = -100, max = 100, targ
                     style={{ left: `${percentage}%`, transform: 'translateX(-50%)' }}
                 ></div>
             </div>
+            
+            {/* 【新增】显示描述文本（reason） */}
+            {reason && (
+                <div className="mt-1.5 text-[9px] text-white/50 leading-relaxed">
+                    <span className="text-white/40">→</span> {reason}
+                </div>
+            )}
         </div>
     );
 };
@@ -280,8 +287,15 @@ const ColorPrism = ({ sat, vib }: { sat: number, vib: number }) => {
 const AdvancedCurveMonitor = ({ curveData }: { curveData: any }) => {
     const [activeChannel, setActiveChannel] = useState<'rgb' | 'red' | 'green' | 'blue'>('rgb');
 
-    // Mock data structure if not provided (matches user requirement)
-    const analysis = curveData?.analysis || {
+    // 【修复】优先使用 curveData.analysis 或 curveData.reason（曲线描述）
+    // 如果都没有，则使用默认的通道描述
+    const explanation = curveData?.analysis || curveData?.reason || "";
+    const analysis = explanation ? {
+        rgb: explanation,
+        red: explanation,
+        green: explanation,
+        blue: explanation
+    } : {
         rgb: "整体对比度调整，提亮中间调",
         red: "增强暖色调，适用于肤色和日落场景",
         green: "优化植物和自然场景的色彩平衡",

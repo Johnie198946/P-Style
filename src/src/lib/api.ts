@@ -270,18 +270,62 @@ const api = {
     /**
      * 密码登录
      * @param credentials - { email: string, password: string }
+     * 【修复】添加超时控制，防止登录请求卡住
      */
     login: async (credentials: any) => {
       if (USE_MOCK_DATA) return { accessToken: 'mock_jwt', user: { id: 1, name: 'Demo User' } };
-      return apiClient('/auth/login', { method: 'POST', body: JSON.stringify(credentials) });
+      
+      // 【超时控制】登录接口超时设置为 30 秒，防止请求卡住
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 30000); // 30 秒超时
+      
+      try {
+        const result = await apiClient('/auth/login', { 
+          method: 'POST', 
+          body: JSON.stringify(credentials),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', '登录请求超时（超过 30 秒），请检查网络连接或后端服务是否正常运行');
+        }
+        throw error;
+      }
     },
     /**
      * 注册
      * @param data - { email: string, password: string, code: string }
+     * 【修复】添加超时控制，防止注册请求卡住
      */
     register: async (data: any) => {
       if (USE_MOCK_DATA) return { accessToken: 'mock_jwt', user: { id: 1, name: 'Demo User' } };
-      return apiClient('/auth/register', { method: 'POST', body: JSON.stringify(data) });
+      
+      // 【超时控制】注册接口超时设置为 30 秒
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 30000); // 30 秒超时
+      
+      try {
+        const result = await apiClient('/auth/register', { 
+          method: 'POST', 
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', '注册请求超时（超过 30 秒），请检查网络连接或后端服务是否正常运行');
+        }
+        throw error;
+      }
     },
     /**
      * 发送验证码
@@ -311,13 +355,32 @@ const api = {
      * 验证码登录
      * @param data - { email: string, code: string }
      * 根据开发方案第 751 行实现
+     * 【修复】添加超时控制，防止登录请求卡住
      */
     loginWithCode: async (data: { email: string, code: string }) => {
       if (USE_MOCK_DATA) return { accessToken: 'mock_jwt', user: { id: 1, name: 'Demo User' } };
-      return apiClient('/auth/login-with-code', { 
-        method: 'POST', 
-        body: JSON.stringify(data) 
-      });
+      
+      // 【超时控制】验证码登录接口超时设置为 30 秒
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 30000); // 30 秒超时
+      
+      try {
+        const result = await apiClient('/auth/login-with-code', { 
+          method: 'POST', 
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', '登录请求超时（超过 30 秒），请检查网络连接或后端服务是否正常运行');
+        }
+        throw error;
+      }
     },
     /**
      * 获取当前用户信息

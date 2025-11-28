@@ -1,7 +1,10 @@
 import React, { useRef, useState } from 'react';
 import { BaseModal } from './BaseModal';
+import { useLanguage } from '../../src/contexts/LanguageContext';
+import { Sun, TrendingUp, TrendingDown, ArrowUp, ArrowDown, Zap, Activity, Layers } from 'lucide-react';
 
 export const LightingModal = ({ data, onClose }: any) => {
+  const { t } = useLanguage();
   const [tilt, setTilt] = useState({ x: 25, y: -15 });
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -78,25 +81,155 @@ export const LightingModal = ({ data, onClose }: any) => {
         {/* Data Panel */}
         <div className="bg-carbon-900 overflow-y-auto custom-scrollbar p-12">
            <div className="mb-12">
-              <h3 className="text-[10px] font-bold text-optic-gold uppercase mb-8 tracking-[0.2em] font-mono border-b border-white/5 pb-4">Exposure Matrix</h3>
+              <h3 className="text-[10px] font-bold text-optic-gold uppercase mb-2 tracking-[0.2em] font-mono border-b border-white/5 pb-4">
+                {t('modal.lighting.exposure_matrix') || 'Exposure Matrix'}
+              </h3>
+              {/* 【新增】副标题：用户图的偏离情况分析 */}
+              <p className="text-[9px] text-white/50 font-light mb-6 italic">
+                {t('modal.lighting.delta_subtitle') || 'The Delta to User'}
+              </p>
+              
+              {/* 【新增】Top 3 Actions 核心动作建议 */}
+              {data.action_priorities && data.action_priorities.primary_action && (
+                <div className="mb-8 space-y-3">
+                  <h4 className="text-[9px] font-bold text-white/70 uppercase tracking-widest mb-3 flex items-center gap-2">
+                    <Zap className="w-3 h-3 text-yellow-400" />
+                    {data.action_priorities.note || '核心动作建议'}
+                  </h4>
+                  
+                  {/* Primary Action */}
+                  {data.action_priorities.primary_action && (
+                    <ActionCard 
+                      action={data.action_priorities.primary_action} 
+                      priority="primary"
+                      icon={<Sun className="w-4 h-4" />}
+                    />
+                  )}
+                  
+                  {/* Secondary Action */}
+                  {data.action_priorities.secondary_action && data.action_priorities.secondary_action.tool && (
+                    <ActionCard 
+                      action={data.action_priorities.secondary_action} 
+                      priority="secondary"
+                      icon={<Activity className="w-4 h-4" />}
+                    />
+                  )}
+                  
+                  {/* Tertiary Action */}
+                  {data.action_priorities.tertiary_action && data.action_priorities.tertiary_action.tool && (
+                    <ActionCard 
+                      action={data.action_priorities.tertiary_action} 
+                      priority="tertiary"
+                      icon={<Layers className="w-4 h-4" />}
+                    />
+                  )}
+                </div>
+              )}
+              
+              {/* 曝光参数列表（优化显示：差异胶囊 + 方向指示器） */}
               <div className="space-y-3">
-                 {data.exposure_control.map((item: any, i: number) => (
+                 {data.exposure_control.map((item: any, i: number) => {
+                   // 解析数值，判断正负
+                   const numValue = parseFloat(item.range.replace(/[^0-9.-]/g, '')) || 0;
+                   const isPositive = numValue > 0;
+                   const isNegative = numValue < 0;
+                   
+                   return (
                     <div key={i} className="group p-5 bg-white/[0.02] border border-white/5 hover:border-white/20 transition-all duration-300 hover:translate-x-1 hover:bg-white/[0.04]">
                        <div className="flex justify-between items-baseline mb-2">
-                          <span className="text-sm font-bold text-gray-200">{item.param}</span>
-                          <span className="text-xs font-mono text-optic-gold">{item.range}</span>
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-200">{item.param}</span>
+                            {/* 【新增】方向指示器：根据数值正负显示不同颜色的箭头 */}
+                            {isPositive && (
+                              <ArrowUp className="w-3 h-3 text-orange-400" />
+                            )}
+                            {isNegative && (
+                              <ArrowDown className="w-3 h-3 text-cyan-400" />
+                            )}
+                          </div>
+                          {/* 【新增】差异胶囊：显示动作和数值 */}
+                          <div className="flex items-center gap-2">
+                            {item.action && (
+                              <span className={`text-[10px] font-medium px-2 py-0.5 rounded ${
+                                isPositive ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' :
+                                isNegative ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/30' :
+                                'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+                              }`}>
+                                {item.action}
+                              </span>
+                            )}
+                            <span className={`text-xs font-mono ${
+                              isPositive ? 'text-orange-400' :
+                              isNegative ? 'text-cyan-400' :
+                              'text-optic-gold'
+                            }`}>
+                              {item.range}
+                            </span>
+                          </div>
                        </div>
                        {/* AI Reasoning */}
-                       <div className="flex gap-3 mt-2 items-start opacity-60 group-hover:opacity-100 transition-opacity">
-                           <div className="w-0.5 h-full min-h-[12px] bg-optic-accent/50 mt-1"></div>
-                           <p className="text-xs text-gray-400 font-light leading-relaxed">{item.desc}</p>
-                       </div>
+                       {item.desc && (
+                         <div className="flex gap-3 mt-2 items-start opacity-60 group-hover:opacity-100 transition-opacity">
+                             <div className="w-0.5 h-full min-h-[12px] bg-optic-accent/50 mt-1"></div>
+                             <p className="text-xs text-gray-400 font-light leading-relaxed">{item.desc}</p>
+                         </div>
+                       )}
                     </div>
-                 ))}
+                 );
+                 })}
               </div>
            </div>
         </div>
       </div>
     </BaseModal>
+  );
+};
+
+// 【新增】ActionCard 组件：显示核心动作建议
+const ActionCard = ({ action, priority, icon }: { action: any; priority: 'primary' | 'secondary' | 'tertiary'; icon: React.ReactNode }) => {
+  const isPrimary = priority === 'primary';
+  
+  return (
+    <div className={`
+      p-4 rounded-lg border transition-all duration-300
+      ${isPrimary 
+        ? 'bg-yellow-500/10 border-yellow-500/30 shadow-lg shadow-yellow-500/10' 
+        : 'bg-white/[0.02] border-white/5'
+      }
+      hover:border-white/20 hover:bg-white/[0.04]
+    `}>
+      <div className="flex items-start gap-3">
+        {/* Icon */}
+        <div className={`
+          p-2 rounded-lg shrink-0
+          ${isPrimary ? 'bg-yellow-500/20 text-yellow-400' : 'bg-white/5 text-gray-400'}
+        `}>
+          {icon}
+        </div>
+        
+        {/* Content */}
+        <div className="flex-1">
+          <div className="flex items-center justify-between mb-1">
+            <span className={`text-xs font-bold ${isPrimary ? 'text-yellow-400' : 'text-gray-300'}`}>
+              {action.tool || 'N/A'}
+            </span>
+            {/* Badge */}
+            <span className={`
+              text-[10px] font-mono px-2 py-0.5 rounded
+              ${isPrimary 
+                ? 'bg-yellow-500/30 text-yellow-200 border border-yellow-500/50' 
+                : 'bg-white/5 text-gray-400 border border-white/10'
+              }
+            `}>
+              {action.value || 'N/A'}
+            </span>
+          </div>
+          {/* Instruction */}
+          <p className="text-[10px] text-gray-400 leading-relaxed mt-1">
+            {action.instruction || ''}
+          </p>
+        </div>
+      </div>
+    </div>
   );
 };

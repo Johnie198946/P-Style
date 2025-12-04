@@ -46,6 +46,8 @@ export class ApiError extends Error {
 const getAuthToken = () => localStorage.getItem('accessToken');
 export const setAuthToken = (token: string) => localStorage.setItem('accessToken', token);
 export const removeAuthToken = () => localStorage.removeItem('accessToken');
+// 【导出】导出 getAuthToken 函数，供其他组件使用（如 LightroomPanel 迭代反馈功能）
+export { getAuthToken };
 
 // --- MOCK DATA (Full Structure) ---
 const FULL_MOCK_DATA = {
@@ -153,6 +155,13 @@ const FULL_MOCK_DATA = {
  */
 async function apiClient<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
   const token = getAuthToken();
+  
+  // 【修复】检查 token 是否存在，如果不存在则记录警告
+  if (!token && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/register')) {
+    console.warn(`[API Client] ⚠️ 请求 ${endpoint} 时未找到认证 Token，可能导致 403 错误`);
+    console.warn(`[API Client] localStorage 中的 accessToken:`, localStorage.getItem('accessToken'));
+  }
+  
   const headers = {
     'Content-Type': 'application/json',
     ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
@@ -166,18 +175,26 @@ async function apiClient<T>(endpoint: string, options: RequestInit = {}): Promis
   if (!USE_MOCK_DATA) {
     console.log(`[API Request] ${options.method || 'GET'} ${fullUrl}`, {
       headers: { ...headers, Authorization: token ? 'Bearer ***' : undefined },
-      body: options.body instanceof FormData ? '[FormData]' : options.body
+      body: options.body instanceof FormData ? '[FormData]' : options.body,
+      hasToken: !!token,
+      tokenLength: token ? token.length : 0,
     });
   }
 
   try {
+    // 【性能监控】记录请求开始时间
+    const requestStartTime = Date.now();
     const response = await fetch(fullUrl, { ...options, headers });
+    const fetchElapsed = Date.now() - requestStartTime;
     
-    // 【日志】记录响应状态
+    // 【日志】记录响应状态和耗时
     if (!USE_MOCK_DATA) {
       console.log(`[API Response] ${options.method || 'GET'} ${fullUrl}`, {
         status: response.status,
-        statusText: response.statusText
+        statusText: response.statusText,
+        fetchElapsed: `${fetchElapsed}ms`,
+        contentType: response.headers.get('Content-Type'),
+        contentLength: response.headers.get('Content-Length'),
       });
     }
     
@@ -202,28 +219,57 @@ async function apiClient<T>(endpoint: string, options: RequestInit = {}): Promis
         }
       }
       
-      // 401 未授权：对于登录接口，不应该跳转（因为用户正在登录）
-      // 只有在已登录状态下访问需要认证的接口时，才需要跳转到登录页
-      // 登录接口本身返回 401 是正常的（如密码错误），应该直接抛出错误，让前端处理
+      // 【修复】处理 401 和 403 错误
+      // 401 未授权：Token 无效或已过期
+      // 403 禁止访问：Token 缺失或权限不足
       if (response.status === 401 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/register')) {
         // 只有在非登录/注册接口返回 401 时，才清除 token 并跳转
+        console.warn(`[API Client] ⚠️ 401 未授权错误: ${endpoint}, 清除 token 并跳转到登录页`);
         removeAuthToken();
         window.location.href = '/login';
         throw new ApiError(errorCode, 'Session expired');
+      }
+      
+      // 【新增】处理 403 禁止访问错误（Token 缺失或权限不足）
+      if (response.status === 403 && !endpoint.includes('/auth/login') && !endpoint.includes('/auth/register')) {
+        console.error(`[API Client] ❌ 403 禁止访问错误: ${endpoint}`);
+        console.error(`[API Client] 当前 token 状态:`, {
+          hasToken: !!token,
+          tokenLength: token ? token.length : 0,
+          tokenPreview: token ? `${token.substring(0, 20)}...` : 'N/A',
+        });
+        // 如果 token 不存在，清除可能残留的 token 并跳转到登录页
+        if (!token) {
+          console.warn(`[API Client] ⚠️ Token 不存在，清除可能残留的 token 并跳转到登录页`);
+          removeAuthToken();
+          window.location.href = '/login';
+          throw new ApiError('AUTH_TOKEN_MISSING', '未提供认证 Token，请先登录');
+        } else {
+          // Token 存在但被拒绝，可能是 Token 无效或已过期
+          console.warn(`[API Client] ⚠️ Token 存在但被拒绝，可能是 Token 无效或已过期，清除 token 并跳转到登录页`);
+          removeAuthToken();
+          window.location.href = '/login';
+          throw new ApiError(errorCode, errorMessage || '认证失败，请重新登录');
+        }
       }
       
       // 其他错误：抛出 ApiError
       throw new ApiError(errorCode, errorMessage);
     }
     
+    // 【性能监控】记录 JSON 解析开始时间
+    const jsonParseStartTime = Date.now();
     const resJson: ApiResponse<T> = await response.json();
+    const jsonParseElapsed = Date.now() - jsonParseStartTime;
     
-    // 【日志】记录响应数据（开发环境，敏感信息已脱敏）
+    // 【日志】记录响应数据和解析耗时（开发环境，敏感信息已脱敏）
     if (!USE_MOCK_DATA) {
       console.log(`[API Response Data] ${options.method || 'GET'} ${fullUrl}`, {
         code: resJson.code,
         message: resJson.message,
-        hasData: !!resJson.data
+        hasData: !!resJson.data,
+        jsonParseElapsed: `${jsonParseElapsed}ms`,
+        totalElapsed: `${Date.now() - requestStartTime}ms`,
       });
     }
     
@@ -423,31 +469,71 @@ const api = {
       }
       
       // 【超时控制】Part1 分析可能需要 60-70 秒，后端超时设置为 180 秒
-      // 前端超时设置为 200 秒（3分20秒），确保覆盖后端超时时间，并留出网络延迟缓冲
+      // 前端超时设置为 240 秒（4分钟），确保覆盖后端超时时间，并留出网络延迟缓冲
+      // 【修复】增加超时时间，避免因 Gemini API 响应慢导致请求被提前中止
       const controller = new AbortController();
+      const requestStartTime = Date.now();
       const timeoutId = setTimeout(() => {
+        const elapsed = Date.now() - requestStartTime;
+        console.warn(`[API] Part1 请求超时，正在取消请求: uploadId=${uploadId}, 已耗时=${elapsed}ms`);
         controller.abort();
-      }, 200000); // 200 秒（3分20秒）超时
+      }, 240000); // 240 秒（4分钟）超时
       
       try {
+        console.log(`[API] Part1 请求开始: uploadId=${uploadId}, 时间戳=${requestStartTime}`);
         const result = await apiClient('/analyze/part1', { 
           method: 'POST', 
           body: JSON.stringify({ uploadId }),
           signal: controller.signal
         });
+        const elapsed = Date.now() - requestStartTime;
         clearTimeout(timeoutId);
+        console.log(`[API] Part1 请求成功: uploadId=${uploadId}, 耗时=${elapsed}ms`);
         return result;
       } catch (error: any) {
+        const elapsed = Date.now() - requestStartTime;
         clearTimeout(timeoutId);
-        if (error.name === 'AbortError') {
-          throw new ApiError('TIMEOUT_ERROR', 'Part1 分析请求超时（超过 3 分20秒），请稍后重试');
+        console.error(`[API] Part1 请求失败: uploadId=${uploadId}, 耗时=${elapsed}ms, error=`, error);
+        if (error.name === 'AbortError' || error.code === 'TIMEOUT_ERROR') {
+          throw new ApiError('TIMEOUT_ERROR', `Part1 分析请求超时（超过 ${Math.round(elapsed/1000)}秒），请检查后端服务是否正常运行或稍后重试`);
         }
         throw error;
       }
     },
     part2: async (taskId: string) => {
         if (USE_MOCK_DATA) return { status: 'processing' };
-        return apiClient('/analyze/part2', { method: 'POST', body: JSON.stringify({ taskId }) });
+        
+        // 【超时控制】设置 5 分钟（300秒）超时，以匹配后端最长处理时间（3分钟）及网络波动
+        // 虽然架构上是异步的（后端应立即返回），但为了防止任何意外阻塞导致前端提前断开，
+        // 我们遵循用户建议，给予充足的时间窗口。
+        const controller = new AbortController();
+        const requestStartTime = Date.now();
+        const timeoutId = setTimeout(() => {
+            const elapsed = Date.now() - requestStartTime;
+            console.warn(`[API] Part2 请求超时，正在取消请求: taskId=${taskId}, 已耗时=${elapsed}ms`);
+            controller.abort();
+        }, 300000); // 300秒 (5分钟) 超时
+        
+        try {
+            console.log(`[API] Part2 请求开始: taskId=${taskId}, 时间戳=${requestStartTime}`);
+            const result = await apiClient('/analyze/part2', { 
+                method: 'POST', 
+                body: JSON.stringify({ taskId }),
+                signal: controller.signal
+            });
+            const elapsed = Date.now() - requestStartTime;
+            clearTimeout(timeoutId);
+            console.log(`[API] Part2 请求成功: taskId=${taskId}, 耗时=${elapsed}ms, result=`, result);
+            return result;
+        } catch (error: any) {
+            const elapsed = Date.now() - requestStartTime;
+            clearTimeout(timeoutId);
+            console.error(`[API] Part2 请求失败: taskId=${taskId}, 耗时=${elapsed}ms, error=`, error);
+            if (error.name === 'AbortError' || error.code === 'TIMEOUT_ERROR') {
+                throw new ApiError('TIMEOUT_ERROR', `Part2 分析请求超时（超过 ${Math.round(elapsed/1000)}秒），请检查后端服务是否正常运行`);
+            }
+            throw error;
+        }
     },
     getTask: async (taskId: string) => {
         if (USE_MOCK_DATA) return { status: 'completed', structured_result: FULL_MOCK_DATA };
@@ -530,6 +616,86 @@ const api = {
         }
         throw error;
       }
+    },
+    /**
+     * 迭代调色反馈接口
+     * 用户在 LR 面板中提交反馈后，重新生成调色方案
+     * 
+     * @param data - {
+     *   taskId: string,  // 任务 ID（关联的分析任务，必填）
+     *   userFeedback: string,  // 用户反馈文本（必填）
+     *   previewImageData?: string,  // 预览图 Base64（可选）
+     *   colorPalette?: string[]  // 色卡 Hex 值列表（可选）
+     * }
+     * @returns 迭代结果 { iterationId, iterationNumber, analysis, newParameters, suggestions, selfCritique, parameterChanges, processingTime }
+     */
+    iterate: async (data: {
+      taskId: string;
+      userFeedback: string;
+      previewImageData?: string;
+      colorPalette?: string[];
+    }) => {
+      if (USE_MOCK_DATA) {
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return {
+          iterationId: 1,
+          iterationNumber: 1,
+          analysis: {},
+          newParameters: {},
+          suggestions: ['减少阴影中的青色饱和度', '提升天空的明度'],
+          selfCritique: {},
+          parameterChanges: {},
+          processingTime: 2.0
+        };
+      }
+      
+      // 【日志】记录请求
+      console.log('[API] 迭代调色反馈请求:', {
+        taskId: data.taskId,
+        feedbackLength: data.userFeedback.length,
+        hasPreviewImage: !!data.previewImageData,
+        colorPaletteCount: data.colorPalette?.length || 0
+      });
+      
+      // 【超时控制】迭代分析可能需要 60-90 秒（Gemini API 调用 + 数据处理）
+      // 设置 120 秒（2 分钟）超时
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => {
+        controller.abort();
+      }, 120000); // 120 秒（2 分钟）超时
+      
+      try {
+        const result = await apiClient('/analyze/iterate', {
+          method: 'POST',
+          body: JSON.stringify(data),
+          signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        return result;
+      } catch (error: any) {
+        clearTimeout(timeoutId);
+        if (error.name === 'AbortError') {
+          throw new ApiError('TIMEOUT_ERROR', '迭代调色请求超时（超过 2 分钟），请稍后重试');
+        }
+        throw error;
+      }
+    },
+    /**
+     * 获取迭代历史记录
+     * 
+     * @param taskId - 任务 ID
+     * @returns 迭代历史 { taskId, totalIterations, iterations: [...] }
+     */
+    getIterations: async (taskId: string) => {
+      if (USE_MOCK_DATA) {
+        return {
+          taskId,
+          totalIterations: 0,
+          iterations: []
+        };
+      }
+      
+      return apiClient(`/analyze/iterations/${taskId}`);
     }
   },
   simulate: {
@@ -571,4 +737,5 @@ const api = {
 };
 
 export { api };
+export { apiClient }; // 【新增】导出 apiClient 供其他模块使用
 export default api;

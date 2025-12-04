@@ -6,8 +6,10 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.exceptions import HTTPException, RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles  # 【新增】静态文件服务
 from fastapi import status
 from loguru import logger
+from pathlib import Path  # 【新增】用于路径处理
 
 from .config import get_settings
 from .db import Base, engine
@@ -258,7 +260,7 @@ def create_app() -> FastAPI:
     app.add_exception_handler(Exception, general_exception_handler)
 
     # 挂载各业务路由模块
-    from .routes import auth, upload, analyze, user, export, simulate, admin
+    from .routes import auth, upload, analyze, user, export, simulate, admin, render
 
     app.include_router(auth.router)      # 认证路由：注册/登录
     app.include_router(upload.router)    # 上传路由：图片上传
@@ -267,6 +269,20 @@ def create_app() -> FastAPI:
     app.include_router(export.router)     # 导出路由：XMP/JSX/JSON/PDF
     app.include_router(simulate.router)  # 风格模拟路由：Part3
     app.include_router(admin.router)      # Admin 路由：管理后台
+    app.include_router(render.router)    # 高保真渲染路由：Darktable CLI
+
+    # 【新增】挂载静态文件服务，用于提供渲染后的图片
+    # 根据开发方案，渲染后的图片存储在 storage/cache/rendered 目录
+    base_path = Path(__file__).parent.parent
+    rendered_dir = base_path / "storage" / "cache" / "rendered"
+    rendered_dir.mkdir(parents=True, exist_ok=True)  # 确保目录存在
+    
+    try:
+        app.mount("/static/rendered", StaticFiles(directory=str(rendered_dir)), name="rendered")
+        logger.info(f"【静态文件服务】已挂载渲染图片目录: {rendered_dir}")
+    except Exception as e:
+        logger.warning(f"【静态文件服务】挂载渲染图片目录失败: {type(e).__name__}: {str(e)}")
+        # 静态文件服务挂载失败不应中断应用启动，只记录警告
 
     @app.get("/health")
     def health_check():

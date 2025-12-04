@@ -4,6 +4,31 @@
       "style_summary_recap": "文本：简要回顾Phase 1的核心指导思想",
       "key_adjustment_strategy": "文本：总结三大动作"
     },
+    "tonal_zone_analysis": {
+      "note": "【核心】分区分析：将参考图按高光/中间调/阴影三个区域分别分析，这是仿色精准度的关键",
+      "highlights_zone": {
+        "elements": "STRING: 参考图高光区域包含哪些元素？（如：天空、云、雪山、反光面等）",
+        "color_treatment": "STRING: 这些高光元素的颜色是怎么处理的？（如：天空偏粉紫、云带暖黄、雪山偏青白）",
+        "detail_treatment": "STRING: 高光细节是保留还是压缩？质感如何？（如：细节柔和、边缘模糊、有雾感）",
+        "target_rgb": { "r": 240, "g": 235, "b": 245 },
+        "brightness_range": "STRING: 高光亮度范围描述（如：220-255，但纯白很少）"
+      },
+      "midtones_zone": {
+        "elements": "STRING: 参考图中间调区域包含哪些元素？（如：建筑、街道、人物、植被等）",
+        "color_treatment": "STRING: 这些中间调元素的颜色是怎么处理的？（如：建筑偏暖灰、街道偏青灰、路灯偏暖黄）",
+        "detail_treatment": "STRING: 中间调细节是清晰还是柔和？（如：细节清晰但不锐利、有轻微柔焦感）",
+        "target_rgb": { "r": 128, "g": 125, "b": 135 },
+        "brightness_range": "STRING: 中间调亮度范围描述（如：80-180）"
+      },
+      "shadows_zone": {
+        "elements": "STRING: 参考图阴影区域包含哪些元素？（如：街道暗部、建筑阴影、车辆底部等）",
+        "color_treatment": "STRING: 这些阴影元素的颜色是怎么处理的？（如：阴影偏青蓝、不是纯黑而是深灰蓝）",
+        "detail_treatment": "STRING: 阴影细节是否可见？还是被压成黑块？（如：暗部细节可见、有层次感、不死黑）",
+        "target_rgb": { "r": 35, "g": 40, "b": 50 },
+        "brightness_range": "STRING: 阴影亮度范围描述（如：25-80，最暗处不触底）",
+        "black_point_lifted": true
+      }
+    },
     "color_science_scheme": {
       "white_balance": {
         "temperature": { "value": "+600", "reason": "中文解释" },
@@ -37,8 +62,8 @@
           "b": [0,0,0,0,8,15,25,45,65,85,95,85,65,45,25,15,8,2,0,0],
           "l": [0,0,0,0,6,12,22,42,62,82,92,82,62,42,22,12,6,2,0,0]
         },
-        "stats_grid_description": "统计网格（Stats Grid）位于直方图下方，从左到右四个单元格分别显示：①黑色色阶（24%）：表示阴影区域（0-85 亮度级别）的像素占比，对应直方图左侧区域的像素密度，数值越大说明暗部细节越丰富；②曝光（127）：表示画面平均亮度值（0-255），对应直方图峰值位置，数值越大画面整体越亮；③白色色阶（25%）：表示高光区域（171-255 亮度级别）的像素占比，对应直方图右侧区域的像素密度，数值越大说明高光细节越丰富；④Clipping（NONE）：表示无高光或阴影溢出，画面细节完整。这些数值与上方直方图的形态直接对应，帮助理解画面的整体影调分布特征。",
-        "palette_strip_description": "HSL 混色器调整面板位于直方图与统计网格之间，显示需要在 Lightroom HSL 混色器中调整的颜色及其参数值。每个色块代表一个需要调整的颜色通道，显示三个参数：H（色相偏移）、S（饱和度调整）、L（明度调整）。例如：橙色 H-5 S-20 L+10 表示将橙色色相向红色方向偏移 5 度、降低饱和度 20%、提高明度 10%，主要用于优化肤色表现。当前画面中，橙色（肤色核心）需要降低饱和度并提亮，蓝色（天空/阴影）需要减少饱和度以降低视觉干扰，绿色（植被）需要轻微偏黄以营造暖调氛围。这些调整值可直接在 Lightroom HSL 混色器面板中输入使用。"
+        "stats_grid_description": "统计网格说明...",
+        "palette_strip_description": "HSL混色器说明..."
       },
       "basic_panel": {
         "exposure": { "val": "+0.5", "reason": "中文解释" },
@@ -59,6 +84,39 @@
         "green_channel": [[0,0], [255,255]],
         "blue_channel": [[0,0], [255,255]],
         "reason": "中文解释曲线逻辑"
+      },
+      "local_adjustments_masks": {
+        "note": "【蒙版系统】当全局调整无法精准控制某些区域时，使用蒙版进行局部调整",
+        "masks": [
+          {
+            "mask_id": 1,
+            "mask_name": "STRING: 蒙版名称（如：天空蒙版、前景蒙版、主体蒙版）",
+            "mask_type": "STRING: 蒙版类型（luminosity_range / color_range / gradient / radial / brush / subject_ai / sky_ai）",
+            "mask_target": "STRING: 蒙版针对的区域描述（如：天空和远山区域、前景街道暗部、人物主体）",
+            "mask_parameters": {
+              "luminosity_range": { "min": 180, "max": 255, "feather": 20 },
+              "color_range": { "hue_center": 210, "hue_range": 30, "saturation_min": 0 },
+              "gradient": { "start_y_percent": 0, "end_y_percent": 40, "angle": 180 },
+              "radial": { "center_x_percent": 50, "center_y_percent": 30, "radius_percent": 40, "feather": 50 },
+              "invert": false
+            },
+            "adjustments": {
+              "exposure": "+0.3",
+              "contrast": "-10",
+              "highlights": "-20",
+              "shadows": "+15",
+              "whites": "0",
+              "blacks": "+10",
+              "temperature": "-500",
+              "tint": "+5",
+              "saturation": "-15",
+              "clarity": "-10",
+              "dehaze": "-15",
+              "sharpness": "0"
+            },
+            "reason": "STRING: 中文解释为什么需要这个蒙版，以及调整逻辑"
+          }
+        ]
       }
     },
     "photoshop_workflow": {
@@ -90,4 +148,3 @@
       }
     }
   }
-

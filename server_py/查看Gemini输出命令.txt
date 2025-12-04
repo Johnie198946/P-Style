@@ -1,0 +1,53 @@
+# 查看 Gemini Part1 和 Part2 原始输出
+# 直接复制以下命令到终端运行
+
+# ============================================
+# 方法 1: 使用 Python 脚本（推荐）
+# ============================================
+
+# 1. 列出最近的任务
+cd /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py && python3 show_gemini_output.py
+
+# 2. 查看指定任务的完整输出（Part1 + Part2）
+cd /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py && python3 show_gemini_output.py <task_id>
+
+# 3. 只查看 Part1
+cd /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py && python3 show_gemini_output.py <task_id> --part1
+
+# 4. 只查看 Part2
+cd /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py && python3 show_gemini_output.py <task_id> --part2
+
+# ============================================
+# 方法 2: 使用 Shell 脚本
+# ============================================
+
+# 列出最近的任务
+/Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.sh
+
+# 查看指定任务
+/Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.sh <task_id>
+
+# ============================================
+# 方法 3: 一行命令（直接运行，无需 cd）
+# ============================================
+
+# 列出最近的任务
+python3 /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.py
+
+# 查看指定任务的完整输出
+python3 /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.py <task_id>
+
+# 只查看 Part1
+python3 /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.py <task_id> --part1
+
+# 只查看 Part2
+python3 /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.py <task_id> --part2
+
+# ============================================
+# 示例（使用实际任务 ID）
+# ============================================
+
+# 查看任务 5841640a-c28a-4367-b82a-3da62131a7a2 的完整输出
+python3 /Users/dengzhaoyu/Desktop/TepVis/AI产品/P-Style/server_py/show_gemini_output.py 5841640a-c28a-4367-b82a-3da62131a7a2
+
+

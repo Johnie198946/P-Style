@@ -8,12 +8,24 @@ import { Aperture, Sparkles, Target, Zap } from 'lucide-react';
 
 export const ColorModal = ({ data, onClose }: any) => {
   const { t } = useLanguage();
-  // 【修复】数据路径：从 dataAdapter 映射后，数据在 color_scheme 中
+  
+  // 【修复】数据路径：从 dataAdapter 映射后，数据在 result.color 中
+  // ThemeCardsGrid 传递的是 results.color，它包含 color_scheme 的所有数据
   // 兼容处理：如果 data 直接是 color_scheme 对象，直接使用；否则尝试从 data.color_scheme 获取
   const colorSchemeData = data?.color_scheme || data;
-  const safeData = (colorSchemeData && colorSchemeData.hsl_12) 
-    ? MOCK_FULL_DATA.color_scheme
-    : (colorSchemeData || MOCK_FULL_DATA.color_scheme);
+  
+  // 【修复】逻辑错误修复：优先使用真实数据，只有在没有真实数据时才使用模拟数据
+  // 原逻辑错误：如果有 hsl_12 字段就使用模拟数据（这是反的！）
+  // 新逻辑：如果有真实数据（hsl 字段存在且不为空），使用真实数据；否则使用模拟数据作为兜底
+  const hasRealData = colorSchemeData && (
+    (colorSchemeData.hsl && Object.keys(colorSchemeData.hsl).length > 0) ||  // 有 HSL 数据
+    (colorSchemeData.color_grading && Object.keys(colorSchemeData.color_grading).length > 0) ||  // 有 color_grading 数据
+    (colorSchemeData.white_balance && colorSchemeData.white_balance.temp)  // 有白平衡数据
+  );
+  
+  const safeData = hasRealData 
+    ? colorSchemeData  // 【优先】使用真实数据
+    : MOCK_FULL_DATA.color_scheme;  // 【兜底】只有在没有真实数据时才使用模拟数据
   
   // 【修复】确保 color_grading 数据存在，如果不存在则使用默认值
   // 从 colorSchemeData 中提取 color_grading 数据，如果没有则使用默认值
@@ -23,12 +35,19 @@ export const ColorModal = ({ data, onClose }: any) => {
     shadows: { hue: 0, saturation: 0, reason: "" },
     balance: 0,
   };
-  const colorGrading = colorSchemeData?.color_grading || defaultColorGrading;
+  const colorGrading = colorSchemeData?.color_grading || safeData?.color_grading || defaultColorGrading;
   
-  // 【修复】确保 safeData 包含 color_grading 数据
+  // 【修复】确保 safeData 包含 color_grading 数据，优先使用真实数据
   const finalSafeData = {
     ...safeData,
     color_grading: colorGrading,
+    // 【修复】确保 HSL 数据存在，优先使用真实数据
+    hsl: colorSchemeData?.hsl || safeData?.hsl || {},
+    // 【修复】确保 white_balance 数据存在，优先使用真实数据
+    white_balance: colorSchemeData?.white_balance || safeData?.white_balance || {
+      temp: { value: 5500, range: "+0", reason: "" },
+      tint: { value: 0, range: "+0", reason: "" },
+    },
   };
   
   // 【调试日志】记录数据路径，帮助排查问题
@@ -38,7 +57,16 @@ export const ColorModal = ({ data, onClose }: any) => {
     dataType: typeof data,
     dataKeys: data ? Object.keys(data) : [],
     colorSchemeDataKeys: colorSchemeData ? Object.keys(colorSchemeData) : [],
-    safeDataKeys: safeData ? Object.keys(safeData) : [],
+    // 【关键】检查是否有真实数据
+    hasRealData: hasRealData,
+    // 【关键】检查 HSL 数据
+    hasHsl: !!colorSchemeData?.hsl,
+    hslKeys: colorSchemeData?.hsl ? Object.keys(colorSchemeData.hsl) : [],
+    hslSample: colorSchemeData?.hsl ? Object.keys(colorSchemeData.hsl).slice(0, 3).map(key => ({
+      key,
+      data: colorSchemeData.hsl[key],
+      hasNonZero: (colorSchemeData.hsl[key].hue !== 0 || colorSchemeData.hsl[key].saturation !== 0 || colorSchemeData.hsl[key].luminance !== 0),
+    })) : [],
     // 【关键】检查 color_grading 数据
     hasColorGrading: !!colorSchemeData?.color_grading,
     colorGradingHighlights: colorSchemeData?.color_grading?.highlights,
@@ -56,9 +84,16 @@ export const ColorModal = ({ data, onClose }: any) => {
     key_adjustment_strategyLength: safeData.key_adjustment_strategy?.length || 0,
     key_adjustment_strategyTruthy: !!safeData.key_adjustment_strategy,
     style_key_points: safeData.style_key_points,
-    // 【关键】检查原始数据路径
-    rawDataColorScheme: data?.color_scheme,
-    rawDataDirect: data,
+    // 【关键】检查白平衡数据
+    hasWhiteBalance: !!colorSchemeData?.white_balance,
+    whiteBalanceTemp: colorSchemeData?.white_balance?.temp,
+    whiteBalanceTint: colorSchemeData?.white_balance?.tint,
+    finalWhiteBalance: finalSafeData.white_balance,
+    // 【关键】检查最终使用的数据源
+    usingMockData: !hasRealData,
+    finalSafeDataKeys: finalSafeData ? Object.keys(finalSafeData) : [],
+    finalSafeDataHsl: finalSafeData?.hsl,
+    finalSafeDataHslKeys: finalSafeData?.hsl ? Object.keys(finalSafeData.hsl) : [],
     // 【关键】检查条件渲染逻辑
     shouldShowCards: !!(safeData.master_style_recap || safeData.style_summary_recap || safeData.key_adjustment_strategy),
   });
@@ -155,7 +190,8 @@ export const ColorModal = ({ data, onClose }: any) => {
                 {/* HSL Matrix Section */}
                 <section>
                     <h5 className="text-[10px] uppercase tracking-widest text-white/40 font-bold mb-4 pl-1">{t('modal.color.hsl')}</h5>
-                    <HSLVisualizer data={safeData.hsl} />
+                    {/* 【修复】使用 finalSafeData.hsl，确保使用真实数据而不是模拟数据 */}
+                    <HSLVisualizer data={finalSafeData.hsl || {}} />
                 </section>
 
                 {/* White Balance Section */}
@@ -165,17 +201,40 @@ export const ColorModal = ({ data, onClose }: any) => {
                             <span className="block text-[10px] text-white/30 uppercase tracking-widest mb-2">{t('modal.color.wb')}</span>
                             <div className="flex justify-between border-b border-white/10 pb-2 mb-2">
                                 <span className="text-xs text-gray-400">{t('modal.common.temp')}</span>
-                                <span className="text-xs font-mono text-white">{safeData.white_balance.temp.value}K</span>
+                                {/* 【修复】显示逻辑：
+                                    1. 如果有实际色温值（value 不为 null），显示：实际色温 + 调整值 = 最终色温（如：5200K + (-8) = 5192K）
+                                    2. 如果没有实际色温值（value 为 null），只显示调整值（如：-8）
+                                    3. 不再假设所有照片都是 5500K */}
+                                <span className="text-xs font-mono text-white">
+                                  {(() => {
+                                    const tempValue = finalSafeData.white_balance.temp.value;
+                                    const adjustment = finalSafeData.white_balance.temp.adjustment ?? parseFloat((finalSafeData.white_balance.temp.range || "+0").replace(/[^0-9.-]/g, '') || "0");
+                                    
+                                    if (tempValue !== null && tempValue !== undefined) {
+                                      // 有实际色温值：显示最终色温
+                                      return `${Math.round(tempValue)}K`;
+                                    } else {
+                                      // 没有实际色温值：只显示调整值
+                                      return adjustment > 0 ? `+${adjustment}` : `${adjustment}`;
+                                    }
+                                  })()}
+                                </span>
                             </div>
-                            <p className="text-[10px] text-white/50">{safeData.white_balance.temp.reason}</p>
+                            <p className="text-[10px] text-white/50">{finalSafeData.white_balance.temp.reason || ""}</p>
                         </div>
                         <div>
                             <span className="block text-[10px] text-white/30 uppercase tracking-widest mb-2">{t('modal.color.tint_cor')}</span>
                             <div className="flex justify-between border-b border-white/10 pb-2 mb-2">
                                 <span className="text-xs text-gray-400">{t('modal.common.tint')}</span>
-                                <span className="text-xs font-mono text-white">{safeData.white_balance.tint.value > 0 ? '+' : ''}{safeData.white_balance.tint.value}</span>
+                                {/* 【修复】色调值始终是相对调整值，直接显示 */}
+                                <span className="text-xs font-mono text-white">
+                                  {(() => {
+                                    const tintValue = finalSafeData.white_balance.tint.value ?? 0;
+                                    return tintValue > 0 ? `+${tintValue}` : `${tintValue}`;
+                                  })()}
+                                </span>
                             </div>
-                            <p className="text-[10px] text-white/50">{safeData.white_balance.tint.reason}</p>
+                            <p className="text-[10px] text-white/50">{finalSafeData.white_balance.tint.reason || ""}</p>
                         </div>
                     </div>
                 </section>

@@ -7,7 +7,7 @@ import json
 import asyncio  # 用于异步任务执行
 import time  # 用于记录请求处理时间
 from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError  # 用于显著性检测的超时控制
-from fastapi import APIRouter, Depends, HTTPException, Form, Request, Body
+from fastapi import APIRouter, Depends, HTTPException, Form, Request, Body, BackgroundTasks
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc  # func 用于 count 统计，desc 用于排序
@@ -25,13 +25,15 @@ from ..services.analysis_formatter import AnalysisFormatter
 from ..services.task_service import TaskService
 from ..services.usage_service import UsageService
 from ..services.saliency_service import SaliencyService  # 【新增】显著性检测服务
+from ..services.upload_service import UploadService  # 【新增】上传服务，用于关联上传记录和任务
 from ..utils.response import success_response, error_response
 from ..constants.error_codes import ErrorCode
 from ..schemas.analysis_schemas import (
     Part1RequestSchema,
     Part2RequestSchema,
     DiagnosisRequestSchema,
-    validate_diagnosis_response
+    validate_diagnosis_response,
+    IterationRequestSchema,  # 【新增】迭代反馈请求 Schema
 )
 
 router = APIRouter(prefix="/api/analyze", tags=["analyze"])
@@ -329,6 +331,15 @@ async def analyze_part1(
         try:
             task = task_service.create_task(db, current_user.id, sourceImage, targetImage)
             logger.info(f"【Part1 分析】任务创建成功: taskId={task.id}")
+            
+            # 【修复】将上传记录关联到分析任务，便于后续查询
+            # 这样渲染 API 可以通过 analysis_task_id 找到上传记录
+            try:
+                UploadService.link_to_task(db, upload.id, task.id)
+                logger.info(f"【Part1 分析】上传记录已关联到任务: uploadId={upload.id}, taskId={task.id}")
+            except Exception as link_error:
+                # 关联失败不应该影响主流程，只记录警告
+                logger.warning(f"【Part1 分析】关联上传记录失败: {type(link_error).__name__}: {str(link_error)}")
         except Exception as db_error:
             # 数据库操作失败（可能是图片数据太大导致 SQLite 操作超时或失败）
             error_type = type(db_error).__name__
@@ -451,9 +462,15 @@ async def analyze_part1(
         
         # 【Gemini API 调用】添加详细的日志和异常处理
         logger.info(f"【Part1 分析】准备调用 Gemini API，contents parts 数量: {len(contents[0]['parts'])}")
+        logger.info(f"【Part1 分析】Gemini 超时设置: {gemini_service.timeout_seconds:.1f}秒（{gemini_service.timeout_ms}毫秒）")
+        logger.info(f"【Part1 分析】Gemini 模型: {gemini_service.model}")
+        
+        # 【性能监控】记录调用开始时间
+        gemini_call_start_time = time.time()
         try:
             gemini_response = gemini_service.generate_text(contents, stage="part1")
-            logger.info(f"【Part1 分析】Gemini API 调用成功，响应长度: {len(gemini_response)} 字符")
+            gemini_call_elapsed = time.time() - gemini_call_start_time
+            logger.info(f"【Part1 分析】✅ Gemini API 调用成功，耗时: {gemini_call_elapsed:.2f}秒，响应长度: {len(gemini_response)} 字符")
         except NameError as name_error:
             # 👇👇👇 核弹级调试代码开始 👇👇👇
             import traceback
@@ -467,9 +484,13 @@ async def analyze_part1(
             logger.error(f"【Part1 分析】Gemini API 调用发生 NameError: {name_error}", exc_info=True)
             raise
         except TimeoutError as timeout_err:
-            # 超时错误：记录详细日志并返回友好错误
-            logger.error(f"【Part1 分析】Gemini API 调用超时: {str(timeout_err)}")
-            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 分析超时，请稍后重试。如果问题持续，请联系管理员。")
+            # 【超时错误处理】超时错误已在 gemini_service 中处理，这里只是转发
+            # 根据开发方案，超时时间设置为 180 秒（3 分钟），如果超过此时间仍未完成，说明 Gemini API 响应过慢
+            error_detail = str(timeout_err)
+            logger.error(f"【Part1 分析】❌ Gemini API 调用超时: {error_detail}")
+            logger.error(f"【Part1 分析】超时详情: taskId={task.id if 'task' in locals() else 'unknown'}, 超时设置={gemini_service.timeout_seconds:.1f}秒")
+            # 【修复】使用正确的错误码 GEMINI_TIMEOUT，而不是 INTERNAL_ERROR
+            raise error_response(ErrorCode.GEMINI_TIMEOUT, f"AI 分析超时（超过 {gemini_service.timeout_seconds:.0f} 秒），请稍后重试。如果问题持续，请联系管理员。")
         except ConnectionError as conn_err:
             # 【SSL/连接错误处理】SSL 连接错误或网络连接错误
             error_detail = str(conn_err)
@@ -489,16 +510,15 @@ async def analyze_part1(
             # Gemini 客户端未初始化错误
             logger.error(f"【Part1 分析】Gemini 服务未初始化: {str(runtime_err)}")
             raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 服务未配置，请联系管理员。")
-        except TimeoutError as timeout_err:
-            # 【超时错误处理】超时错误已在 gemini_service 中处理，这里只是转发
-            error_detail = str(timeout_err)
-            logger.error(f"【Part1 分析】Gemini API 调用超时: {error_detail}")
-            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 分析超时，请稍后重试。如果问题持续，请联系管理员。")
         except Exception as gemini_err:
-            # 其他 Gemini API 调用错误（包括重试后仍然失败的网络错误）
+            # 其他 Gemini API 调用错误（包括重试后仍然失败的网络错误、503 服务过载等）
             error_type = type(gemini_err).__name__
             error_detail = str(gemini_err)
             logger.error(f"【Part1 分析】Gemini API 调用失败（已重试）: {error_type}: {error_detail}", exc_info=True)
+            
+            # 【503 服务过载错误特殊处理】检测 Gemini API 服务过载错误
+            if "503" in error_detail or "UNAVAILABLE" in error_detail or "overloaded" in error_detail.lower():
+                raise error_response(ErrorCode.INTERNAL_ERROR, "AI 服务暂时过载，请稍后重试。如果问题持续，请联系管理员。")
             
             # 【SSL 错误特殊处理】检测 SSL 相关错误
             if "SSL" in error_detail or "ssl" in error_detail or "UNEXPECTED_EOF" in error_detail:
@@ -508,7 +528,21 @@ async def analyze_part1(
             if "Server disconnected" in error_detail or "Connection" in error_type or "RemoteProtocolError" in error_type:
                 raise error_response(ErrorCode.INTERNAL_ERROR, "AI 分析失败：网络连接中断。已自动重试 3 次仍失败，请检查网络连接或稍后重试。")
             
-            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 分析失败: {error_detail}")
+            # 【通用错误处理】提取错误消息，避免包含特殊字符导致解析错误
+            # 如果错误详情包含字典格式，尝试提取用户友好的消息
+            user_friendly_message = error_detail
+            if "message" in error_detail.lower() and ("'" in error_detail or '"' in error_detail):
+                # 尝试从错误详情中提取消息（避免直接使用包含字典的字符串）
+                try:
+                    # 如果错误详情包含 JSON 格式，尝试提取 message 字段
+                    import re
+                    message_match = re.search(r"['\"]message['\"]:\s*['\"]([^'\"]+)['\"]", error_detail)
+                    if message_match:
+                        user_friendly_message = message_match.group(1)
+                except Exception:
+                    pass  # 如果提取失败，使用原始错误详情
+            
+            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 分析失败: {user_friendly_message}")
         
         # 【步骤2：JSON 解析清洗逻辑】打印 Gemini 原始输出（完整 RAW OUTPUT）
         # ⚠️ 关键调试：打印最原始的返回，看看 AI 到底说了什么
@@ -824,6 +858,7 @@ async def analyze_part2(
     request_data: Part2RequestSchema = Body(...),
     credentials: HTTPAuthorizationCredentials = Depends(security),
     db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
 ):
     """
     Part2 分析接口（异步执行）
@@ -887,17 +922,32 @@ async def analyze_part2(
         # 4. 立即返回 processing 状态，并在后台执行实际分析
         # 根据开发方案第 16 节，Part2 接口应立即返回 { status: 'processing' }
         # 实际的 Gemini 调用和数据库更新在后台异步执行
-        asyncio.create_task(
-            _run_part2_analysis_job(
+        # 【关键修复】使用 FastAPI 的 BackgroundTasks 而不是 asyncio.create_task
+        # BackgroundTasks 确保响应立即返回，后台任务在响应返回后执行
+        # 这样可以避免 FastAPI 等待后台任务完成，导致前端请求超时
+        # 注意：BackgroundTasks.add_task 可以接受 async 函数，FastAPI 会自动处理
+        background_tasks.add_task(
+            _run_part2_analysis_job,
                 task_id=taskId,
                 user_id=current_user.id,
-                db_session=db,
+            db_session=db,  # 注意：db_session 在后台任务中不会被使用，后台任务会创建新的会话
             )
-        )
+        # 【修复】不等待后台任务完成，立即返回响应
+        # 使用 BackgroundTasks 后，FastAPI 会在响应返回后执行后台任务
         request_elapsed_time = time.time() - request_start_time
-        logger.info(f"【Part2 任务已提交后台】taskId={taskId}, 请求处理耗时={request_elapsed_time:.2f}秒, 即将返回响应")
+        logger.info(f"【Part2 任务已提交后台】taskId={taskId}, 请求处理耗时={request_elapsed_time:.2f}秒, 后台任务已添加到 BackgroundTasks, 即将返回响应")
+        
+        # 构建响应数据
         response_data = success_response(data={"taskId": taskId, "stage": "part2", "status": "processing"})
-        logger.info(f"【Part2 请求完成】taskId={taskId}, 总耗时={time.time() - request_start_time:.2f}秒, 响应状态=processing")
+        total_elapsed = time.time() - request_start_time
+        
+        # 【调试日志】记录响应数据大小，便于排查前端超时问题
+        import json as json_debug
+        response_str = json_debug.dumps(response_data, ensure_ascii=False)
+        logger.info(f"【Part2 请求完成】taskId={taskId}, 总耗时={total_elapsed:.4f}秒, 响应状态=processing, 响应大小={len(response_str)} 字符")
+        logger.debug(f"【Part2 响应数据预览】taskId={taskId}, 响应内容={response_str[:200]}")
+        
+        # 【关键】立即返回响应，不等待后台任务
         return response_data
         
     except HTTPException:
@@ -905,6 +955,201 @@ async def analyze_part2(
     except Exception as e:
         logger.error(f"【Part2 请求失败】taskId={taskId}, 错误: {e}", exc_info=True)
         raise error_response(ErrorCode.INTERNAL_ERROR, f"Part2 分析请求失败: {str(e)}")
+
+
+def _convert_lightroom_workflow_to_structured(lightroom_workflow: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    将 Gemini 的 lightroom_workflow 格式转换为 lightroom.structured 格式
+    
+    这个函数用于在校准引擎中，当 structured_result.sections.lightroom.structured 不存在时，
+    直接从 gemini_result.lightroom_workflow 读取数据并转换为校准引擎期望的格式。
+    
+    Args:
+        lightroom_workflow: Gemini 原始输出的 lightroom_workflow 数据
+        
+    Returns:
+        转换后的 lightroom.structured 格式数据
+    """
+    result = {}
+    
+    # 辅助函数：解析参数值（支持字符串格式如 "+10"、"-5"）
+    def parse_param_value(val):
+        """解析参数值，支持字符串和数字格式"""
+        if val is None:
+            return 0.0
+        if isinstance(val, (int, float)):
+            return float(val)
+        val_str = str(val).strip()
+        if val_str.startswith('+'):
+            return float(val_str[1:])
+        return float(val_str)
+    
+    # 辅助函数：从参数对象中提取值
+    def extract_value_from_param(param_obj):
+        """从参数对象中提取数值（支持 {"value": "+10"} 或直接数值）"""
+        if isinstance(param_obj, dict):
+            val = param_obj.get("value") or param_obj.get("val", "0")
+            return parse_param_value(val)
+        return parse_param_value(param_obj)
+    
+    # 1. 基础参数（basic_panel）
+    basic_panel = lightroom_workflow.get("basic_panel", {})
+    basic_dict = {}
+    basic_param_names = ["temp", "tint", "exposure", "contrast", "highlights", "shadows", "whites", "blacks", 
+                         "texture", "clarity", "dehaze", "vibrance", "saturation"]
+    
+    for param_name in basic_param_names:
+        if param_name in basic_panel:
+            param_obj = basic_panel[param_name]
+            param_value = extract_value_from_param(param_obj)
+            
+            # 格式化数值为字符串（带正负号）
+            if param_name == 'exposure':
+                value_str = f"{param_value:+.2f}" if param_value >= 0 else f"{param_value:.2f}"
+            else:
+                value_str = f"+{int(round(param_value))}" if param_value >= 0 else f"{int(round(param_value))}"
+            
+            # 保留原始结构（reason、note 等元数据）
+            if isinstance(param_obj, dict):
+                basic_dict[param_name] = {
+                    "value": value_str,
+                    "range": value_str,
+                    "reason": param_obj.get("reason", ""),
+                    "note": param_obj.get("note", ""),
+                }
+            else:
+                basic_dict[param_name] = {
+                    "value": value_str,
+                    "range": value_str,
+                    "reason": "",
+                    "note": "",
+                }
+    
+    result["basic"] = basic_dict
+    
+    # 2. 色调曲线（tone_curve）
+    tone_curve = lightroom_workflow.get("tone_curve", {})
+    if isinstance(tone_curve, dict):
+        # 提取 RGB 曲线点
+        rgb_points = tone_curve.get("rgb_points", [])
+        if rgb_points:
+            result["toneCurve"] = rgb_points
+        else:
+            result["toneCurve"] = [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]]
+        
+        # 【修复】提取 RGB 单通道曲线数据（red_points、green_points、blue_points）
+        # Gemini 输出的字段名是 red_points、green_points、blue_points
+        # 需要同时兼容两种格式：优先使用 red_points（Gemini 标准格式），如果没有则尝试 red_channel（向后兼容）
+        rgb_curves = {}
+        red_points = tone_curve.get("red_points", []) or tone_curve.get("red_channel", [])
+        green_points = tone_curve.get("green_points", []) or tone_curve.get("green_channel", [])
+        blue_points = tone_curve.get("blue_points", []) or tone_curve.get("blue_channel", [])
+        
+        if red_points:
+            rgb_curves["red"] = red_points
+        if green_points:
+            rgb_curves["green"] = green_points
+        if blue_points:
+            rgb_curves["blue"] = blue_points
+        
+        # 设置 rgbCurves 字段（前端需要这个字段来显示单通道曲线）
+        if rgb_curves:
+            result["rgbCurves"] = rgb_curves
+            logger.info(f"【_convert_lightroom_workflow_to_structured】RGB 通道曲线数据已提取: red={len(rgb_curves.get('red', []))}, green={len(rgb_curves.get('green', []))}, blue={len(rgb_curves.get('blue', []))}")
+        else:
+            result["rgbCurves"] = {}
+            logger.warning("【_convert_lightroom_workflow_to_structured】未找到 RGB 单通道曲线数据")
+    else:
+        result["toneCurve"] = [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]]
+        result["rgbCurves"] = {}
+    
+    # 3. HSL 调整（hsl）
+    hsl = lightroom_workflow.get("hsl", {})
+    if isinstance(hsl, dict):
+        hsl_dict = {}
+        color_names = ["red", "orange", "yellow", "green", "aqua", "blue", "purple", "magenta"]
+        for color_name in color_names:
+            if color_name in hsl:
+                color_data = hsl[color_name]
+                if isinstance(color_data, dict):
+                    hsl_dict[color_name] = {
+                        "hue": parse_param_value(color_data.get("hue", 0)),
+                        "saturation": parse_param_value(color_data.get("saturation", 0)),
+                        "luminance": parse_param_value(color_data.get("luminance", 0)),
+                        "note": color_data.get("note", ""),
+                    }
+                else:
+                    hsl_dict[color_name] = {
+                        "hue": 0,
+                        "saturation": 0,
+                        "luminance": 0,
+                        "note": "",
+                    }
+        result["hsl"] = hsl_dict
+    else:
+        result["hsl"] = {}
+    
+    # 4. 色彩分级（color_grading）
+    # 【注意】Gemini 输出使用下划线命名（color_grading），但校准引擎期望驼峰命名（colorGrading）
+    color_grading = lightroom_workflow.get("color_grading", {})
+    if isinstance(color_grading, dict):
+        color_grading_dict = {}
+        for region in ["highlights", "midtones", "shadows"]:
+            if region in color_grading:
+                region_data = color_grading[region]
+                if isinstance(region_data, dict):
+                    # 【修复】正确处理数值（可能是字符串或数字）
+                    color_grading_dict[region] = {
+                        "hue": parse_param_value(region_data.get("hue", 0)),
+                        "saturation": parse_param_value(region_data.get("saturation", 0)),
+                        "luminance": parse_param_value(region_data.get("luminance", 0)),
+                        "reason": region_data.get("reason", ""),
+                    }
+                else:
+                    color_grading_dict[region] = {"hue": 0, "saturation": 0, "luminance": 0, "reason": ""}
+            else:
+                color_grading_dict[region] = {"hue": 0, "saturation": 0, "luminance": 0, "reason": ""}
+        
+        # 保留 blending 和 balance（不优化，但需要保留）
+        if "blending" in color_grading:
+            color_grading_dict["blending"] = parse_param_value(color_grading["blending"])
+        if "balance" in color_grading:
+            color_grading_dict["balance"] = parse_param_value(color_grading["balance"])
+        
+        # 【修复】使用驼峰命名（colorGrading），与 _parse_all_params 期望的格式一致
+        result["colorGrading"] = color_grading_dict
+    else:
+        result["colorGrading"] = {}
+    
+    # 5. 相机校准（calibration）
+    calibration = lightroom_workflow.get("calibration", {})
+    if isinstance(calibration, dict):
+        calibration_dict = {}
+        for primary in ["red_primary", "green_primary", "blue_primary"]:
+            if primary in calibration:
+                primary_data = calibration[primary]
+                if isinstance(primary_data, dict):
+                    calibration_dict[primary] = {
+                        "hue": parse_param_value(primary_data.get("hue", 0)),
+                        "saturation": parse_param_value(primary_data.get("saturation", 0)),
+                        "note": primary_data.get("note", ""),
+                    }
+                else:
+                    calibration_dict[primary] = {"hue": 0, "saturation": 0, "note": ""}
+            else:
+                calibration_dict[primary] = {"hue": 0, "saturation": 0, "note": ""}
+        
+        # 保留 shadows_tint
+        if "shadows_tint" in calibration:
+            calibration_dict["shadows_tint"] = parse_param_value(calibration["shadows_tint"])
+        
+        result["calibration"] = calibration_dict
+    else:
+        result["calibration"] = {}
+    
+    logger.info(f"【_convert_lightroom_workflow_to_structured】✅ 转换完成: basic keys={list(result.get('basic', {}).keys())}, hsl keys={list(result.get('hsl', {}).keys())}, colorGrading keys={list(result.get('colorGrading', {}).keys())}, calibration keys={list(result.get('calibration', {}).keys())}")
+    
+    return result
 
 
 async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Session):
@@ -930,9 +1175,11 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
     # 【日志记录】记录后台任务开始时间
     job_start_time = time.time()
     logger.info(f"【Part2 后台任务开始】taskId={task_id}, 时间戳={job_start_time}, userId={user_id}")
-    # 创建一个新的数据库会话，因为后台任务在不同的事件循环中运行
+    # 【修复】创建一个新的数据库会话，因为后台任务在不同的事件循环中运行
     # 并且 db_session 是通过 Depends 注入的，不能直接在后台任务中重用
-    db: Session = next(get_db())
+    # 注意：get_db() 是生成器函数，使用 next() 获取会话，但需要确保在 finally 中关闭
+    db_generator = get_db()
+    db: Session = next(db_generator)
     try:
         # 1. 获取任务信息
         task = task_service.get_task(db, task_id)
@@ -958,10 +1205,24 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
         logger.info(f"【Part2 任务状态已设置为 processing】taskId={task_id}")
 
         # 3. 准备 Part1 上下文和 style_summary
+        # 【新增】构建 part1_context，包含 visualAnchors 数据
         part1_context = {
             "professional_evaluation_summary": task.part1_summary or "",
             "workflow_draft": json.loads(task.workflow_draft) if task.workflow_draft else {},
         }
+        
+        # 【新增】从 Part1 结果中提取 visualAnchors 数据，注入到 part1_context 中
+        if task.structured_result:
+            try:
+                sections = task.structured_result.get("sections", {})
+                visual_anchors = sections.get("visualAnchors", {})
+                if visual_anchors:
+                    part1_context["sections"] = {"visualAnchors": visual_anchors}
+                    logger.info(f"【Part2】已从 Part1 提取 visualAnchors: hero_colors={visual_anchors.get('hero_colors', [])}, taskId={task_id}")
+                else:
+                    logger.warning(f"【Part2】Part1 结果中未找到 visualAnchors, taskId={task_id}")
+            except Exception as e:
+                logger.warning(f"【Part2】提取 visualAnchors 失败: {e}, taskId={task_id}")
         
         # 从 Part1 结果中提取 style_summary（风格克隆战略指导）
         # 路径：structured_result.sections.photoReview.structured.photographerStyleSummary
@@ -996,6 +1257,34 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
                 logger.error(f"Part2 提取 style_summary 失败: {e}, taskId={task_id}", exc_info=True)
                 style_summary = ""
 
+        # 3.5 【新增】使用 OpenCV 进行图像量化分析
+        image_analysis = None
+        try:
+            from ..services.image_analyzer import compare_images
+            import base64
+            
+            # 从 base64 转换为二进制数据
+            def base64_to_bytes(data_url: str) -> bytes:
+                if not data_url:
+                    return b""
+                # 移除 data URL 前缀
+                if "," in data_url:
+                    data_url = data_url.split(",")[-1]
+                return base64.b64decode(data_url)
+            
+            ref_bytes = base64_to_bytes(task.source_image_data or "")
+            user_bytes = base64_to_bytes(task.target_image_data or "")
+            
+            if ref_bytes and user_bytes:
+                logger.info(f"【Part2 图像分析】开始 OpenCV 量化分析, taskId={task_id}")
+                image_analysis = compare_images(ref_bytes, user_bytes)
+                logger.info(f"【Part2 图像分析】完成，黑点差值={image_analysis.get('deltas', {}).get('black_point_lift', 'N/A')}, 色温差值={image_analysis.get('deltas', {}).get('color_temp_change', 'N/A')}K, taskId={task_id}")
+            else:
+                logger.warning(f"【Part2 图像分析】缺少图片数据，跳过量化分析, taskId={task_id}")
+        except Exception as e:
+            logger.error(f"【Part2 图像分析】失败: {e}, taskId={task_id}", exc_info=True)
+            image_analysis = None  # 分析失败不影响主流程
+
         # 4. 构建 Prompt 和 Gemini API 请求内容
         prompt = prompt_template.get_part2_prompt(
             task.source_image_data or "",
@@ -1003,6 +1292,7 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
             part1_context,
             style_summary=style_summary,  # 传递 style_summary
             feasibility_result=task.feasibility_result,
+            image_analysis=image_analysis,  # 【新增】传递图像分析数据
         )
 
         # 【方案2：图片标记】在每张图片前添加文本标记，明确标识图片类型，防止 Gemini 混淆图片顺序
@@ -1050,23 +1340,52 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
             logger.warning(f"Part2 保存 Gemini 响应到文件失败: {save_error}, taskId={task_id}")
 
         # 7. 解析 Gemini JSON 响应
+        # 【修复】使用 clean_json_response 清洗 JSON 响应，防止 Markdown 代码块标记干扰 JSON 解析
+        # 与 Part1 和迭代调色保持一致的处理逻辑
+        from ..services.prompt_template import clean_json_response
+        cleaned_response = clean_json_response(gemini_response)
+        logger.info(f"Part2 Gemini JSON 清洗后长度: {len(cleaned_response)} 字符, taskId={task_id}")
+        logger.debug(f"Part2 Gemini JSON 清洗后前 500 字符: {cleaned_response[:500]}..., taskId={task_id}")
+        
         try:
-            gemini_json = json.loads(gemini_response)
+            gemini_json = json.loads(cleaned_response)
             logger.info(f"Part2 Gemini JSON 解析成功: 类型 = {type(gemini_json)}, taskId={task_id}")
-        except Exception as parse_error:
-            logger.warning(f"Part2 Gemini JSON 解析失败: {parse_error}, 尝试使用正则表达式提取, taskId={task_id}")
+        except json.JSONDecodeError as parse_error:
+            # 【错误处理】JSON 解析失败，记录详细错误信息
+            logger.error(f"Part2 Gemini JSON 解析失败: {parse_error}, taskId={task_id}", exc_info=True)
+            logger.error(f"Part2 Gemini JSON 解析失败位置: 第 {parse_error.lineno} 行第 {parse_error.colno} 列, taskId={task_id}")
+            logger.error(f"Part2 Gemini 清洗后的响应前 1000 字符: {cleaned_response[:1000]}, taskId={task_id}")
+            
+            # 【备用方案】尝试使用正则表达式提取 JSON
+            logger.warning(f"Part2 尝试使用正则表达式提取 JSON, taskId={task_id}")
             import re
             json_match = re.search(r'\{.*\}', gemini_response, re.DOTALL)
             if json_match:
                 try:
-                    gemini_json = json.loads(json_match.group())
-                    logger.info(f"Part2 Gemini JSON 正则提取成功: 类型 = {type(gemini_json)}, taskId={task_id}")
-                except Exception as regex_error:
-                    logger.error(f"Part2 Gemini JSON 正则提取也失败: {regex_error}, taskId={task_id}")
-                    raise ValueError("无法解析 Gemini 返回的 JSON")
+                    extracted_json_str = json_match.group()
+                    # 对提取的 JSON 也进行清洗
+                    cleaned_extracted = clean_json_response(extracted_json_str)
+                    gemini_json = json.loads(cleaned_extracted)
+                    logger.info(f"Part2 Gemini JSON 正则提取并清洗后解析成功: 类型 = {type(gemini_json)}, taskId={task_id}")
+                except json.JSONDecodeError as regex_error:
+                    logger.error(f"Part2 Gemini JSON 正则提取也失败: {regex_error}, taskId={task_id}", exc_info=True)
+                    logger.error(f"Part2 Gemini 正则提取的 JSON 片段前 500 字符: {extracted_json_str[:500] if 'extracted_json_str' in locals() else 'N/A'}, taskId={task_id}")
+                    
+                    # 【错误信息】构建详细的错误信息，包含原始错误和备用方案失败信息
+                    error_detail = f"JSON 解析失败: {str(parse_error)}（位置：第 {parse_error.lineno} 行第 {parse_error.colno} 列）。正则提取也失败: {str(regex_error)}。原始响应已保存到: {gemini_response_file}"
+                    raise ValueError(f"无法解析 Gemini 返回的 JSON: {error_detail}")
             else:
                 logger.error(f"Part2 Gemini 响应中未找到 JSON 格式的数据, taskId={task_id}")
-                raise ValueError("无法解析 Gemini 返回的 JSON")
+                logger.error(f"Part2 Gemini 原始响应前 1000 字符: {gemini_response[:1000]}, taskId={task_id}")
+                
+                # 【错误信息】构建详细的错误信息
+                error_detail = f"JSON 解析失败: {str(parse_error)}（位置：第 {parse_error.lineno} 行第 {parse_error.colno} 列）。响应中未找到 JSON 格式数据。原始响应已保存到: {gemini_response_file}"
+                raise ValueError(f"无法解析 Gemini 返回的 JSON: {error_detail}")
+        except Exception as unexpected_error:
+            # 【兜底处理】处理其他意外错误
+            logger.error(f"Part2 Gemini JSON 解析发生意外错误: {unexpected_error}, taskId={task_id}", exc_info=True)
+            error_detail = f"JSON 解析发生意外错误: {str(unexpected_error)}。原始响应已保存到: {gemini_response_file}"
+            raise ValueError(f"无法解析 Gemini 返回的 JSON: {error_detail}")
 
         # 8. 从 Gemini 响应中提取 workflow_execution_summary 和 workflow_alignment_notes
         # 【注意】新的 Part2 Prompt 结构不包含 workflow_execution_summary 字段
@@ -1100,7 +1419,158 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
         logger.info(f"Part2 开始格式化数据: gemini_json 类型 = {type(gemini_json)}, keys = {list(gemini_json.keys()) if isinstance(gemini_json, dict) else 'not dict'}, taskId={task_id}")
         try:
             structured_result = formatter.format_part2(gemini_json, task.structured_result)
+            
+            # 【新增】将 OpenCV 图像分析数据注入到 meta 中，供前端使用（如 Auto-Exposure Override）
+            if image_analysis:
+                if "meta" not in structured_result:
+                    structured_result["meta"] = {}
+                structured_result["meta"]["image_analysis"] = image_analysis
+                logger.info(f"【Part2】已将 OpenCV 分析数据注入到 structured_result.meta.image_analysis, taskId={task_id}")
+
             logger.info(f"Part2 格式化成功: structured_result keys = {list(structured_result.keys()) if isinstance(structured_result, dict) else 'not dict'}, taskId={task_id}")
+            
+            # =====================================================
+            # 【已禁用】仿色校准引擎 - 用户要求移除校准算法
+            # 原因：校准算法导致 HSL 参数过度调整（如 h:+172, s:+95），影响图像质量
+            # 现在直接使用 Gemini 的原始参数，不进行任何校准
+            # =====================================================
+            # 【注释掉整个校准代码块】
+            """
+            try:
+                from ..services.calibration_engine import calibrate_all_lightroom_params
+                
+                # 【修复】优先从 structured_result 读取，如果不存在则从 gemini_result.lightroom_workflow 读取
+                # 数据源优先级：
+                # 1. structured_result.sections.lightroom.structured（格式化后的数据，优先使用）
+                # 2. gemini_result.lightroom_workflow（Gemini 原始输出，作为 fallback）
+                
+                lightroom_structured = None
+                data_source = None
+                
+                # 尝试从 structured_result 读取
+                lightroom_section = structured_result.get("sections", {}).get("lightroom", {})
+                logger.info(f"【仿色校准】lightroom_section 类型: {type(lightroom_section).__name__}, keys: {list(lightroom_section.keys()) if isinstance(lightroom_section, dict) else 'not dict'}, taskId={task_id}")
+                
+                if isinstance(lightroom_section, dict):
+                    lightroom_structured = lightroom_section.get("structured", {})
+                    if lightroom_structured:
+                        data_source = "structured_result.sections.lightroom.structured"
+                        logger.info(f"【仿色校准】✅ 从 structured_result 读取 lightroom_structured, keys: {list(lightroom_structured.keys()) if isinstance(lightroom_structured, dict) else 'not dict'}, taskId={task_id}")
+                
+                # 【修复】如果 structured_result 中没有，尝试从 gemini_result.lightroom_workflow 读取并转换
+                # 数据源优先级：
+                # 1. structured_result.sections.lightroom.structured（格式化后的数据，优先使用）
+                # 2. gemini_json.lightroom_workflow（Gemini 原始输出，作为 fallback）
+                if not lightroom_structured:
+                    logger.warning(f"【仿色校准】⚠️ structured_result 中未找到 lightroom_structured，尝试从 gemini_json.lightroom_workflow 读取, taskId={task_id}")
+                    
+                    # gemini_json 已经在第 1310 行解析为字典了，直接使用
+                    if isinstance(gemini_json, dict):
+                        lightroom_workflow = gemini_json.get("lightroom_workflow", {})
+                        if lightroom_workflow:
+                            logger.info(f"【仿色校准】✅ 从 gemini_json 读取 lightroom_workflow, keys: {list(lightroom_workflow.keys()) if isinstance(lightroom_workflow, dict) else 'not dict'}, taskId={task_id}")
+                            
+                            # 将 lightroom_workflow 格式转换为 lightroom.structured 格式
+                            # 这个转换逻辑与 _format_lightroom 类似，但只提取校准引擎需要的字段
+                            lightroom_structured = _convert_lightroom_workflow_to_structured(lightroom_workflow)
+                            data_source = "gemini_json.lightroom_workflow"
+                            logger.info(f"【仿色校准】✅ 已将 lightroom_workflow 转换为 lightroom.structured 格式, keys: {list(lightroom_structured.keys()) if isinstance(lightroom_structured, dict) else 'not dict'}, taskId={task_id}")
+                        else:
+                            logger.warning(f"【仿色校准】⚠️ gemini_json 中未找到 lightroom_workflow, taskId={task_id}")
+                    else:
+                        logger.warning(f"【仿色校准】⚠️ gemini_json 不是字典格式（类型: {type(gemini_json).__name__}）, taskId={task_id}")
+                
+                if not lightroom_structured:
+                    logger.error(f"【仿色校准】❌ 无法从任何数据源读取 lightroom 参数，跳过校准, taskId={task_id}")
+                else:
+                    logger.info(f"【仿色校准】数据源: {data_source}, lightroom_structured 类型: {type(lightroom_structured).__name__}, keys: {list(lightroom_structured.keys()) if isinstance(lightroom_structured, dict) else 'not dict'}, taskId={task_id}")
+                
+                # 【调试】打印 lightroom_structured 的完整内容（限制长度）
+                import json as json_debug
+                lr_structured_str = json_debug.dumps(lightroom_structured, ensure_ascii=False, default=str)[:2000]
+                logger.info(f"【仿色校准】lightroom_structured 内容预览: {lr_structured_str}..., taskId={task_id}")
+                
+                basic_panel = lightroom_structured.get("basic", {}) if isinstance(lightroom_structured, dict) else {}
+                logger.info(f"【仿色校准】basic_panel 类型: {type(basic_panel).__name__}, 是否为空: {not basic_panel}, keys: {list(basic_panel.keys()) if isinstance(basic_panel, dict) else 'not dict'}, taskId={task_id}")
+                
+                # 【调试】如果 basic 为空，打印 panels 内容帮助诊断
+                if not basic_panel:
+                    panels = lightroom_structured.get("panels", [])
+                    logger.warning(f"【仿色校准】⚠️ basic 字段为空！panels 数量: {len(panels)}, panels[0] keys: {list(panels[0].keys()) if panels else 'no panels'}, taskId={task_id}")
+                
+                has_source_image = bool(task.source_image_data)
+                has_target_image = bool(task.target_image_data)
+                logger.info(f"【仿色校准】图像数据检查: source_image_data={has_source_image}, target_image_data={has_target_image}, taskId={task_id}")
+                
+                if lightroom_structured and task.source_image_data and task.target_image_data:
+                    logger.info(f"【仿色校准】✅ 所有条件满足，开始校准所有 Lightroom 参数, taskId={task_id}")
+                    logger.info(f"【仿色校准】原始 lightroom_structured keys: {list(lightroom_structured.keys()) if isinstance(lightroom_structured, dict) else 'not dict'}")
+                    logger.info(f"【仿色校准】原始 lightroom_structured.basic keys: {list(lightroom_structured.get('basic', {}).keys()) if isinstance(lightroom_structured.get('basic'), dict) else 'not dict'}, taskId={task_id}")
+                    logger.info(f"【仿色校准】原始 lightroom_structured.hsl 类型: {type(lightroom_structured.get('hsl')).__name__}, taskId={task_id}")
+                    
+                    # 调用完整校准引擎（校准所有参数）
+                    try:
+                        calibrated_structured, calibration_meta = calibrate_all_lightroom_params(
+                            user_image_data=task.target_image_data,
+                            ref_image_data=task.source_image_data,
+                            gemini_lightroom_structured=lightroom_structured,
+                        )
+                        logger.info(f"【仿色校准】校准引擎返回: calibration_meta status={calibration_meta.get('status', 'unknown')}, taskId={task_id}")
+                        logger.info(f"【仿色校准】校准引擎返回: calibration_meta keys={list(calibration_meta.keys())}, taskId={task_id}")
+                    except Exception as calib_call_error:
+                        logger.error(f"【仿色校准】❌ 调用校准引擎时发生异常: {type(calib_call_error).__name__}: {str(calib_call_error)}, taskId={task_id}", exc_info=True)
+                        calibration_meta = {"status": "failed", "reason": f"调用异常: {str(calib_call_error)}"}
+                        calibrated_structured = lightroom_structured
+                    
+                    # 记录校准结果
+                    if calibration_meta.get("status") == "success":
+                        # 【修复】校准引擎 calibrate_all 返回的 meta 结构与 calibrate 不同
+                        # calibrate_all 返回：{ status, initial_loss, final_loss, improvement, iterations, param_count, note }
+                        # calibrate 返回：{ status, basic_calibration: { improvement, original_params, calibrated_params } }
+                        improvement = calibration_meta.get("improvement", 0)
+                        logger.info(f"【仿色校准】✅ 校准成功！Loss 改善: {improvement:.2f}%, taskId={task_id}")
+                        logger.info(f"【仿色校准】初始 Loss: {calibration_meta.get('initial_loss', 'N/A')}, 最终 Loss: {calibration_meta.get('final_loss', 'N/A')}, 迭代次数: {calibration_meta.get('iterations', 'N/A')}, taskId={task_id}")
+                        logger.info(f"【仿色校准】优化参数数量: {calibration_meta.get('param_count', 'N/A')}, 说明: {calibration_meta.get('note', 'N/A')}, taskId={task_id}")
+                        
+                        # 【调试】打印校准后的 basic 字段
+                        calibrated_basic = calibrated_structured.get("basic", {})
+                        logger.info(f"【仿色校准】校准后 basic 字段: keys={list(calibrated_basic.keys())}, exposure={calibrated_basic.get('exposure', 'N/A')}, taskId={task_id}")
+                        
+                        # 【关键】覆盖 Gemini 的原始 structured 数据（包括 basic、toneCurve、hsl、colorGrading、calibration）
+                        # 【修复】如果 sections.lightroom 不存在，需要先创建
+                        if "sections" not in structured_result:
+                            structured_result["sections"] = {}
+                        if "lightroom" not in structured_result["sections"]:
+                            structured_result["sections"]["lightroom"] = {}
+                        structured_result["sections"]["lightroom"]["structured"] = calibrated_structured
+                        
+                        # 将校准元数据存入 meta（便于前端调试）
+                        if "meta" not in structured_result:
+                            structured_result["meta"] = {}
+                        structured_result["meta"]["calibration"] = calibration_meta
+                        
+                        logger.info(f"【仿色校准】✅ 已覆盖所有 Lightroom 参数到 structured_result, taskId={task_id}")
+                        logger.info(f"【仿色校准】✅ structured_result.meta.calibration 已设置: {list(structured_result.get('meta', {}).get('calibration', {}).keys())}, taskId={task_id}")
+                    else:
+                        logger.warning(f"【仿色校准】⚠️ 校准失败: status={calibration_meta.get('status', 'unknown')}, reason={calibration_meta.get('reason', 'unknown')}, 使用原始参数, taskId={task_id}")
+                        # 【修复】即使校准失败，也应该将 calibration_meta 存入 meta，便于前端调试
+                        if "meta" not in structured_result:
+                            structured_result["meta"] = {}
+                        structured_result["meta"]["calibration"] = calibration_meta
+                        logger.info(f"【仿色校准】⚠️ 已将失败的 calibration_meta 存入 structured_result.meta.calibration, taskId={task_id}")
+                else:
+                    if not lightroom_structured:
+                        logger.warning(f"【仿色校准】⚠️ 未找到 lightroom_structured，跳过校准, taskId={task_id}")
+                    if not task.source_image_data:
+                        logger.warning(f"【仿色校准】⚠️ 缺少参考图数据，跳过校准, taskId={task_id}")
+                    if not task.target_image_data:
+                        logger.warning(f"【仿色校准】⚠️ 缺少用户图数据，跳过校准, taskId={task_id}")
+            except Exception as calibration_error:
+                # 校准失败不应影响主流程，记录错误并继续
+                logger.error(f"【仿色校准】❌ 校准异常: {type(calibration_error).__name__}: {str(calibration_error)}, 使用原始参数, taskId={task_id}", exc_info=True)
+            """
+            # 【校准算法已禁用】直接使用 Gemini 的原始参数，不进行任何校准
+            logger.info(f"【仿色校准】校准算法已禁用，直接使用 Gemini 原始参数, taskId={task_id}")
             
             # 【详细日志】记录格式化后的 sections 结构
             if isinstance(structured_result, dict) and "sections" in structured_result:
@@ -1235,8 +1705,24 @@ async def _run_part2_analysis_job(task_id: str, user_id: int, db_session: Sessio
             error_message = "无法连接到代理服务器。请检查 ClashX(7890) 或 Clash Verge(7897) 是否已启动，并确认端口配置正确。"
             logger.error(f"【Part2 后台任务失败】检测到代理连接错误: {error_message}")
         
+        # 【503 服务过载错误特殊处理】检测 Gemini API 服务过载错误
+        if "503" in error_message or "UNAVAILABLE" in error_message or "overloaded" in error_message.lower():
+            error_message = "AI 服务暂时过载，请稍后重试。如果问题持续，请联系管理员。"
+            logger.error(f"【Part2 后台任务失败】检测到 503 服务过载错误: {error_message}")
+        
         # 【构建详细的失败原因】包含错误类型和错误消息，便于前端显示和调试
-        status_reason = f"Part2 后台分析失败: {error_type}: {error_message}"
+        # 如果错误消息包含字典格式，尝试提取用户友好的消息
+        user_friendly_message = error_message
+        if "message" in error_message.lower() and ("'" in error_message or '"' in error_message):
+            try:
+                import re
+                message_match = re.search(r"['\"]message['\"]:\s*['\"]([^'\"]+)['\"]", error_message)
+                if message_match:
+                    user_friendly_message = message_match.group(1)
+            except Exception:
+                pass  # 如果提取失败，使用原始错误消息
+        
+        status_reason = f"Part2 后台分析失败: {error_type}: {user_friendly_message}"
         # 如果错误消息过长，截取前 500 个字符（避免数据库字段过长）
         if len(status_reason) > 500:
             status_reason = status_reason[:500] + "..."
@@ -1612,3 +2098,590 @@ async def analyze_diagnosis(
         
         # 返回详细的错误信息，帮助调试
         raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 诊断失败: {error_type}: {error_detail}")
+
+
+# ========== 迭代调色反馈接口（新增）==========
+
+@router.post("/iterate")
+async def iterate_color_grading(
+    request_data: IterationRequestSchema = Body(...),
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """
+    迭代调色反馈接口
+    
+    用户在 LR 面板中提交反馈后，重新生成调色方案。
+    支持多轮迭代，每轮迭代都会记录历史，便于追溯和回滚。
+    
+    Args:
+        request_data: 迭代请求数据
+            {
+                "taskId": str,  # 任务 ID（关联的分析任务，必填）
+                "userFeedback": str,  # 用户反馈文本（必填）
+                "previewImageData": str,  # 预览图 Base64（可选）
+                "colorPalette": List[str]  # 色卡 Hex 值列表（可选）
+            }
+        credentials: JWT Token（Bearer，必填）
+        db: 数据库会话
+    
+    Returns:
+        {
+            "code": 0,
+            "message": "ok",
+            "data": {
+                "iterationId": int,  # 迭代记录 ID
+                "iterationNumber": int,  # 迭代序号
+                "analysis": {...},  # Gemini 分析结果
+                "newParameters": {...},  # 新的调色参数
+                "suggestions": [...],  # 修正建议列表
+                "processingTime": float  # 处理时间（秒）
+            }
+        }
+    
+    Note:
+        - 需要登录才能使用
+        - 每次迭代都会保存到 color_grading_iterations 表
+        - 支持通过 GET /api/analyze/iterations/{taskId} 获取历史迭代记录
+    """
+    start_time = time.time()
+    
+    try:
+        # 【日志记录】记录函数入口
+        logger.info("=" * 80)
+        logger.info("【迭代调色】=========================================")
+        logger.info(f"【迭代调色】函数被调用，开始处理请求")
+        logger.info(f"【迭代调色】请求时间: {time.strftime('%Y-%m-%d %H:%M:%S')}")
+        logger.info(f"【迭代调色】taskId: {request_data.taskId}")
+        logger.info(f"【迭代调色】userFeedback 长度: {len(request_data.userFeedback)} 字符")
+        logger.info(f"【迭代调色】previewImageData 长度: {len(request_data.previewImageData) if request_data.previewImageData else 0} 字符")
+        logger.info(f"【迭代调色】colorPalette: {request_data.colorPalette}")
+        logger.info("【迭代调色】=========================================")
+        logger.info("=" * 80)
+        
+        # 【身份验证】验证用户身份
+        current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
+        logger.info(f"【迭代调色】✅ 用户身份验证成功: 用户 {current_user.email} (ID: {current_user.id})")
+        
+        # 【获取任务信息】
+        task = task_service.get_task(db, request_data.taskId)
+        if not task:
+            logger.error(f"【迭代调色】任务不存在: taskId={request_data.taskId}")
+            raise error_response(ErrorCode.TASK_NOT_FOUND, "任务不存在")
+        
+        if task.user_id != current_user.id:
+            logger.error(f"【迭代调色】无权访问: taskId={request_data.taskId}, userId={current_user.id}")
+            raise error_response(ErrorCode.FORBIDDEN, "无权访问此任务")
+        
+        # 【获取迭代序号】查询当前任务的迭代次数
+        from ..models import ColorGradingIteration
+        iteration_count = db.query(ColorGradingIteration).filter(
+            ColorGradingIteration.task_id == request_data.taskId
+        ).count()
+        iteration_number = iteration_count + 1
+        logger.info(f"【迭代调色】当前迭代序号: {iteration_number}, taskId={request_data.taskId}")
+        
+        # ============================================================================
+        # 【关键修复】获取上一次的参数 - 必须是累积的！
+        # 优先级：最近一次成功迭代的参数 > Part2 原始参数
+        # ============================================================================
+        previous_parameters = {}
+        last_iteration_params = None
+        
+        # 【步骤1】查询最近一次成功的迭代记录
+        if iteration_number > 1:
+            last_iteration = db.query(ColorGradingIteration).filter(
+                ColorGradingIteration.task_id == request_data.taskId,
+                ColorGradingIteration.status == "completed"
+            ).order_by(ColorGradingIteration.iteration_number.desc()).first()
+            
+            if last_iteration and last_iteration.new_parameters:
+                last_iteration_params = last_iteration.new_parameters
+                logger.info(f"【迭代调色】✅ 找到上一次迭代(#{last_iteration.iteration_number})的参数，将在此基础上累积调整")
+        
+        # 【步骤2】如果有上一次迭代的参数，使用它；否则使用 Part2 原始参数
+        if last_iteration_params:
+            # 使用上一次迭代的参数作为基础
+            previous_parameters = {
+                "white_balance": last_iteration_params.get("white_balance", {}),
+                "color_grading_wheels": last_iteration_params.get("color_grading_wheels", {}),
+                "hsl_adjustments": last_iteration_params.get("hsl_adjustments", {}),
+                "basic_panel": last_iteration_params.get("basic_panel", {}),
+                "tone_curve": last_iteration_params.get("tone_curve", {}),
+                "_source": f"迭代 #{iteration_number - 1} 的输出参数",
+            }
+            logger.info(f"【迭代调色】参数来源: 上一次迭代 (累积模式)")
+        else:
+            # 使用 Part2 原始参数作为基础
+            if task.structured_result:
+                sections = task.structured_result.get("sections", {})
+                lightroom = sections.get("lightroom", {})
+                lightroom_structured = lightroom.get("structured", {})
+                color = sections.get("color", {})
+                color_structured = color.get("structured", {})
+                
+                previous_parameters = {
+                    "white_balance": color_structured.get("whiteBalance", {}),
+                    "color_grading": color_structured.get("grading", {}),
+                    "hsl": color_structured.get("hsl", []),
+                    "basic_panel": {},  # 从 lightroom panels 中提取
+                    "tone_curve": lightroom_structured.get("toneCurve", []),
+                    "_source": "Part2 原始参数 (首次迭代)",
+                }
+                
+                # 从 lightroom panels 中提取 basic_panel 参数
+                panels = lightroom_structured.get("panels", [])
+                for panel in panels:
+                    if panel.get("title") in ["基础面板", "Basic Panel", "基础", "Basic"]:
+                        for param in panel.get("params", []):
+                            param_name = param.get("name", "").lower()
+                            previous_parameters["basic_panel"][param_name] = param.get("value", "0")
+            logger.info(f"【迭代调色】参数来源: Part2 原始参数 (首次迭代)")
+        
+        logger.info(f"【迭代调色】上一次参数已提取: {list(previous_parameters.keys())}")
+        
+        # 【创建迭代记录】先创建记录，状态为 pending
+        iteration_record = ColorGradingIteration(
+            task_id=request_data.taskId,
+            user_id=current_user.id,
+            iteration_number=iteration_number,
+            user_feedback=request_data.userFeedback,
+            preview_image_data=request_data.previewImageData,
+            status="processing",
+        )
+        db.add(iteration_record)
+        db.commit()
+        db.refresh(iteration_record)
+        logger.info(f"【迭代调色】迭代记录已创建: iterationId={iteration_record.id}, iterationNumber={iteration_number}")
+        
+        # 【获取参考图描述】从 Part1 结果中提取
+        reference_description = ""
+        if task.structured_result:
+            sections = task.structured_result.get("sections", {})
+            photo_review = sections.get("photoReview", {})
+            structured = photo_review.get("structured", {})
+            reference_description = structured.get("style_summary", "") or structured.get("photographerStyleSummary", "")
+            
+            # 如果没有 style_summary，尝试从 comprehensive_review 中获取
+            if not reference_description:
+                reference_description = structured.get("comprehensive_review", "")[:500]
+        
+        logger.info(f"【迭代调色】参考图描述长度: {len(reference_description)} 字符")
+        
+        # ============================================================================
+        # 【新增】从参考图自动提取色卡（如果用户没有提供）
+        # ============================================================================
+        color_palette = request_data.colorPalette
+        if not color_palette and task.source_image_data:
+            try:
+                from ..services.image_analyzer import ImageAnalyzerService
+                import base64
+                import numpy as np
+                import cv2
+                
+                logger.info("【迭代调色】用户未提供色卡，正在从参考图自动提取...")
+                
+                # 解码参考图 Base64
+                source_base64_for_palette = task.source_image_data.split(",")[-1] if "," in task.source_image_data else task.source_image_data
+                img_bytes = base64.b64decode(source_base64_for_palette)
+                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                
+                if img is not None:
+                    # 使用 ImageAnalyzerService 提取主色
+                    analyzer = ImageAnalyzerService()
+                    dominant_colors = analyzer._get_dominant_colors(cv2.cvtColor(img, cv2.COLOR_BGR2RGB), n_colors=5)
+                    
+                    # 转换为 Hex 色卡格式
+                    color_palette = []
+                    for color_info in dominant_colors:
+                        r, g, b = color_info.get('r', 128), color_info.get('g', 128), color_info.get('b', 128)
+                        hex_color = f"#{r:02X}{g:02X}{b:02X}"
+                        color_palette.append(hex_color)
+                    
+                    logger.info(f"【迭代调色】✅ 参考图色卡提取成功: {color_palette}")
+                else:
+                    logger.warning("【迭代调色】⚠️ 参考图解码失败，无法提取色卡")
+            except Exception as palette_err:
+                logger.warning(f"【迭代调色】⚠️ 色卡提取失败: {palette_err}")
+        
+        # 【构建 Prompt】
+        prompt = prompt_template.get_iteration_prompt(
+            user_feedback=request_data.userFeedback,
+            reference_image_description=reference_description,
+            previous_parameters=previous_parameters,
+            iteration_number=iteration_number,
+            color_palette=color_palette,
+        )
+        logger.info(f"【迭代调色】Prompt 生成完成，长度: {len(prompt)} 字符")
+        
+        # 【构建 Gemini 请求内容】
+        contents = [{"role": "user", "parts": [{"text": prompt}]}]
+        
+        # ============================================================================
+        # 【优化】生成参考图+色卡拼接图
+        # ============================================================================
+        reference_with_palette_base64 = None
+        if task.source_image_data and color_palette:
+            try:
+                from ..services.image_analyzer import ImageAnalyzerService
+                import base64
+                import numpy as np
+                import cv2
+                
+                logger.info("【迭代调色】正在生成参考图+色卡拼接图...")
+                
+                # 解码参考图
+                source_base64_raw = task.source_image_data.split(",")[-1] if "," in task.source_image_data else task.source_image_data
+                img_bytes = base64.b64decode(source_base64_raw)
+                img_array = np.frombuffer(img_bytes, dtype=np.uint8)
+                ref_img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
+                
+                if ref_img is not None:
+                    h, w = ref_img.shape[:2]
+                    
+                    # 创建色卡条（底部拼接）
+                    palette_height = 50
+                    palette_strip = np.zeros((palette_height, w, 3), dtype=np.uint8)
+                    block_width = w // len(color_palette)
+                    
+                    for i, hex_color in enumerate(color_palette):
+                        # 解析 Hex 颜色
+                        hex_clean = hex_color.lstrip('#')
+                        r = int(hex_clean[0:2], 16)
+                        g = int(hex_clean[2:4], 16)
+                        b = int(hex_clean[4:6], 16)
+                        
+                        start_x = i * block_width
+                        end_x = (i + 1) * block_width if i < len(color_palette) - 1 else w
+                        palette_strip[:, start_x:end_x] = [b, g, r]  # BGR 格式
+                    
+                    # 拼接参考图和色卡
+                    combined_img = np.vstack([ref_img, palette_strip])
+                    
+                    # 编码为 Base64
+                    _, buffer = cv2.imencode('.jpg', combined_img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+                    reference_with_palette_base64 = base64.b64encode(buffer).decode('utf-8')
+                    
+                    logger.info(f"【迭代调色】✅ 参考图+色卡拼接图生成成功")
+            except Exception as palette_img_err:
+                logger.warning(f"【迭代调色】⚠️ 参考图+色卡拼接图生成失败: {palette_img_err}")
+        
+        # 添加参考图（优先使用带色卡的版本）
+        if reference_with_palette_base64:
+            contents[0]["parts"].append({
+                "text": "【图片1：参考图（Reference Image）+ 色卡】这是目标风格图，底部是从参考图提取的 5 色主色卡。请确保调色方案能还原这些关键色。"
+            })
+            contents[0]["parts"].append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": reference_with_palette_base64,
+                }
+            })
+            logger.info(f"【迭代调色】✅ 参考图（带色卡）已添加到请求")
+        elif task.source_image_data:
+            source_base64 = task.source_image_data.split(",")[-1] if "," in task.source_image_data else task.source_image_data
+            contents[0]["parts"].append({
+                "text": "【图片1：参考图（Reference Image）】这是目标风格图。"
+            })
+            contents[0]["parts"].append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": source_base64,
+                }
+            })
+            logger.info(f"【迭代调色】参考图已添加到请求")
+        
+        # 添加预览图（如果用户提供）
+        if request_data.previewImageData:
+            preview_base64 = request_data.previewImageData.split(",")[-1] if "," in request_data.previewImageData else request_data.previewImageData
+            contents[0]["parts"].append({
+                "text": "【图片2：当前预览图（Current Preview）】这是用户按照之前建议调整后的效果。请对比【参考图】，指出色调分离和摄影元素颜色上的具体偏差。"
+            })
+            contents[0]["parts"].append({
+                "inline_data": {
+                    "mime_type": "image/jpeg",
+                    "data": preview_base64,
+                }
+            })
+            logger.info(f"【迭代调色】✅ 预览图已添加到请求")
+        
+        # 【调用 Gemini API】
+        logger.info("【迭代调色】开始调用 Gemini API...")
+        gemini_start_time = time.time()
+        
+        try:
+            gemini_response = gemini_service.generate_text(contents, stage="iteration", response_mime="application/json")
+            gemini_duration = time.time() - gemini_start_time
+            logger.info(f"【迭代调色】Gemini API 调用成功，响应长度: {len(gemini_response)} 字符，耗时: {gemini_duration:.2f} 秒")
+        except Exception as gemini_err:
+            error_type = type(gemini_err).__name__
+            error_detail = str(gemini_err)
+            logger.error(f"【迭代调色】Gemini API 调用失败: {error_type}: {error_detail}", exc_info=True)
+            
+            # 【503 服务过载错误特殊处理】检测 Gemini API 服务过载错误
+            if "503" in error_detail or "UNAVAILABLE" in error_detail or "overloaded" in error_detail.lower():
+                user_friendly_message = "AI 服务暂时过载，请稍后重试。如果问题持续，请联系管理员。"
+            else:
+                # 【通用错误处理】提取错误消息，避免包含特殊字符导致解析错误
+                user_friendly_message = error_detail
+                if "message" in error_detail.lower() and ("'" in error_detail or '"' in error_detail):
+                    # 尝试从错误详情中提取消息（避免直接使用包含字典的字符串）
+                    try:
+                        import re
+                        message_match = re.search(r"['\"]message['\"]:\s*['\"]([^'\"]+)['\"]", error_detail)
+                        if message_match:
+                            user_friendly_message = message_match.group(1)
+                    except Exception:
+                        pass  # 如果提取失败，使用原始错误详情
+            
+            # 更新迭代记录状态为失败
+            iteration_record.status = "failed"
+            iteration_record.status_reason = f"Gemini API 调用失败: {user_friendly_message}"
+            db.commit()
+            
+            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 分析失败: {user_friendly_message}")
+        
+        # ============================================================================
+        # 【解析 Gemini 响应】
+        # 【修复】使用与 Part1/Part2 相同的 JSON 解析逻辑，增强错误处理和日志记录
+        # ============================================================================
+        import re  # 用于正则表达式提取 JSON
+        import os  # 用于文件操作
+        from datetime import datetime  # 用于生成时间戳
+        
+        # 【日志记录】保存原始响应到文件，便于调试和问题排查
+        # 文件路径：/tmp/gemini_response_iteration_<timestamp>.json
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+        gemini_response_file = f"/tmp/gemini_response_iteration_{timestamp}.json"
+        try:
+            os.makedirs("/tmp", exist_ok=True)
+            with open(gemini_response_file, "w", encoding="utf-8") as f:
+                f.write(gemini_response)
+            logger.info(f"【迭代调色】Gemini 原始响应已保存到: {gemini_response_file}")
+            logger.info(f"【迭代调色】Gemini 原始响应长度: {len(gemini_response)} 字符")
+            logger.info(f"【迭代调色】Gemini 原始响应前 500 字符: {gemini_response[:500]}")
+        except Exception as file_err:
+            logger.warning(f"【迭代调色】保存原始响应到文件失败: {file_err}")
+        
+        try:
+            # 【步骤1：使用 clean_json_response 清洗 JSON 响应】
+            # 防止 Markdown 代码块标记（```json ... ```）、非 JSON 前缀文本等干扰 JSON 解析
+            # 与 Part1/Part2 的处理方式保持一致
+            from ..services.prompt_template import clean_json_response
+            cleaned_response = clean_json_response(gemini_response)
+            logger.info(f"【迭代调色】Gemini JSON 清洗后长度: {len(cleaned_response)} 字符")
+            logger.info(f"【迭代调色】Gemini JSON 清洗后前 500 字符: {cleaned_response[:500]}")
+            
+            # 【步骤2：尝试解析清洗后的 JSON】
+            gemini_json = json.loads(cleaned_response)
+            logger.info(f"【迭代调色】✅ Gemini JSON 解析成功: 类型 = {type(gemini_json)}")
+            
+            # 【步骤3：验证 JSON 结构】
+            if isinstance(gemini_json, dict):
+                logger.info(f"【迭代调色】Gemini JSON 是字典，keys = {list(gemini_json.keys())}")
+                # 检查必要的字段
+                required_keys = ["iteration_analysis", "correction_suggestions", "new_parameters"]
+                missing_keys = [key for key in required_keys if key not in gemini_json]
+                if missing_keys:
+                    logger.warning(f"【迭代调色】⚠️ Gemini JSON 缺少必要字段: {missing_keys}")
+                else:
+                    logger.info(f"【迭代调色】✅ Gemini JSON 包含所有必要字段")
+            elif isinstance(gemini_json, list):
+                logger.warning(f"【迭代调色】⚠️ Gemini JSON 是数组而不是字典，长度 = {len(gemini_json)}")
+                if len(gemini_json) > 0:
+                    logger.info(f"【迭代调色】数组第一个元素类型 = {type(gemini_json[0])}")
+                    if isinstance(gemini_json[0], dict):
+                        logger.info(f"【迭代调色】数组第一个元素 keys = {list(gemini_json[0].keys())}")
+                        # 如果返回的是数组，取第一个元素
+                        gemini_json = gemini_json[0]
+                    else:
+                        raise ValueError("Gemini 返回的 JSON 数组第一个元素不是字典")
+            else:
+                logger.warning(f"【迭代调色】⚠️ Gemini JSON 既不是字典也不是数组，类型 = {type(gemini_json)}")
+                
+        except json.JSONDecodeError as parse_error:
+            # 【错误处理】JSON 解析失败，尝试使用正则表达式提取
+            logger.error(f"【迭代调色】❌ Gemini JSON 解析失败: {parse_error}", exc_info=True)
+            logger.warning(f"【迭代调色】尝试使用正则表达式从响应中提取 JSON...")
+            
+            # 尝试使用正则表达式提取 JSON 对象
+            json_match = re.search(r'\{.*\}', gemini_response, re.DOTALL)
+            if json_match:
+                try:
+                    extracted_json_str = json_match.group()
+                    gemini_json = json.loads(extracted_json_str)
+                    logger.info(f"【迭代调色】✅ 正则表达式提取 JSON 成功: 类型 = {type(gemini_json)}")
+                except json.JSONDecodeError as regex_error:
+                    logger.error(f"【迭代调色】❌ 正则表达式提取的 JSON 也解析失败: {regex_error}")
+                    logger.error(f"【迭代调色】提取的 JSON 片段 (前 500 字符): {extracted_json_str[:500]}")
+                    
+                    # 更新迭代记录状态为失败
+                    iteration_record.status = "failed"
+                    iteration_record.status_reason = f"JSON 解析失败: {str(parse_error)}。正则提取也失败: {str(regex_error)}"
+                    db.commit()
+                    
+                    raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 响应解析失败: 无法解析 JSON 格式，错误位置在第 {parse_error.lineno} 行第 {parse_error.colno} 列")
+            else:
+                logger.error(f"【迭代调色】❌ Gemini 响应中未找到 JSON 格式的数据")
+                logger.error(f"【迭代调色】响应内容 (前 1000 字符): {gemini_response[:1000]}")
+                
+                # 更新迭代记录状态为失败
+                iteration_record.status = "failed"
+                iteration_record.status_reason = f"JSON 解析失败: {str(parse_error)}。响应中未找到 JSON 格式数据"
+                db.commit()
+                
+                raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 响应解析失败: 响应中未找到有效的 JSON 格式数据，错误位置在第 {parse_error.lineno} 行第 {parse_error.colno} 列")
+        except Exception as parse_error:
+            # 【错误处理】其他类型的解析错误
+            error_type = type(parse_error).__name__
+            error_detail = str(parse_error)
+            logger.error(f"【迭代调色】❌ Gemini JSON 解析发生 {error_type}: {error_detail}", exc_info=True)
+            
+            # 更新迭代记录状态为失败
+            iteration_record.status = "failed"
+            iteration_record.status_reason = f"JSON 解析失败: {error_type}: {error_detail}"
+            db.commit()
+            
+            raise error_response(ErrorCode.INTERNAL_ERROR, f"AI 响应解析失败: {error_detail}")
+        
+        # 【提取关键数据】
+        iteration_analysis = gemini_json.get("iteration_analysis", {})
+        correction_suggestions = gemini_json.get("correction_suggestions", [])
+        new_parameters = gemini_json.get("new_parameters", {})
+        self_critique = gemini_json.get("self_critique", {})
+        
+        # 【计算参数变化】
+        parameter_changes = {}
+        if new_parameters and previous_parameters:
+            # 比较白平衡变化
+            new_wb = new_parameters.get("white_balance", {})
+            old_wb = previous_parameters.get("white_balance", {})
+            if new_wb and old_wb:
+                parameter_changes["white_balance"] = {
+                    "temperature": f"{old_wb.get('temp', {}).get('range', '0')} → {new_wb.get('temperature', {}).get('value', '0')}",
+                    "tint": f"{old_wb.get('tint', {}).get('range', '0')} → {new_wb.get('tint', {}).get('value', '0')}",
+                }
+        
+        # 【更新迭代记录】
+        processing_time = time.time() - start_time
+        iteration_record.gemini_analysis = json.dumps(iteration_analysis, ensure_ascii=False) if iteration_analysis else None
+        iteration_record.gemini_suggestions = correction_suggestions
+        iteration_record.new_parameters = new_parameters
+        iteration_record.parameter_changes = parameter_changes
+        iteration_record.status = "completed"
+        iteration_record.processing_time = round(processing_time, 2)
+        db.commit()
+        
+        logger.info(f"【迭代调色】✅ 迭代完成，处理时间: {processing_time:.2f} 秒")
+        logger.info(f"【迭代调色】建议数量: {len(correction_suggestions)}")
+        
+        # 【返回结果】
+        return success_response(
+            data={
+                "iterationId": iteration_record.id,
+                "iterationNumber": iteration_number,
+                "analysis": iteration_analysis,
+                "newParameters": new_parameters,
+                "suggestions": correction_suggestions,
+                "selfCritique": self_critique,
+                "parameterChanges": parameter_changes,
+                "processingTime": round(processing_time, 2),
+            },
+            message="迭代调色完成"
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_type = type(e).__name__
+        error_detail = str(e)
+        logger.error(f"【迭代调色】❌ 迭代失败: {error_type}: {error_detail}", exc_info=True)
+        raise error_response(ErrorCode.INTERNAL_ERROR, f"迭代调色失败: {error_detail}")
+
+
+@router.get("/iterations/{taskId}")
+async def get_iteration_history(
+    taskId: str,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    db: Session = Depends(get_db),
+):
+    """
+    获取迭代历史记录
+    
+    Args:
+        taskId: 任务 ID
+        credentials: JWT Token（Bearer，必填）
+        db: 数据库会话
+    
+    Returns:
+        {
+            "code": 0,
+            "message": "ok",
+            "data": {
+                "taskId": str,
+                "totalIterations": int,
+                "iterations": [
+                    {
+                        "id": int,
+                        "iterationNumber": int,
+                        "userFeedback": str,
+                        "suggestions": [...],
+                        "status": str,
+                        "processingTime": float,
+                        "createdAt": str
+                    },
+                    ...
+                ]
+            }
+        }
+    """
+    try:
+        # 【身份验证】
+        current_user = await get_current_user(credentials=credentials, db=db, require_admin=False)
+        
+        # 【获取任务信息】
+        task = task_service.get_task(db, taskId)
+        if not task:
+            raise error_response(ErrorCode.TASK_NOT_FOUND, "任务不存在")
+        
+        if task.user_id != current_user.id:
+            raise error_response(ErrorCode.FORBIDDEN, "无权访问此任务")
+        
+        # 【查询迭代记录】
+        from ..models import ColorGradingIteration
+        iterations = db.query(ColorGradingIteration).filter(
+            ColorGradingIteration.task_id == taskId
+        ).order_by(ColorGradingIteration.iteration_number.asc()).all()
+        
+        # 【格式化返回数据】
+        iteration_list = []
+        for it in iterations:
+            iteration_list.append({
+                "id": it.id,
+                "iterationNumber": it.iteration_number,
+                "userFeedback": it.user_feedback,
+                "suggestions": it.gemini_suggestions or [],
+                "newParameters": it.new_parameters,
+                "parameterChanges": it.parameter_changes,
+                "status": it.status,
+                "statusReason": it.status_reason,
+                "processingTime": float(it.processing_time) if it.processing_time else None,
+                "createdAt": it.created_at.isoformat() if it.created_at else None,
+            })
+        
+        return success_response(
+            data={
+                "taskId": taskId,
+                "totalIterations": len(iteration_list),
+                "iterations": iteration_list,
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        error_type = type(e).__name__
+        error_detail = str(e)
+        logger.error(f"【获取迭代历史】❌ 失败: {error_type}: {error_detail}", exc_info=True)
+        raise error_response(ErrorCode.INTERNAL_ERROR, f"获取迭代历史失败: {error_detail}")

@@ -85,4 +85,17 @@ app 2/
 test-*.mjs
 reference.jpg
 target.jpg
+test_*.py
+test_*.sh
+view_*.sh
+query_*.sh
+
+# Calibration logs (临时校准日志文件)
+calibration_log_*.txt
+calibration_log_*.json
+
+# Test reports and images
+test_reports/
+test_images/
+app/test_reports/
 

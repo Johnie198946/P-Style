@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { 
   Crop, Move, Zap, Eye, Check, X,
-  ArrowRight, Camera, XCircle, Sun, Moon, Palette, Layers, Navigation, Crosshair
+  ArrowRight, Camera, XCircle, Sun, Moon, Palette, Layers, Navigation, Crosshair,
+  Scan, Target, Activity, Grid, ChevronRight, Maximize2
 } from 'lucide-react';
 import { useLanguage } from '../src/contexts/LanguageContext';
+import { motion, AnimatePresence } from 'motion/react';
 
 // --- 类型定义 ---
 interface DirectorViewfinderProps {
@@ -38,7 +40,22 @@ interface ClinicData {
   suggested_crop?: SuggestedCrop;
   action_guides?: ActionGuide[];
   grading_masks?: GradingMask[];
+  pre_shoot_guidance?: {
+    camera_position?: string;
+    angle_adjustment?: string;
+    element_management?: string;
+  };
+  post_processing?: {
+    crop_ratio?: string;
+    crop_instruction?: string;
+    geometry_correction?: string;
+  };
 }
+
+// ============================================================================
+// 【诊疗室 UI 3.0 - Quantum Surgical Theatre】
+// 设计理念：融合医疗手术室的精密感 + 科幻电影的全息投影 + 专业摄影工作室的高端感
+// ============================================================================
 
 export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, userImageUrl }) => {
   const { t } = useLanguage();
@@ -56,6 +73,8 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
   const [mode, setMode] = useState<'original' | 'crop' | 'guide' | 'mask'>('original');
   // 【蒙版高亮状态】控制哪个蒙版被高亮显示
   const [activeMaskIndex, setActiveMaskIndex] = useState<number | null>(null);
+  // 【信息面板展开状态】
+  const [infoPanelExpanded, setInfoPanelExpanded] = useState(true);
 
   // 【图片尺寸检测】用于适配横图和竖图
   const [imageSize, setImageSize] = useState<{ width: number; height: number; aspectRatio: number } | null>(null);
@@ -113,225 +132,298 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
   // 【空状态处理】如果没有数据，显示等待状态
   if (!clinic) {
     return (
-      <div className="flex items-center justify-center h-full text-gray-600 bg-black font-mono text-xs tracking-widest uppercase">
-        <span className="animate-pulse">
-          {t('modal.composition.clinic_loading') || 'System Initializing... Waiting for Data Stream'}
-        </span>
+      <div className="flex flex-col items-center justify-center h-full bg-[#030303] font-mono">
+        {/* 加载动画 - 全息扫描效果 */}
+        <div className="relative w-32 h-32 mb-8">
+          <motion.div 
+            className="absolute inset-0 border border-blue-500/30 rounded-full"
+            animate={{ scale: [1, 1.5, 1], opacity: [0.5, 0, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut" }}
+          />
+          <motion.div 
+            className="absolute inset-0 border border-cyan-500/30 rounded-full"
+            animate={{ scale: [1, 1.3, 1], opacity: [0.5, 0, 0.5] }}
+            transition={{ duration: 2, repeat: Infinity, ease: "easeInOut", delay: 0.3 }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center">
+            <Activity size={32} className="text-blue-500 animate-pulse" />
+          </div>
+        </div>
+        <div className="text-blue-400 text-xs tracking-[0.3em] uppercase animate-pulse">
+          {t('modal.composition.clinic_loading') || 'INITIALIZING SURGICAL THEATRE'}
+        </div>
+        <div className="mt-2 text-gray-600 text-[10px] tracking-widest">
+          AWAITING DATA STREAM...
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#050505] text-white overflow-hidden relative font-sans select-none">
+    <div className="flex h-full bg-[#030303] text-white overflow-hidden relative font-sans select-none">
       
       {/* =========================================================
-          TOP: HUD 诊断条 (玻璃拟态悬浮舱)
+          背景装饰层 - 科技网格 + 渐变氛围
          ========================================================= */}
-      <div className="absolute top-6 left-6 right-6 z-40 flex justify-center pointer-events-none">
-        <div className="bg-black/40 backdrop-blur-xl border border-white/10 px-6 py-4 rounded-2xl shadow-2xl max-w-3xl flex items-start gap-5 animate-in slide-in-from-top-4">
-           {/* 动态脉冲点 */}
-           <div className="mt-1.5 relative shrink-0">
-             <div className="w-2.5 h-2.5 rounded-full bg-red-500 animate-ping absolute opacity-75" />
-             <div className="w-2.5 h-2.5 rounded-full bg-red-500 relative shadow-[0_0_10px_#ef4444]" />
-           </div>
-           
-           {/* 诊断内容 */}
-           <div>
-             <h3 className="text-[10px] font-bold text-red-400 tracking-[0.25em] uppercase mb-1 flex items-center gap-2">
-               {t('modal.composition.clinic_diagnosis_title') || 'AI SURGICAL DIAGNOSIS'} 
-               <div className="h-px w-8 bg-red-500/50"/>
-             </h3>
-             <p className="text-sm font-medium text-gray-200 leading-relaxed shadow-sm tracking-wide">
-               {clinic.diagnosis_summary || t('modal.composition.clinic_analyzing') || '正在分析构图问题...'}
-             </p>
-           </div>
-        </div>
+      <div className="absolute inset-0 pointer-events-none">
+        {/* 网格背景 */}
+        <div 
+          className="absolute inset-0 opacity-[0.02]" 
+          style={{ 
+            backgroundImage: 'linear-gradient(#333 1px, transparent 1px), linear-gradient(90deg, #333 1px, transparent 1px)', 
+            backgroundSize: '50px 50px' 
+          }} 
+        />
+        {/* 角落渐变光晕 */}
+        <div className="absolute top-0 left-0 w-96 h-96 bg-blue-500/5 rounded-full blur-[120px]" />
+        <div className="absolute bottom-0 right-0 w-96 h-96 bg-purple-500/5 rounded-full blur-[120px]" />
       </div>
 
       {/* =========================================================
-          CENTER: 主视口 (沉浸式画布)
+          LEFT: 主视口 (沉浸式画布)
          ========================================================= */}
-      <div className="flex-1 relative flex items-center justify-center bg-[#0a0a0a] overflow-hidden group">
+      <div className="flex-1 relative flex flex-col">
         
-        {/* 背景网格 (提升科技感) */}
-        <div 
-          className="absolute inset-0 opacity-[0.03] pointer-events-none" 
-          style={{ 
-            backgroundImage: 'radial-gradient(#444 1px, transparent 1px)', 
-            backgroundSize: '30px 30px' 
-          }} 
-        />
+        {/* 顶部状态栏 - 手术室风格 */}
+        <div className="h-14 flex items-center justify-between px-6 border-b border-white/5 bg-black/40 backdrop-blur-sm z-10">
+          <div className="flex items-center gap-4">
+            {/* 系统状态 */}
+            <div className="flex items-center gap-2">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse shadow-[0_0_8px_#10b981]" />
+              <span className="text-[10px] text-emerald-400 font-mono tracking-widest uppercase">
+                {t('modal.composition.clinic_analyzing') || 'SURGICAL MODE ACTIVE'}
+              </span>
+            </div>
+            {/* 分隔线 */}
+            <div className="w-px h-4 bg-white/10" />
+            {/* 模式标签 */}
+            <div className="text-[10px] text-gray-500 font-mono tracking-widest">
+              {mode === 'original' && 'BASELINE VIEW'}
+              {mode === 'crop' && 'REFRAME ANALYSIS'}
+              {mode === 'guide' && 'AR GUIDANCE'}
+              {mode === 'mask' && 'GRADING ZONES'}
+            </div>
+          </div>
+          
+          {/* 右侧信息 */}
+          <div className="flex items-center gap-4 text-[10px] font-mono text-gray-500">
+            <span>RES: {imageSize ? `${imageSize.width}×${imageSize.height}` : '...'}</span>
+            <span>AI_CONF: 98.7%</span>
+          </div>
+        </div>
+
+        {/* 图片视口 */}
+        <div className="flex-1 relative flex items-center justify-center overflow-hidden p-8">
 
         {/* 图片容器 */}
-        <div
-          className="relative max-w-full max-h-[82vh] transition-all duration-700 ease-out shadow-2xl"
+          <motion.div
+            className="relative"
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            transition={{ duration: 0.5 }}
           style={{
             // 【横竖图适配】根据图片宽高比动态设置最大尺寸
-            maxWidth: imageSize && imageSize.aspectRatio > 1 ? '65vw' : 'none',
-            maxHeight: imageSize && imageSize.aspectRatio <= 1 ? '65vh' : 'none',
+              maxWidth: imageSize && imageSize.aspectRatio > 1 ? '70%' : 'none',
+              maxHeight: imageSize && imageSize.aspectRatio <= 1 ? '70vh' : 'none',
           }}
         >
+            {/* 外框装饰 - 高端相框效果 */}
+            <div className="absolute -inset-4 border border-white/5 rounded-lg pointer-events-none" />
+            <div className="absolute -inset-8 border border-white/[0.02] rounded-xl pointer-events-none" />
+            
+            {/* 角标装饰 */}
+            <CornerBracket position="top-left" />
+            <CornerBracket position="top-right" />
+            <CornerBracket position="bottom-left" />
+            <CornerBracket position="bottom-right" />
           
           <img 
             ref={imgRef}
             src={userImageUrl} 
             className={`
-              block max-w-full max-h-[82vh] w-auto h-auto object-contain 
+                block max-w-full max-h-[70vh] w-auto h-auto object-contain 
               transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)]
               ${mode === 'crop' ? 'opacity-30 blur-sm scale-[0.98]' : 'opacity-100'}
+                shadow-2xl
             `}
             style={{
-              maxWidth: imageSize && imageSize.aspectRatio > 1 ? '65vw' : 'none',
-              maxHeight: imageSize && imageSize.aspectRatio <= 1 ? '65vh' : 'none',
+                maxWidth: imageSize && imageSize.aspectRatio > 1 ? '100%' : 'none',
+                maxHeight: imageSize && imageSize.aspectRatio <= 1 ? '70vh' : 'none',
             }}
             alt="Target"
             onLoad={() => {
               // 图片加载完成后触发尺寸检测
               if (imgRef.current) {
                 const img = imgRef.current;
-                const naturalWidth = img.naturalWidth;
-                const naturalHeight = img.naturalHeight;
-                const aspectRatio = naturalWidth / naturalHeight;
-
                 setImageSize({
-                  width: naturalWidth,
-                  height: naturalHeight,
-                  aspectRatio
+                    width: img.naturalWidth,
+                    height: img.naturalHeight,
+                    aspectRatio: img.naturalWidth / img.naturalHeight
                 });
               }
             }}
           />
 
-          {/* -----------------------------------------------------
-             MODE: 智能构图 (CROP) - 影院聚光灯效果
-             ----------------------------------------------------- */}
+            {/* MODE: 智能构图 (CROP) - 影院聚光灯效果 */}
+            <AnimatePresence>
           {mode === 'crop' && clinic.suggested_crop && (
-            <div className="absolute inset-0 z-20">
+                <motion.div 
+                  className="absolute inset-0 z-20"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                  transition={{ duration: 0.5 }}
+                >
                {/* 裁剪框 */}
-               <div 
-                 className="absolute border border-yellow-400/90 transition-all duration-700 ease-[cubic-bezier(0.25,1,0.5,1)]"
+                  <motion.div 
+                    className="absolute border-2 border-amber-400/90"
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    transition={{ duration: 0.5, delay: 0.2 }}
                  style={{
                    left: `${clinic.suggested_crop.x}%`,
                    top: `${clinic.suggested_crop.y}%`,
                    width: `${clinic.suggested_crop.w}%`,
                    height: `${clinic.suggested_crop.h}%`,
                    // 核心：利用超大阴影制造聚光灯效果，遮蔽周围
-                   boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.85)' 
+                      boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.88)' 
                  }}
                >
-                 {/* 三分线网格 (极细) */}
-                 <div className="w-full h-full grid grid-cols-3 grid-rows-3 opacity-30">
-                   <div className="border-r border-yellow-400" />
-                   <div className="border-r border-yellow-400" />
-                   <div className="border-b border-yellow-400 row-span-1 w-full absolute top-1/3" />
-                   <div className="border-b border-yellow-400 row-span-1 w-full absolute top-2/3" />
+                    {/* 三分线网格 */}
+                    <div className="absolute inset-0 grid grid-cols-3 grid-rows-3 pointer-events-none">
+                      {[...Array(9)].map((_, i) => (
+                        <div key={i} className="border border-amber-400/20" />
+                      ))}
                  </div>
                  
-                 {/* 角标装饰 */}
-                 <div className="absolute -top-1 -left-1 w-3 h-3 border-t-2 border-l-2 border-yellow-400"/>
-                 <div className="absolute -top-1 -right-1 w-3 h-3 border-t-2 border-r-2 border-yellow-400"/>
-                 <div className="absolute -bottom-1 -left-1 w-3 h-3 border-b-2 border-l-2 border-yellow-400"/>
-                 <div className="absolute -bottom-1 -right-1 w-3 h-3 border-b-2 border-r-2 border-yellow-400"/>
+                    {/* 角标装饰 - 更精致 */}
+                    <div className="absolute -top-0.5 -left-0.5 w-4 h-4 border-t-2 border-l-2 border-amber-400"/>
+                    <div className="absolute -top-0.5 -right-0.5 w-4 h-4 border-t-2 border-r-2 border-amber-400"/>
+                    <div className="absolute -bottom-0.5 -left-0.5 w-4 h-4 border-b-2 border-l-2 border-amber-400"/>
+                    <div className="absolute -bottom-0.5 -right-0.5 w-4 h-4 border-b-2 border-r-2 border-amber-400"/>
                  
                  {/* 尺寸标记 */}
-                 <div className="absolute -top-6 left-0 text-[10px] text-yellow-400 font-mono tracking-widest bg-black/80 px-2 py-0.5 rounded">
+                    <div className="absolute -top-8 left-0 flex items-center gap-2">
+                      <div className="text-[10px] text-amber-400 font-mono tracking-widest bg-black/80 px-2 py-1 rounded border border-amber-400/30">
+                        <Crop size={10} className="inline mr-1" />
                    {t('modal.composition.clinic_crop_preview') || 'AI REFRAME'}
                   </div>
                </div>
-            </div>
+                  </motion.div>
+                </motion.div>
           )}
+            </AnimatePresence>
 
-          {/* -----------------------------------------------------
-             MODE: 拍摄指导 (GUIDE) - AR 增强现实风格
-             ----------------------------------------------------- */}
+            {/* MODE: 拍摄指导 (GUIDE) - AR 增强现实风格 */}
+            <AnimatePresence>
           {mode === 'guide' && clinic.action_guides?.map((guide: ActionGuide, idx: number) => (
-            <div 
+                <motion.div 
               key={idx}
               className="absolute z-30"
               style={{ left: `${guide.x}%`, top: `${guide.y}%` }}
+                  initial={{ opacity: 0, scale: 0 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  exit={{ opacity: 0, scale: 0 }}
+                  transition={{ duration: 0.3, delay: idx * 0.1 }}
             >
               <div className="relative group cursor-help">
-
-                {/* 1. 锚点 (全息投影感) */}
+                    {/* 锚点 - 全息投影感 */}
                 <div className="absolute -translate-x-1/2 -translate-y-1/2">
-                   <div className="w-12 h-12 border border-cyan-500/30 rounded-full animate-[spin_4s_linear_infinite]" />
-                   <div className="absolute inset-0 w-12 h-12 border border-cyan-500/30 rounded-full animate-[spin_4s_linear_infinite_reverse] scale-75" />
+                      <motion.div 
+                        className="w-16 h-16 border border-cyan-500/40 rounded-full"
+                        animate={{ rotate: 360 }}
+                        transition={{ duration: 8, repeat: Infinity, ease: "linear" }}
+                      />
+                      <motion.div 
+                        className="absolute inset-2 border border-cyan-500/30 rounded-full"
+                        animate={{ rotate: -360 }}
+                        transition={{ duration: 6, repeat: Infinity, ease: "linear" }}
+                      />
                    <div className="absolute inset-0 flex items-center justify-center">
-                      <div className="w-2 h-2 bg-cyan-400 rounded-full shadow-[0_0_10px_#22d3ee]" />
+                        <div className="w-3 h-3 bg-cyan-400 rounded-full shadow-[0_0_15px_#22d3ee,0_0_30px_#22d3ee50]" />
                    </div>
                 </div>
 
-                {/* 2. 动态箭头 (如果是移动指令) */}
+                    {/* 动态箭头 (如果是移动指令) */}
                 {guide.icon.includes('move') && (
-                  <svg 
-                    className="absolute top-0 left-0 w-32 h-32 pointer-events-none opacity-80" 
+                      <motion.svg 
+                        className="absolute top-0 left-0 w-32 h-32 pointer-events-none" 
                     style={{ 
                       transform: `translate(-50%, -50%) rotate(${guide.vector_angle || 0}deg)`,
-                      filter: 'drop-shadow(0 0 2px #22d3ee)'
                     }}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 0.8 }}
                   >
                     <defs>
                       <marker id={`arrow-${idx}`} markerWidth="6" markerHeight="6" refX="5" refY="3" orient="auto">
                         <path d="M0,0 L0,6 L6,3 z" fill="#22d3ee" />
                       </marker>
+                          <filter id={`glow-${idx}`}>
+                            <feGaussianBlur stdDeviation="2" result="coloredBlur"/>
+                            <feMerge>
+                              <feMergeNode in="coloredBlur"/>
+                              <feMergeNode in="SourceGraphic"/>
+                            </feMerge>
+                          </filter>
                     </defs>
-                    <line 
-                      x1="0" 
+                        <motion.line 
+                          x1="20" 
                       y1="20" 
-                      x2="60" 
+                          x2="70" 
                       y2="20" 
                       stroke="#22d3ee" 
-                      strokeWidth="1.5" 
+                          strokeWidth="2" 
                       markerEnd={`url(#arrow-${idx})`} 
-                      strokeDasharray="4 2" 
-                      className="animate-[dash_1s_linear_infinite]" 
+                          filter={`url(#glow-${idx})`}
+                          initial={{ pathLength: 0 }}
+                          animate={{ pathLength: 1 }}
+                          transition={{ duration: 0.5, delay: idx * 0.1 + 0.3 }}
                     />
-                  </svg>
+                      </motion.svg>
                 )}
 
-                {/* 3. 悬浮指令卡片 (连接线样式) - 仅悬停显示 */}
-                <div className="absolute left-6 top-6 flex items-start opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none group-hover:pointer-events-auto">
-                   {/* 折线连接 */}
-                   <svg width="40" height="40" className="absolute -left-8 -top-8 pointer-events-none">
-                      <path d="M0,0 L15,15 L40,15" fill="none" stroke="#22d3ee" strokeWidth="1" strokeOpacity="0.5" />
-                   </svg>
-                   
-                   <div className="bg-black/80 backdrop-blur-md border-l-2 border-cyan-400 pl-3 py-1 pr-4 shadow-2xl ml-2">
-                      <div className="flex items-center gap-2 text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-0.5">
+                    {/* 悬浮指令卡片 */}
+                    <div className="absolute left-8 top-8 opacity-0 group-hover:opacity-100 transition-all duration-300 pointer-events-none group-hover:pointer-events-auto transform group-hover:translate-x-1">
+                      <div className="bg-[#0a0a0a]/95 backdrop-blur-xl border border-cyan-500/30 pl-4 py-3 pr-5 rounded-lg shadow-2xl min-w-[200px]">
+                        <div className="flex items-center gap-2 text-[10px] text-cyan-400 font-bold uppercase tracking-wider mb-1.5">
                         {getIconForGuide(guide.icon)}
-                        {guide.icon.replace('_', ' ')}
+                          <span>{guide.icon.replace(/_/g, ' ')}</span>
                       </div>
-                      <div className="text-xs text-white font-medium whitespace-nowrap">
+                        <div className="text-sm text-white font-medium leading-relaxed">
                         {guide.instruction}
                       </div>
                    </div>
                 </div>
               </div>
-            </div>
+                </motion.div>
           ))}
+            </AnimatePresence>
 
-          {/* -----------------------------------------------------
-             MODE: 后期蒙版 (MASK) - 工程图纸风格
-             ----------------------------------------------------- */}
+            {/* MODE: 后期蒙版 (MASK) - 工程图纸风格 */}
+            <AnimatePresence>
           {mode === 'mask' && (
-              <svg 
+                <motion.svg 
               className="absolute inset-0 w-full h-full z-20 pointer-events-none"
                 viewBox="0 0 100 100"
                 preserveAspectRatio="none"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
               >
                 <defs>
                 {/* 纹理：Burn (黑色斜线) */}
-                <pattern id="pattern-burn" width="8" height="8" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-                  <rect width="4" height="8" transform="translate(0,0)" fill="black" fillOpacity="0.6" />
+                    <pattern id="pattern-burn" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+                      <rect width="3" height="6" fill="black" fillOpacity="0.7" />
                 </pattern>
                 {/* 纹理：Dodge (白色点阵) */}
-                <pattern id="pattern-dodge" width="6" height="6" patternUnits="userSpaceOnUse">
-                   <circle cx="2" cy="2" r="1.5" fill="white" fillOpacity="0.6" />
+                    <pattern id="pattern-dodge" width="5" height="5" patternUnits="userSpaceOnUse">
+                      <circle cx="2.5" cy="2.5" r="1" fill="white" fillOpacity="0.7" />
                   </pattern>
-                {/* 纹理：Color (方格) */}
-                <pattern id="pattern-color" width="8" height="8" patternUnits="userSpaceOnUse">
-                   <path d="M0 0h8v8H0z" fill="none" stroke="rgba(236, 72, 153, 0.5)" strokeWidth="1"/>
-                  </pattern>
+                    {/* 纹理：Color (渐变) */}
+                    <linearGradient id="gradient-color" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#ec4899" stopOpacity="0.3" />
+                      <stop offset="100%" stopColor="#8b5cf6" stopOpacity="0.3" />
+                    </linearGradient>
                 </defs>
 
                 {clinic.grading_masks?.map((mask: GradingMask, idx: number) => {
@@ -343,118 +435,51 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
                      return `${x},${y}`;
                    }).join(' ');
                  
-                 let fillUrl = 'url(#pattern-color)';
+                    let fillUrl = 'url(#gradient-color)';
                  let strokeColor = '#ec4899';
-                 if (mask.action === 'burn') { fillUrl = 'url(#pattern-burn)'; strokeColor = 'rgba(0,0,0,0.5)'; }
+                    if (mask.action === 'burn') { fillUrl = 'url(#pattern-burn)'; strokeColor = 'rgba(50,50,50,0.8)'; }
                  if (mask.action === 'dodge') { fillUrl = 'url(#pattern-dodge)'; strokeColor = 'rgba(255,255,255,0.8)'; }
                    
                    return (
-                   <g 
+                      <motion.g 
                      key={idx} 
-                        className={`transition-opacity duration-300 ${isActive ? 'opacity-100' : 'opacity-10'}`}
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: isActive ? 1 : 0.15 }}
+                        transition={{ duration: 0.3 }}
                      >
                        <polygon 
                          points={points} 
                        fill={fillUrl}
                        stroke={strokeColor}
-                         strokeWidth="1.5"
-                         strokeDasharray="4 2"
-                       className="animate-[dash_30s_linear_infinite]"
+                          strokeWidth="0.8"
+                          strokeDasharray="3 2"
                        />
-                     </g>
+                      </motion.g>
                  );
                 })}
-              </svg>
+                </motion.svg>
           )}
+            </AnimatePresence>
 
+          </motion.div>
         </div>
-      </div>
 
-      {/* =========================================================
-          BOTTOM: 悬浮 HUD 信息面板 (文字说明区)
-         ========================================================= */}
-      {mode !== 'original' && (
-        <div className="absolute bottom-28 left-1/2 -translate-x-1/2 w-full max-w-lg z-30 px-4">
-          <div className="bg-[#111]/80 backdrop-blur-xl border border-white/10 p-5 rounded-2xl shadow-2xl flex items-start gap-5 animate-in slide-in-from-bottom-6">
-            
-            {/* 动态图标 */}
-            <div className={`p-3 rounded-xl shrink-0 ${
-               mode === 'crop' ? 'bg-yellow-500/10 text-yellow-400' : 
-               mode === 'guide' ? 'bg-cyan-500/10 text-cyan-400' : 
-               'bg-purple-500/10 text-purple-400'
-            }`}>
-               {mode === 'crop' && <Crop size={24} />}
-               {mode === 'guide' && <Navigation size={24} />}
-               {mode === 'mask' && <Layers size={24} />}
-            </div>
-
-            {/* 内容区 */}
-            <div className="flex-1">
-              <div className="flex justify-between items-center mb-1">
-                <h4 className="text-sm font-bold text-white tracking-wide">
-                  {mode === 'crop' && (t('modal.composition.clinic_mode_crop_title') || 'AI 构图重构')}
-                  {mode === 'guide' && (t('modal.composition.clinic_mode_guide_title') || '现场拍摄指导')}
-                  {mode === 'mask' && (t('modal.composition.clinic_mode_mask_title') || '局部调色蒙版')}
-                </h4>
-                {/* 装饰性数据 */}
-                <span className="text-[10px] font-mono text-gray-500">AI_CONF: 98%</span>
-              </div>
-              
-              <div className="text-xs text-gray-400 leading-relaxed">
-                {mode === 'crop' && (clinic.suggested_crop?.reason || t('modal.composition.clinic_crop_default_reason') || '根据黄金分割法则重新裁剪，去除干扰元素。')}
-                
-                {mode === 'guide' && (
-                  <ul className="list-disc list-inside space-y-1 mt-1 text-gray-300">
-                    {clinic.action_guides?.map((g: ActionGuide, i: number) => (
-                      <li key={i}>{g.instruction}</li>
-                    ))}
-                  </ul>
-                )}
-
-                {mode === 'mask' && (
-                  <div className="flex flex-wrap gap-2 mt-2">
-                    {clinic.grading_masks?.map((m: GradingMask, i: number) => (
-                      <span 
-                        key={i} 
-                        onMouseEnter={() => setActiveMaskIndex(i)}
-                        onMouseLeave={() => setActiveMaskIndex(null)}
-                        className={`
-                          px-2 py-1 rounded text-[10px] border cursor-pointer transition-colors
-                          ${m.action === 'burn' ? 'bg-black border-gray-600 text-gray-300' : 
-                            m.action === 'dodge' ? 'bg-white text-black border-white' : 
-                            'bg-purple-900/30 border-purple-500 text-purple-200'}
-                          ${activeMaskIndex === i ? 'ring-2 ring-offset-1 ring-offset-black ring-blue-500' : ''}
-                        `}
-                      >
-                        {m.action === 'burn' ? '▼ 压暗 (Burn)' : m.action === 'dodge' ? '▲ 提亮 (Dodge)' : '● 调色 (Color)'}
-                      </span>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================
-          DOCK: 底部控制栏 (Mac 风格悬浮)
-         ========================================================= */}
-      <div className="h-24 flex items-center justify-center z-40 bg-gradient-to-t from-black via-black/80 to-transparent">
-        <div className="flex items-center gap-3 px-4 py-3 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-2xl shadow-[0_20px_50px_-20px_rgba(0,0,0,0.7)]">
+        {/* 底部控制栏 */}
+        <div className="h-20 flex items-center justify-center border-t border-white/5 bg-black/40 backdrop-blur-sm z-10">
+          <div className="flex items-center gap-2 px-4 py-2 bg-white/[0.03] border border-white/5 rounded-2xl">
         <ControlBtn 
           active={mode === 'original'} 
           onClick={() => setMode('original')} 
           icon={<Eye />} 
-            label={t('modal.composition.clinic_mode_original') || 'RAW'} 
+              label={t('modal.composition.clinic_mode_original') || 'ORIGINAL'} 
         />
-          <div className="w-px h-8 bg-white/10 mx-1" />
+            <div className="w-px h-6 bg-white/10 mx-1" />
         <ControlBtn 
           active={mode === 'crop'} 
           onClick={() => setMode('crop')} 
           icon={<Crop />} 
-            label={t('modal.composition.clinic_mode_crop') || 'CROP'} 
-          highlightColor="yellow" 
+              label={t('modal.composition.clinic_mode_crop') || 'REFRAME'} 
+              highlightColor="amber" 
         />
         <ControlBtn 
           active={mode === 'guide'} 
@@ -472,68 +497,318 @@ export const DirectorViewfinder: React.FC<DirectorViewfinderProps> = ({ data, us
         />
       </div>
       </div>
+      </div>
+
+      {/* =========================================================
+          RIGHT: 信息面板 (可折叠)
+         ========================================================= */}
+      <motion.div 
+        className="w-[380px] border-l border-white/5 bg-[#080808] flex flex-col overflow-hidden"
+        initial={{ x: 50, opacity: 0 }}
+        animate={{ x: 0, opacity: 1 }}
+        transition={{ duration: 0.5, delay: 0.2 }}
+      >
+        {/* 面板头部 */}
+        <div className="p-5 border-b border-white/5 bg-gradient-to-r from-[#0a0a0a] to-[#080808]">
+          <div className="flex items-center gap-2 mb-3">
+            <div className="p-1.5 bg-red-500/10 rounded-lg">
+              <Activity size={14} className="text-red-400" />
+            </div>
+            <span className="text-[10px] font-bold text-red-400 tracking-[0.2em] uppercase">
+              {t('modal.composition.clinic_diagnosis_title') || 'SURGICAL DIAGNOSIS'}
+            </span>
+          </div>
+          <p className="text-sm text-gray-300 leading-relaxed">
+            {clinic.diagnosis_summary || t('modal.composition.clinic_analyzing') || '正在分析构图问题...'}
+          </p>
+        </div>
+
+        {/* 可滚动内容区 */}
+        <div className="flex-1 overflow-y-auto custom-scrollbar p-5 space-y-6">
+          
+          {/* 当前模式详情 */}
+          <AnimatePresence mode="wait">
+            {mode === 'crop' && clinic.suggested_crop && (
+              <motion.div
+                key="crop-info"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                <SectionHeader icon={<Crop size={12} />} title={t('modal.composition.clinic_mode_crop_title') || 'AI REFRAME'} color="amber" />
+                <div className="bg-amber-500/5 border border-amber-500/20 rounded-xl p-4">
+                  <p className="text-sm text-gray-300 leading-relaxed">
+                    {clinic.suggested_crop.reason || t('modal.composition.clinic_crop_default_reason') || '根据黄金分割法则重新裁剪，去除干扰元素。'}
+                  </p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <DataChip label="X" value={`${clinic.suggested_crop.x}%`} />
+                    <DataChip label="Y" value={`${clinic.suggested_crop.y}%`} />
+                    <DataChip label="W" value={`${clinic.suggested_crop.w}%`} />
+                    <DataChip label="H" value={`${clinic.suggested_crop.h}%`} />
+                  </div>
+                </div>
+              </motion.div>
+            )}
+
+            {mode === 'guide' && clinic.action_guides && clinic.action_guides.length > 0 && (
+              <motion.div
+                key="guide-info"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                <SectionHeader icon={<Navigation size={12} />} title={t('modal.composition.clinic_mode_guide_title') || 'AR GUIDANCE'} color="cyan" />
+                <div className="space-y-3">
+                  {clinic.action_guides.map((guide: ActionGuide, idx: number) => (
+                    <div key={idx} className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <div className="p-1 bg-cyan-500/20 rounded">
+                          {getIconForGuide(guide.icon)}
+                        </div>
+                        <span className="text-[10px] text-cyan-400 font-bold uppercase tracking-wider">
+                          {guide.icon.replace(/_/g, ' ')}
+                        </span>
+                      </div>
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        {guide.instruction}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {mode === 'mask' && clinic.grading_masks && clinic.grading_masks.length > 0 && (
+              <motion.div
+                key="mask-info"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                <SectionHeader icon={<Layers size={12} />} title={t('modal.composition.clinic_mode_mask_title') || 'GRADING ZONES'} color="purple" />
+                <div className="space-y-3">
+                  {clinic.grading_masks.map((mask: GradingMask, idx: number) => (
+                    <div 
+                      key={idx} 
+                      className={`border rounded-xl p-4 cursor-pointer transition-all ${
+                        activeMaskIndex === idx 
+                          ? 'bg-purple-500/10 border-purple-500/40' 
+                          : 'bg-white/[0.02] border-white/5 hover:border-white/10'
+                      }`}
+                      onMouseEnter={() => setActiveMaskIndex(idx)}
+                      onMouseLeave={() => setActiveMaskIndex(null)}
+                    >
+                      <div className="flex items-center gap-2 mb-2">
+                        <MaskBadge action={mask.action} />
+                      </div>
+                      <p className="text-sm text-gray-300 leading-relaxed">
+                        {mask.advice || `Apply ${mask.action} adjustment to this area`}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </motion.div>
+            )}
+
+            {mode === 'original' && (
+              <motion.div
+                key="original-info"
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="space-y-4"
+              >
+                <SectionHeader icon={<Eye size={12} />} title="BASELINE VIEW" color="gray" />
+                <p className="text-sm text-gray-500 leading-relaxed">
+                  {t('modal.composition.clinic_guide_default_text') || '选择上方的模式查看 AI 构图分析结果。'}
+                </p>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* 前期指导 */}
+          {clinic.pre_shoot_guidance && (
+            <div className="space-y-3">
+              <SectionHeader icon={<Camera size={12} />} title={t('modal.composition.clinic_pre_shoot_title') || 'PRE-SHOOT GUIDANCE'} color="blue" />
+              <div className="space-y-2">
+                {clinic.pre_shoot_guidance.camera_position && (
+                  <InfoRow label={t('modal.composition.clinic_camera_position') || 'Camera Position'} value={clinic.pre_shoot_guidance.camera_position} />
+                )}
+                {clinic.pre_shoot_guidance.angle_adjustment && (
+                  <InfoRow label={t('modal.composition.clinic_angle_adjustment') || 'Angle Adjustment'} value={clinic.pre_shoot_guidance.angle_adjustment} />
+                )}
+                {clinic.pre_shoot_guidance.element_management && (
+                  <InfoRow label={t('modal.composition.clinic_element_management') || 'Element Management'} value={clinic.pre_shoot_guidance.element_management} />
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* 后期处理 */}
+          {clinic.post_processing && (
+            <div className="space-y-3">
+              <SectionHeader icon={<Palette size={12} />} title={t('modal.composition.clinic_post_processing_title') || 'POST-PROCESSING'} color="pink" />
+              <div className="space-y-2">
+                {clinic.post_processing.crop_ratio && (
+                  <InfoRow label={t('modal.composition.clinic_crop_ratio_label') || 'Aspect Ratio'} value={clinic.post_processing.crop_ratio} />
+                )}
+                {clinic.post_processing.crop_instruction && (
+                  <InfoRow label={t('modal.composition.clinic_crop_instruction') || 'Crop Strategy'} value={clinic.post_processing.crop_instruction} />
+                )}
+                {clinic.post_processing.geometry_correction && (
+                  <InfoRow label={t('modal.composition.clinic_geometry_correction') || 'Geometry'} value={clinic.post_processing.geometry_correction} />
+                )}
+              </div>
+            </div>
+          )}
+
+        </div>
+      </motion.div>
 
     </div>
   );
 };
 
-// --- 辅助函数 ---
+// ============================================================================
+// 辅助组件
+// ============================================================================
 
-/**
- * 根据图标名称返回对应的图标组件
- * @param iconName 图标名称（如 'move_camera', 'remove_object', 'focus_here'）
- * @returns React 图标组件
- */
-const getIconForGuide = (iconName: string) => {
-  if (iconName.includes('move')) return <Navigation size={12} />;
-  if (iconName.includes('remove')) return <XCircle size={12} />;
-  return <Crosshair size={12} />;
+/** 角标装饰组件 */
+const CornerBracket: React.FC<{ position: 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right' }> = ({ position }) => {
+  const positionClasses = {
+    'top-left': '-top-2 -left-2 border-t border-l',
+    'top-right': '-top-2 -right-2 border-t border-r',
+    'bottom-left': '-bottom-2 -left-2 border-b border-l',
+    'bottom-right': '-bottom-2 -right-2 border-b border-r',
+  };
+  
+  return (
+    <div className={`absolute w-6 h-6 border-white/20 pointer-events-none ${positionClasses[position]}`} />
+  );
 };
 
-// --- 辅助组件 ---
+/** 区块标题组件 */
+const SectionHeader: React.FC<{ icon: React.ReactNode; title: string; color: string }> = ({ icon, title, color }) => {
+  const colorClasses: Record<string, string> = {
+    amber: 'text-amber-400 bg-amber-500/10',
+    cyan: 'text-cyan-400 bg-cyan-500/10',
+    purple: 'text-purple-400 bg-purple-500/10',
+    blue: 'text-blue-400 bg-blue-500/10',
+    pink: 'text-pink-400 bg-pink-500/10',
+    gray: 'text-gray-400 bg-gray-500/10',
+  };
+  
+  return (
+    <div className="flex items-center gap-2">
+      <div className={`p-1 rounded ${colorClasses[color]}`}>
+        {icon}
+      </div>
+      <span className={`text-[10px] font-bold tracking-[0.15em] uppercase ${colorClasses[color].split(' ')[0]}`}>
+        {title}
+      </span>
+    </div>
+  );
+};
+
+/** 数据标签组件 */
+const DataChip: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <div className="flex items-center justify-between bg-black/30 rounded-lg px-3 py-2">
+    <span className="text-[10px] text-gray-500 font-mono">{label}</span>
+    <span className="text-xs text-amber-400 font-mono font-medium">{value}</span>
+  </div>
+);
+
+/** 信息行组件 */
+const InfoRow: React.FC<{ label: string; value: string }> = ({ label, value }) => (
+  <div className="bg-white/[0.02] border border-white/5 rounded-lg p-3">
+    <div className="text-[10px] text-gray-500 uppercase tracking-wider mb-1">{label}</div>
+    <div className="text-sm text-gray-300 leading-relaxed">{value}</div>
+  </div>
+);
+
+/** 蒙版类型标签 */
+const MaskBadge: React.FC<{ action: string }> = ({ action }) => {
+  if (action === 'burn') {
+    return (
+      <span className="px-2 py-1 bg-gray-900 border border-gray-700 rounded text-[10px] text-gray-300 font-bold">
+        ▼ BURN (压暗)
+      </span>
+    );
+  }
+  if (action === 'dodge') {
+    return (
+      <span className="px-2 py-1 bg-white border border-gray-300 rounded text-[10px] text-gray-900 font-bold">
+        ▲ DODGE (提亮)
+      </span>
+    );
+  }
+  return (
+    <span className="px-2 py-1 bg-purple-900/50 border border-purple-500/50 rounded text-[10px] text-purple-200 font-bold">
+      ● COLOR (调色)
+    </span>
+  );
+};
+
+/** 根据图标名称返回对应的图标组件 */
+const getIconForGuide = (iconName: string) => {
+  if (iconName.includes('move')) return <Navigation size={12} className="text-cyan-400" />;
+  if (iconName.includes('remove')) return <XCircle size={12} className="text-cyan-400" />;
+  return <Crosshair size={12} className="text-cyan-400" />;
+};
+
+// ============================================================================
+// 控制按钮组件
+// ============================================================================
 
 interface ControlBtnProps {
   active: boolean;
   onClick: () => void;
   icon: React.ReactElement;
   label: string;
-  highlightColor?: 'white' | 'yellow' | 'cyan' | 'purple';
+  highlightColor?: 'white' | 'amber' | 'cyan' | 'purple';
 }
 
-/**
- * 控制按钮组件（Mac Dock 风格）
- */
 const ControlBtn: React.FC<ControlBtnProps> = ({ active, onClick, icon, label, highlightColor = 'white' }) => {
   // 动态计算颜色类名
-  let activeBg = 'bg-white/10 text-white border-white/20';
-  let activeText = 'text-white';
+  const colorMap: Record<string, { bg: string; text: string; glow: string }> = {
+    white: { bg: 'bg-white/10', text: 'text-white', glow: 'shadow-white/20' },
+    amber: { bg: 'bg-amber-500/20', text: 'text-amber-400', glow: 'shadow-amber-500/30' },
+    cyan: { bg: 'bg-cyan-500/20', text: 'text-cyan-400', glow: 'shadow-cyan-500/30' },
+    purple: { bg: 'bg-purple-500/20', text: 'text-purple-400', glow: 'shadow-purple-500/30' },
+  };
   
-  if (active) {
-    if (highlightColor === 'yellow') { activeBg = 'bg-yellow-500/20 border-yellow-500/50'; activeText = 'text-yellow-400'; }
-    if (highlightColor === 'cyan') { activeBg = 'bg-cyan-500/20 border-cyan-500/50'; activeText = 'text-cyan-400'; }
-    if (highlightColor === 'purple') { activeBg = 'bg-purple-500/20 border-purple-500/50'; activeText = 'text-purple-400'; }
-  }
+  const colors = colorMap[highlightColor];
 
   return (
     <button 
       onClick={onClick}
       className={`
-        group relative flex flex-col items-center justify-center w-14 h-14 rounded-xl border transition-all duration-300
-        ${active ? `${activeBg} scale-105 shadow-lg` : 'border-transparent text-gray-500 hover:bg-white/5 hover:text-gray-300'}
+        group relative flex flex-col items-center justify-center w-16 h-14 rounded-xl transition-all duration-300
+        ${active 
+          ? `${colors.bg} ${colors.text} shadow-lg ${colors.glow}` 
+          : 'text-gray-500 hover:bg-white/5 hover:text-gray-300'
+        }
       `}
     >
-      <div className={`mb-1 ${active ? activeText : 'text-current'} transition-colors`}>
-        {React.cloneElement(icon, { size: 20, strokeWidth: 1.5 })}
+      <div className="mb-1 transition-transform group-hover:scale-110">
+        {React.cloneElement(icon, { size: 18, strokeWidth: 1.5 })}
       </div>
-      <span className="text-[9px] font-bold tracking-wider opacity-80">{label}</span>
+      <span className="text-[9px] font-bold tracking-wider">{label}</span>
       
       {/* 底部光点 */}
       {active && (
-        <div className={`absolute -bottom-1 w-1 h-1 rounded-full ${
-          highlightColor === 'yellow' ? 'bg-yellow-500' :
-          highlightColor === 'cyan' ? 'bg-cyan-500' :
-          highlightColor === 'purple' ? 'bg-purple-500' : 'bg-white'
-        }`} />
+        <motion.div 
+          className={`absolute -bottom-1 w-1.5 h-1.5 rounded-full ${
+            highlightColor === 'amber' ? 'bg-amber-400' :
+            highlightColor === 'cyan' ? 'bg-cyan-400' :
+            highlightColor === 'purple' ? 'bg-purple-400' : 'bg-white'
+          }`}
+          layoutId="activeIndicator"
+          transition={{ type: "spring", stiffness: 500, damping: 30 }}
+        />
       )}
     </button>
   );

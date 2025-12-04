@@ -5,7 +5,7 @@ import { MOCK_FULL_DATA } from '../../src/lib/mockData';
 
 import { useLanguage } from '../../src/contexts/LanguageContext';
 
-export const LightroomModal = ({ data, onClose }: any) => {
+export const LightroomModal = ({ data, imageAnalysis, userImageUrl, refImageUrl, taskId, onClose }: any) => {
   const { t } = useLanguage();
   const safeData = (data && data.basic_panel && !Array.isArray(data.basic_panel)) 
     ? data 
@@ -13,9 +13,9 @@ export const LightroomModal = ({ data, onClose }: any) => {
 
   return (
     <BaseModal title={t('modal.lr.title')} onClose={onClose}>
-      <div className="bg-carbon-950 h-full overflow-y-auto custom-scrollbar relative">
-         {/* No padding wrapper - Panel handles its own internal spacing for edge-to-edge feel */}
-         <LightroomPanel data={safeData} />
+      {/* 【修复】h-full 确保占满容器高度，LightroomPanel 内部管理滚动 */}
+      <div className="h-full">
+         <LightroomPanel data={safeData} imageAnalysis={imageAnalysis} userImageUrl={userImageUrl} refImageUrl={refImageUrl} taskId={taskId} />
       </div>
     </BaseModal>
   );

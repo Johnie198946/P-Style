@@ -22,10 +22,11 @@ export interface FrontendData {
   review?: any;
   composition?: any;
   lighting?: any;
-  color_scheme?: any;
+  color?: any;
   lightroom?: any;
   photoshop?: any;
   preview_image_url?: string;
+  image_analysis?: any; // 【新增】OpenCV 图像分析数据
 }
 
 /**
@@ -512,17 +513,14 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     
     // 【新增】从 photoReview.structured.spatial_analysis 中提取 visual_mass（用于 Composition 的 visual_data）
     // 后端现在将 visual_mass 放在 spatial_analysis 中，而不是直接在 composition.structured 中
-    let visual_mass_from_spatial_analysis = null;
-    if (sections.photoReview?.structured?.spatial_analysis?.visual_mass) {
-      visual_mass_from_spatial_analysis = sections.photoReview.structured.spatial_analysis.visual_mass;
-      if (process.env.NODE_ENV === 'development') {
+    const visual_mass_from_spatial_analysis = sections.photoReview?.structured?.spatial_analysis?.visual_mass as any;
+    if (visual_mass_from_spatial_analysis && process.env.NODE_ENV === 'development') {
         console.log('[dataAdapter] ✅ 从 photoReview.structured.spatial_analysis.visual_mass 提取 visual_mass:', {
-          hasScore: !!visual_mass_from_spatial_analysis.score,
-          hasCompositionRule: !!visual_mass_from_spatial_analysis.composition_rule,
-          hasCenterPoint: !!visual_mass_from_spatial_analysis.center_point,
-          hasPolygonPoints: !!visual_mass_from_spatial_analysis.polygon_points,
+        hasScore: !!(visual_mass_from_spatial_analysis.score),
+        hasCompositionRule: !!(visual_mass_from_spatial_analysis.composition_rule),
+        hasCenterPoint: !!(visual_mass_from_spatial_analysis.center_point),
+        hasPolygonPoints: !!(visual_mass_from_spatial_analysis.polygon_points),
         });
-      }
     }
     
     // 检测新结构（5字段）或旧结构（7段）
@@ -915,12 +913,22 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     const color = sections.color;
     const structured = color.structured || color;
     
-    // 【调试日志】记录 color section 的数据结构
-    console.log('[dataAdapter] 🔍 Color Section 数据检查:', {
+    // 【调试日志】记录 color section 的数据结构（详细版本）
+    console.log('[dataAdapter] 🔍 Color Section 数据检查（详细）:', {
       hasColor: !!sections.color,
       colorKeys: color ? Object.keys(color) : [],
       hasStructured: !!color.structured,
       structuredKeys: structured ? Object.keys(structured) : [],
+      // 【关键】检查 HSL 数据（详细）
+      hasHsl: !!structured.hsl,
+      hslType: Array.isArray(structured.hsl) ? 'array' : typeof structured.hsl,
+      hslIsArray: Array.isArray(structured.hsl),
+      hslLength: Array.isArray(structured.hsl) ? structured.hsl.length : 'not array',
+      hslSample: Array.isArray(structured.hsl) ? structured.hsl.slice(0, 5) : (structured.hsl ? [structured.hsl] : []),
+      // 【新增】检查 HSL 数据的完整内容
+      hslFull: Array.isArray(structured.hsl) ? structured.hsl : (structured.hsl ? [structured.hsl] : []),
+      // 【新增】检查 HSL 数据的完整 JSON 字符串（用于调试）
+      hslFullJson: JSON.stringify(structured.hsl, null, 2).substring(0, 1000), // 只显示前 1000 字符
       // 【关键】检查三个字段是否存在（包括空字符串检查）
       master_style_recap: structured.master_style_recap,
       master_style_recapType: typeof structured.master_style_recap,
@@ -941,7 +949,22 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     });
     
     // 转换 HSL 数组为对象格式
-    const hslArray = structured.hsl || [];
+    // 【修复】确保 structured.hsl 存在且是数组格式
+    const hslArray = Array.isArray(structured.hsl) ? structured.hsl : (structured.hsl ? [structured.hsl] : []);
+    
+    // 【调试日志】记录 HSL 数组原始数据（强制输出，用于调试）
+    console.log('[dataAdapter] 🔴🔴🔴 HSL 数组原始数据（强制输出）:', {
+      hasStructuredHsl: !!structured.hsl,
+      structuredHslType: typeof structured.hsl,
+      structuredHslIsArray: Array.isArray(structured.hsl),
+      structuredHslLength: Array.isArray(structured.hsl) ? structured.hsl.length : 'not array',
+      structuredHslSample: Array.isArray(structured.hsl) ? structured.hsl.slice(0, 3) : structured.hsl,
+      hslArrayLength: hslArray.length,
+      hslArraySample: hslArray.slice(0, 3),
+      // 【新增】完整输出 structured.hsl 的 JSON 字符串（前 2000 字符）
+      structuredHslJson: JSON.stringify(structured.hsl, null, 2).substring(0, 2000),
+    });
+    
     const hslObject: any = {
       red: { hue: 0, saturation: 0, luminance: 0 },
       orange: { hue: 0, saturation: 0, luminance: 0 },
@@ -965,19 +988,162 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       "洋红": "magenta", "Magenta": "magenta",
     };
     
+    // 【调试日志】记录 structured.hsl 的原始数据（在转换之前）
+    console.log('[dataAdapter] 🔍 structured.hsl 原始数据检查:', {
+      hasStructuredHsl: !!structured.hsl,
+      structuredHslType: typeof structured.hsl,
+      structuredHslIsArray: Array.isArray(structured.hsl),
+      structuredHslLength: Array.isArray(structured.hsl) ? structured.hsl.length : (structured.hsl ? Object.keys(structured.hsl).length : 0),
+      structuredHslSample: Array.isArray(structured.hsl) 
+        ? structured.hsl.slice(0, 3).map((item: any) => ({
+            color: item.color,
+            hue: item.hue,
+            saturation: item.saturation,
+            luminance: item.luminance,
+            note: item.note,
+          }))
+        : (structured.hsl ? Object.keys(structured.hsl).slice(0, 3).map(key => ({
+            key,
+            data: structured.hsl[key],
+          })) : []),
+      hslArrayLength: hslArray.length,
+      hslArraySample: hslArray.slice(0, 3).map((item: any) => ({
+        color: item.color,
+        hue: item.hue,
+        saturation: item.saturation,
+        luminance: item.luminance,
+        note: item.note,
+      })),
+    });
+    
     // 【修复】映射 HSL 数据，包括 desc/note 字段（用于前端显示调整原因描述）
+    // 【修复】处理字符串格式的 HSL 值（如 "+10"、"-5"），确保正确解析正负号
     hslArray.forEach((item: any) => {
-      const colorName = colorMap[item.color] || item.color?.toLowerCase();
+      // 【修复】支持多种颜色名称格式（中文、英文、大小写）
+      const itemColor = item.color || "";
+      const colorName = colorMap[itemColor] || colorMap[itemColor.toLowerCase()] || itemColor?.toLowerCase();
+      
+      // 【调试日志】记录颜色映射过程 - 【修复】强制输出所有颜色
+      console.log(`[dataAdapter] 🔍 HSL 颜色映射: itemColor="${itemColor}", colorName="${colorName}", inColorMap=${!!colorMap[itemColor]}, hslObjectHasKey=${!!(colorName && hslObject[colorName])}`);
+      
       if (colorName && hslObject[colorName]) {
+        // 【修复】解析 HSL 值，支持字符串格式（如 "+10"、"-5"）和数字格式
+        // 注意：后端返回的格式可能是字符串（如 "+10"）或数字（如 10）
+        const parseHslValue = (val: any): number => {
+          if (val === null || val === undefined) return 0;
+          // 【修复】如果是数字格式，直接返回
+          if (typeof val === 'number') return val;
+          // 处理字符串格式，支持 "+10"、"-5"、"0" 等
+          const str = String(val).trim();
+          // 【修复】处理 "+0"、"-0"、"0" 等特殊情况
+          if (str === "+0" || str === "-0" || str === "0" || str === "") return 0;
+          // 【修复】提取数字部分（保留正负号）
+          // 使用正则表达式提取数字部分，支持 "+10"、"-5"、"10" 等格式
+          const numberMatch = str.match(/^([+-]?)(\d+\.?\d*)$/);
+          if (numberMatch) {
+            const sign = numberMatch[1]; // "+"、"-" 或 ""
+            const number = parseFloat(numberMatch[2]);
+            if (isNaN(number)) return 0;
+            // 如果有符号，应用符号；否则返回解析后的数字
+            if (sign === '+') return Math.abs(number);
+            if (sign === '-') return -Math.abs(number);
+            return number;
+          }
+          // 【向后兼容】如果正则匹配失败，尝试直接解析
+          const parsed = parseFloat(str.replace(/[^0-9.-]/g, '') || '0');
+          if (isNaN(parsed)) return 0;
+          // 如果字符串以 '+' 开头，返回正数；如果以 '-' 开头，返回负数；否则返回解析后的值
+          if (str.startsWith('+')) return Math.abs(parsed);
+          if (str.startsWith('-')) return -Math.abs(parsed);
+          return parsed;
+        };
+        
+        const parsedHue = parseHslValue(item.hue);
+        const parsedSat = parseHslValue(item.saturation);
+        const parsedLum = parseHslValue(item.luminance);
+        
+        // 【调试日志】记录每个颜色的解析过程（详细版本）- 【修复】强制输出，不依赖 NODE_ENV
+        console.log(`[dataAdapter] 🔴 HSL 颜色 ${colorName} 解析过程:`, {
+          itemColor: itemColor,
+          colorName: colorName,
+          inColorMap: !!colorMap[itemColor],
+          originalHue: item.hue,
+          originalHueType: typeof item.hue,
+          originalSaturation: item.saturation,
+          originalSaturationType: typeof item.saturation,
+          originalLuminance: item.luminance,
+          originalLuminanceType: typeof item.luminance,
+          parsedHue: parsedHue,
+          parsedSat: parsedSat,
+          parsedLum: parsedLum,
+          note: item.note || item.desc || "",
+          // 【新增】完整的 item JSON
+          itemJson: JSON.stringify(item),
+        });
+        
         hslObject[colorName] = {
-          hue: parseFloat(item.hue) || 0,
-          saturation: parseFloat(item.saturation) || 0,
-          luminance: parseFloat(item.luminance) || 0,
+          hue: parsedHue,
+          saturation: parsedSat,
+          luminance: parsedLum,
           // 【新增】提取 desc 或 note 字段（后端在 _format_color_part2 中将 desc 映射到 note）
           desc: item.desc || item.note || "",  // 优先使用 desc，如果没有则使用 note
           note: item.note || item.desc || "",  // 向后兼容：同时提供 note 字段
         };
+        
+        // 【调试日志】记录解析结果（即使值为 0 也记录，用于调试）- 【修复】强制输出
+        console.log(`[dataAdapter] ✅ HSL 颜色 ${colorName} 已更新:`, {
+          original: { hue: item.hue, saturation: item.saturation, luminance: item.luminance },
+          parsed: { hue: parsedHue, saturation: parsedSat, luminance: parsedLum },
+          hslObjectValue: hslObject[colorName],
+        });
+      } else {
+        // 【调试日志】记录未映射的颜色 - 【修复】强制输出
+        if (itemColor) {
+          console.warn(`[dataAdapter] ⚠️ HSL 颜色未映射: itemColor="${itemColor}", colorName="${colorName}", colorMapKeys=${Object.keys(colorMap).join(', ')}`);
+        }
       }
+    });
+    
+    // 【调试日志】记录 HSL 数据转换结果（详细版本）
+    console.log('[dataAdapter] 🎨 HSL 数据转换结果:', {
+      hslArrayLength: hslArray.length,
+      hslArraySample: hslArray.slice(0, 5).map((item: any) => ({
+        color: item.color,
+        colorType: typeof item.color,
+        hue: item.hue,
+        saturation: item.saturation,
+        luminance: item.luminance,
+        note: item.note,
+        // 【新增】检查颜色名称是否在 colorMap 中
+        inColorMap: !!colorMap[item.color],
+        mappedTo: colorMap[item.color] || 'NOT_MAPPED',
+      })),
+      hslObjectKeys: Object.keys(hslObject),
+      hslObjectSample: Object.keys(hslObject).slice(0, 5).map(key => ({
+        key,
+        data: hslObject[key],
+        hasNonZero: (hslObject[key].hue !== 0 || hslObject[key].saturation !== 0 || hslObject[key].luminance !== 0),
+      })),
+      // 【新增】检查是否有非零值
+      hasNonZeroValues: Object.values(hslObject).some((item: any) => 
+        (item.hue !== 0 && item.hue !== undefined) || 
+        (item.saturation !== 0 && item.saturation !== undefined) || 
+        (item.luminance !== 0 && item.luminance !== undefined)
+      ),
+      // 【新增】检查 colorMap 映射
+      colorMapKeys: Object.keys(colorMap),
+      // 【新增】检查未映射的颜色
+      unmappedColors: hslArray.filter((item: any) => !colorMap[item.color] && item.color).map((item: any) => item.color),
+      // 【新增】检查 hslObject 的完整内容（所有颜色通道）
+      hslObjectFull: Object.keys(hslObject).reduce((acc, key) => {
+        acc[key] = {
+          hue: hslObject[key].hue,
+          saturation: hslObject[key].saturation,
+          luminance: hslObject[key].luminance,
+          hasNote: !!(hslObject[key].note || hslObject[key].desc),
+        };
+        return acc;
+      }, {} as any),
     });
     
     // 【关键修复】确保三个字段正确映射，即使后端返回 undefined 也至少是空字符串
@@ -998,22 +1164,56 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       keyAdjustmentStrategyLength: key_adjustment_strategy.length,
     });
     
-    result.color_scheme = {
+    result.color = {
       style_key_points: structured.styleKey || structured.style_key_points || "",
       // 【新增】phase_1_extraction 三个字段，用于前端色彩策略卡片展示
       master_style_recap: master_style_recap,  // 主风格回顾（流派识别）
       style_summary_recap: style_summary_recap,  // 风格总结回顾（Phase 1 核心指导思想）
       key_adjustment_strategy: key_adjustment_strategy,  // 关键调整策略（三大动作）
+      // 【调试日志】记录 HSL 对象设置
+      // ... (hsl 字段将在下面设置)
       white_balance: {
         temp: {
-          // 【修复】从 range 字符串中解析数值（如 "+600" -> 600，"+600 ~ +900" -> 600）
-          // 白平衡色温值需要加上基准值 5500K（Lightroom 默认值）
+          // 【修复】色温值计算逻辑：
+          // 1. 优先使用用户图的实际色温值（从 image_analysis 获取）
+          // 2. 如果没有实际色温值，只保存调整值（range），不计算绝对色温
+          // 3. 前端显示时，如果有实际色温值，显示：实际色温 + 调整值 = 最终色温
+          // 4. 如果没有实际色温值，只显示调整值（如：-8）
           value: (() => {
             const rangeStr = structured.whiteBalance?.temp?.range || "+0";
-            const numValue = parseFloat(rangeStr.replace(/[^0-9.-]/g, '') || "0");
-            return 5500 + numValue; // Lightroom 默认色温是 5500K，加上调整值
+            const adjustmentValue = parseFloat(rangeStr.replace(/[^0-9.-]/g, '') || "0");
+            
+            // 【优先】尝试从 image_analysis 获取用户图的实际色温值
+            // image_analysis 结构：{ user: { colors: { color_temperature: { estimated_k: 5200 } } } }
+            const userImageTemp = backendData.meta?.image_analysis?.user?.colors?.color_temperature?.estimated_k;
+            
+            if (userImageTemp && typeof userImageTemp === 'number' && userImageTemp > 1000 && userImageTemp < 20000) {
+              // 有实际色温值：实际色温 + 调整值 = 最终色温
+              const finalTemp = userImageTemp + adjustmentValue;
+              console.log('[dataAdapter] ✅ 使用用户图实际色温值:', {
+                userImageTemp,
+                adjustmentValue,
+                finalTemp,
+              });
+              return finalTemp;
+            } else {
+              // 没有实际色温值：返回 null，前端只显示调整值
+              console.log('[dataAdapter] ⚠️ 无法获取用户图实际色温值，只保存调整值:', {
+                adjustmentValue,
+                hasImageAnalysis: !!backendData.meta?.image_analysis,
+                imageAnalysisKeys: backendData.meta?.image_analysis ? Object.keys(backendData.meta.image_analysis) : [],
+                userColors: backendData.meta?.image_analysis?.user?.colors,
+              });
+              return null; // 返回 null，前端将只显示调整值
+            }
           })(),
+          // 【保留】调整值（range），前端用于显示
           range: structured.whiteBalance?.temp?.range || "+0",
+          // 【新增】调整值（数值格式），便于前端计算和显示
+          adjustment: (() => {
+            const rangeStr = structured.whiteBalance?.temp?.range || "+0";
+            return parseFloat(rangeStr.replace(/[^0-9.-]/g, '') || "0");
+          })(),
           reason: structured.whiteBalance?.temp?.note || "",
           // 【新增】从 range 字符串中解析目标范围（如果有范围格式，如 "+600 ~ +900"）
           target_min: (() => {
@@ -1067,30 +1267,110 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
           })(),
         },
       },
-      color_grading: {
-        highlights: {
-          hue: parseFloat(structured.grading?.highlights?.hue || "0"),
-          saturation: parseFloat(structured.grading?.highlights?.saturation || "0"),
-          // 【修复】从后端数据中提取 reason 字段，而不是硬编码为空字符串
-          // 后端在 _format_color_part2 中已提取 color_grading_wheels 的 reason 字段
-          reason: structured.grading?.highlights?.reason || "",
-        },
-        midtones: {
-          hue: parseFloat(structured.grading?.midtones?.hue || "0"),
-          saturation: parseFloat(structured.grading?.midtones?.saturation || "0"),
-          // 【修复】从后端数据中提取 reason 字段
-          reason: structured.grading?.midtones?.reason || "",
-        },
-        shadows: {
-          hue: parseFloat(structured.grading?.shadows?.hue || "0"),
-          saturation: parseFloat(structured.grading?.shadows?.saturation || "0"),
-          // 【修复】从后端数据中提取 reason 字段
-          reason: structured.grading?.shadows?.reason || "",
-        },
-        balance: parseFloat(structured.grading?.balance || "0"),
-      },
+      color_grading: (() => {
+        // 【修复】从 structured.grading 提取色彩分级数据
+        // 后端 _format_color_part2 已从 lightroom_workflow.color_grading 提取数据并保存到 structured.grading
+        const grading = structured.grading || {};
+        const colorGrading = {
+          highlights: {
+            hue: parseFloat(grading.highlights?.hue || "0"),
+            saturation: parseFloat(grading.highlights?.saturation || "0"),
+            luminance: parseFloat(grading.highlights?.luminance || "0"),  // 【修复】提取明度字段
+            reason: grading.highlights?.reason || "",  // 【修复】提取调整原因描述
+          },
+          midtones: {
+            hue: parseFloat(grading.midtones?.hue || "0"),
+            saturation: parseFloat(grading.midtones?.saturation || "0"),
+            luminance: parseFloat(grading.midtones?.luminance || "0"),  // 【修复】提取明度字段
+            reason: grading.midtones?.reason || "",  // 【修复】提取调整原因描述
+          },
+          shadows: {
+            hue: parseFloat(grading.shadows?.hue || "0"),
+            saturation: parseFloat(grading.shadows?.saturation || "0"),
+            luminance: parseFloat(grading.shadows?.luminance || "0"),  // 【修复】提取明度字段
+            reason: grading.shadows?.reason || "",  // 【修复】提取调整原因描述
+          },
+          balance: parseFloat(grading.balance || "0"),
+          blending: parseFloat(grading.blending || "50"),  // 【修复】提取混合滑块值
+        };
+        
+        // 【调试日志】记录色彩分级数据提取结果
+        if (process.env.NODE_ENV === 'development') {
+          console.log('[dataAdapter] 🎨 色彩分级数据提取:', {
+            hasGrading: !!structured.grading,
+            highlights: {
+              hue: colorGrading.highlights.hue,
+              saturation: colorGrading.highlights.saturation,
+              luminance: colorGrading.highlights.luminance,
+              hasReason: !!colorGrading.highlights.reason,
+            },
+            midtones: {
+              hue: colorGrading.midtones.hue,
+              saturation: colorGrading.midtones.saturation,
+              luminance: colorGrading.midtones.luminance,
+              hasReason: !!colorGrading.midtones.reason,
+            },
+            shadows: {
+              hue: colorGrading.shadows.hue,
+              saturation: colorGrading.shadows.saturation,
+              luminance: colorGrading.shadows.luminance,
+              hasReason: !!colorGrading.shadows.reason,
+            },
+            balance: colorGrading.balance,
+            blending: colorGrading.blending,
+            hasNonZeroValues: (
+              colorGrading.highlights.hue !== 0 ||
+              colorGrading.highlights.saturation !== 0 ||
+              colorGrading.midtones.hue !== 0 ||
+              colorGrading.midtones.saturation !== 0 ||
+              colorGrading.shadows.hue !== 0 ||
+              colorGrading.shadows.saturation !== 0
+            ),
+          });
+        }
+        
+        return colorGrading;
+      })(),
       hsl: hslObject,
     };
+    
+    // 【调试日志】记录 result.color.hsl 设置结果（详细版本）
+    console.log('[dataAdapter] ✅ result.color.hsl 已设置:', {
+      hasColor: !!result.color,
+      hasColorHsl: !!result.color.hsl,
+      colorHslKeys: result.color.hsl ? Object.keys(result.color.hsl) : [],
+      colorHslSample: result.color.hsl ? Object.keys(result.color.hsl).slice(0, 3).map(key => ({
+        key,
+        data: result.color.hsl[key],
+      })) : [],
+      hslObjectKeys: Object.keys(hslObject),
+      hslObjectHasNonZero: Object.values(hslObject).some((item: any) => 
+        (item.hue !== 0 || item.saturation !== 0 || item.luminance !== 0)
+      ),
+      // 【新增】检查 hslObject 的完整内容（所有颜色通道的详细数据）
+      hslObjectFullDetails: Object.keys(hslObject).reduce((acc, key) => {
+        const item = hslObject[key];
+        acc[key] = {
+          hue: item.hue,
+          hueType: typeof item.hue,
+          saturation: item.saturation,
+          saturationType: typeof item.saturation,
+          luminance: item.luminance,
+          luminanceType: typeof item.luminance,
+          hasNote: !!(item.note || item.desc),
+          isNonZero: (item.hue !== 0 || item.saturation !== 0 || item.luminance !== 0),
+        };
+        return acc;
+      }, {} as any),
+      // 【新增】检查 hslArray 的原始数据
+      hslArrayOriginal: hslArray.slice(0, 5).map((item: any) => ({
+        color: item.color,
+        hue: item.hue,
+        saturation: item.saturation,
+        luminance: item.luminance,
+        note: item.note,
+      })),
+    });
   }
 
   // 5. Lightroom → results.lightroom
@@ -1147,16 +1427,44 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       
       Object.keys(basic).forEach((key) => {
         const param = basic[key];
-        if (param && typeof param === 'object' && param.range !== undefined) {
-          const valueStr = param.range || "+0";
-          const value = parseFloat(valueStr.replace(/[^0-9.-]/g, '') || "0");
+        if (param && typeof param === 'object') {
+          // 【修复】同时支持 "value" 和 "range" 字段（后端可能返回 value，也可能返回 range）
+          const valueStr = param.value || param.range || "+0";
+          // 【修复】正确解析带正负号的字符串值（如 "+0.8"、"-30"、"+15"）
+          let value = 0;
+          if (typeof valueStr === 'number') {
+            value = valueStr;
+          } else {
+            const str = String(valueStr).trim();
+            if (str.startsWith('+')) {
+              // 正数：去掉 "+" 后解析（如 "+0.8" -> 0.8）
+              value = parseFloat(str.substring(1)) || 0;
+            } else if (str.startsWith('-')) {
+              // 负数：直接解析（如 "-30" -> -30）
+              value = parseFloat(str) || 0;
+            } else {
+              // 无符号：直接解析（如 "0.8" -> 0.8）
+              value = parseFloat(str) || 0;
+            }
+          }
+          
           basicPanel[key] = {
             value,
-            range: valueStr,
-            reason: param.note || "", // 【修复】使用 note 字段作为描述
+            range: valueStr, // 保留原始字符串格式（如 "+0.8"）
+            reason: param.reason || param.note || param.purpose || "", // 【修复】支持多种描述字段
             target_min: param.target_min,
             target_max: param.target_max,
           };
+          
+          // 【调试日志】记录关键参数的提取过程
+          if (key === 'exposure' || key === 'whites' || key === 'blacks') {
+            console.log(`[dataAdapter] 🔍 从 basic 提取参数 ${key}:`, {
+              param,
+              valueStr,
+              parsedValue: value,
+              reason: param.reason || param.note || param.purpose || '',
+            });
+          }
         }
       });
     }
@@ -1164,6 +1472,7 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     // 【向后兼容】如果没有从 basic 中提取到数据，则从 panels 数组中提取（旧结构）
     if (Object.keys(basicPanel).length === 0) {
       // 参数名称映射（英文 -> 小写，中文 -> 英文）
+      // 【修复】添加 "白色色阶" 和 "黑色色阶" 的映射（后端返回的完整中文名称）
       const paramNameMap: Record<string, string> = {
         "Temp": "temp", "Temperature": "temp", "色温": "temp",
         "Tint": "tint", "色调": "tint",
@@ -1171,8 +1480,8 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
         "Contrast": "contrast", "对比度": "contrast",
         "Highlights": "highlights", "高光": "highlights",
         "Shadows": "shadows", "阴影": "shadows",
-        "Whites": "whites", "白色": "whites",
-        "Blacks": "blacks", "黑色": "blacks",
+        "Whites": "whites", "白色": "whites", "白色色阶": "whites",  // 【修复】添加 "白色色阶" 映射
+        "Blacks": "blacks", "黑色": "blacks", "黑色色阶": "blacks",  // 【修复】添加 "黑色色阶" 映射
         "Texture": "texture", "纹理": "texture",
         "Clarity": "clarity", "清晰度": "clarity",
         "Dehaze": "dehaze", "去雾": "dehaze",
@@ -1187,9 +1496,42 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
             const paramName = param.name || param.label || "";
             const mappedName = paramNameMap[paramName] || paramName.toLowerCase();
             
-            // 解析数值（支持 "+0.3"、"-20" 等格式）
+            // 【修复】解析数值（支持 "+0.3"、"-20" 等格式）
+            // 需要正确处理正负号，不能简单地用 replace 去掉所有非数字字符
             const valueStr = param.value || "+0";
-            const value = parseFloat(valueStr.replace(/[^0-9.-]/g, '') || "0");
+            let value = 0;
+            if (typeof valueStr === 'number') {
+              value = valueStr;
+            } else {
+              const str = String(valueStr).trim();
+              // 处理字符串格式：支持 "+0.5"、"-20"、"0" 等
+              if (str.startsWith('+')) {
+                // 正数：去掉 "+" 后解析
+                value = parseFloat(str.substring(1)) || 0;
+              } else if (str.startsWith('-')) {
+                // 负数：直接解析
+                value = parseFloat(str) || 0;
+              } else {
+                // 无符号：直接解析
+                value = parseFloat(str) || 0;
+              }
+            }
+            
+            // 【调试日志】记录参数解析过程（扩展日志范围，包含所有基础参数）
+            if (process.env.NODE_ENV === 'development' && (
+              mappedName === 'temp' || mappedName === 'tint' || 
+              mappedName === 'exposure' || mappedName === 'contrast' ||
+              mappedName === 'highlights' || mappedName === 'shadows' ||
+              mappedName === 'whites' || mappedName === 'blacks'
+            )) {
+              console.log(`[dataAdapter] 🔍 从 panels 解析参数 ${paramName} (${mappedName}):`, {
+                valueStr,
+                parsedValue: value,
+                hasReason: !!(param.reason || param.purpose),
+                reason: param.reason || param.purpose || '',
+                panelTitle: panel.title || 'N/A',
+              });
+            }
             
             // 如果参数已存在，保留第一个（或合并逻辑）
             if (!basicPanel[mappedName]) {
@@ -1235,6 +1577,57 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       safeBasicPanel[field] = basicPanel[field] || { ...defaultBasicPanelValue };
     });
     
+    // 【调试日志】记录 basic_panel 数据检查（详细版本）
+    console.log('[dataAdapter] 🔍 Lightroom basic_panel 数据检查:', {
+      hasBasicPanel: !!basicPanel,
+      basicPanelKeys: Object.keys(basicPanel),
+      safeBasicPanelKeys: Object.keys(safeBasicPanel),
+      missingFields: requiredBasicPanelFields.filter(f => !basicPanel[f]),
+      // 【新增】详细记录关键参数的值（包括原始值和解析后的值）
+      keyParams: {
+        temp: {
+          raw: basicPanel.temp,
+          safe: safeBasicPanel.temp,
+          value: basicPanel.temp?.value ?? safeBasicPanel.temp?.value,
+        },
+        tint: {
+          raw: basicPanel.tint,
+          safe: safeBasicPanel.tint,
+          value: basicPanel.tint?.value ?? safeBasicPanel.tint?.value,
+        },
+        exposure: {
+          raw: basicPanel.exposure,
+          safe: safeBasicPanel.exposure,
+          value: basicPanel.exposure?.value ?? safeBasicPanel.exposure?.value,
+        },
+        contrast: {
+          raw: basicPanel.contrast,
+          safe: safeBasicPanel.contrast,
+          value: basicPanel.contrast?.value ?? safeBasicPanel.contrast?.value,
+        },
+        highlights: {
+          raw: basicPanel.highlights,
+          safe: safeBasicPanel.highlights,
+          value: basicPanel.highlights?.value ?? safeBasicPanel.highlights?.value,
+        },
+        shadows: {
+          raw: basicPanel.shadows,
+          safe: safeBasicPanel.shadows,
+          value: basicPanel.shadows?.value ?? safeBasicPanel.shadows?.value,
+        },
+        whites: {
+          raw: basicPanel.whites,
+          safe: safeBasicPanel.whites,
+          value: basicPanel.whites?.value ?? safeBasicPanel.whites?.value,
+        },
+        blacks: {
+          raw: basicPanel.blacks,
+          safe: safeBasicPanel.blacks,
+          value: basicPanel.blacks?.value ?? safeBasicPanel.blacks?.value,
+        },
+      },
+    });
+    
     // 【调试日志】记录 basic_panel 数据检查
     console.log('[dataAdapter] 🔍 Lightroom basic_panel 数据检查:', {
       hasBasicPanel: !!basicPanel,
@@ -1272,10 +1665,10 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
       });
     }
     
-    // 【新增】从 color_scheme 中提取白平衡和色彩分级数据，用于 Lightroom 面板显示
-    const whiteBalance = result.color_scheme?.white_balance;
-    const colorGrading = result.color_scheme?.color_grading;
-    const keyAdjustmentStrategy = result.color_scheme?.key_adjustment_strategy || "";
+    // 【新增】从 color 中提取白平衡和色彩分级数据，用于 Lightroom 面板显示
+    const whiteBalance = result.color?.white_balance;
+    const colorGrading = result.color?.color_grading;
+    const keyAdjustmentStrategy = result.color?.key_adjustment_strategy || "";
     
     // 【新增】优先使用 simulated_histogram 中的 histogram_data，如果没有则使用 structured.histogram
     // histogram_data 包含完整的 256 个值数组（r, g, b, l），用于前端绘制直方图
@@ -1338,20 +1731,56 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     const histogramLChannel = histogramData.l || structured.histogram?.l || [];
     const calculatedStats = calculateHistogramStats(histogramLChannel);
     
-    // 【调试日志】记录 HSL 数据检查
+    // 【调试日志】记录 HSL 数据检查（详细版本）
     if (process.env.NODE_ENV === 'development') {
-      console.log('[dataAdapter] 🎨 HSL 数据检查:', {
-        hasColorScheme: !!result.color_scheme,
-        hasHsl: !!result.color_scheme?.hsl,
-        hslKeys: result.color_scheme?.hsl ? Object.keys(result.color_scheme.hsl) : [],
-        hslSample: result.color_scheme?.hsl ? Object.keys(result.color_scheme.hsl).slice(0, 3).map(key => ({
+      console.log('[dataAdapter] 🎨 HSL 数据检查（Lightroom 部分）:', {
+        hasColor: !!result.color,
+        hasColorHsl: !!result.color?.hsl,
+        colorHslType: typeof result.color?.hsl,
+        colorHslIsArray: Array.isArray(result.color?.hsl),
+        colorHslKeys: result.color?.hsl ? Object.keys(result.color.hsl) : [],
+        colorHslSample: result.color?.hsl ? Object.keys(result.color.hsl).slice(0, 5).map(key => ({
           key,
-          data: result.color_scheme.hsl[key],
+          data: result.color.hsl[key],
+          hasNonZero: (result.color.hsl[key].hue !== 0 || result.color.hsl[key].saturation !== 0 || result.color.hsl[key].luminance !== 0),
         })) : [],
+        // 【新增】检查 lightroom.hsl
+        lightroomHsl: result.lightroom?.hsl,
+        lightroomHslType: typeof result.lightroom?.hsl,
+        lightroomHslKeys: result.lightroom?.hsl ? Object.keys(result.lightroom.hsl) : [],
       });
     }
     
     result.lightroom = {
+      // 【新增】元数据（包含 OpenCV 图像分析数据和校准元数据），供前端 Safety Clamps 使用
+      meta: {
+        image_analysis: backendData.meta?.image_analysis,
+        // 【修复】添加校准元数据，供前端调试和验证使用
+        calibration: backendData.meta?.calibration || null,
+      },
+      // 【新增】色彩分析数据（包含 scene_type 等）
+      color: {
+        scene_type: sections.color?.structured?.scene_type || sections.photoReview?.structured?.style_classification?.master_archetype || ""
+      },
+      // 【新增】Part 2 分析数据（色彩匹配协议的 5 个关键字段）
+      // scene_type, lighting_strategy, key_colors, dynamic_range_analysis, color_calibration_strategy
+      analysis: (() => {
+        const analysisData = structured.analysis || {};
+        // 【调试日志】记录 analysis 数据提取情况
+        console.log('[dataAdapter] 🔍 analysis 数据提取:', {
+          hasAnalysis: !!structured.analysis,
+          analysisKeys: Object.keys(analysisData),
+          scene_type: analysisData.scene_type || 'N/A',
+          lighting_strategy: analysisData.lighting_strategy?.substring(0, 50) || 'N/A',
+          key_colors: analysisData.key_colors || [],
+          dynamic_range_analysis: analysisData.dynamic_range_analysis?.substring(0, 50) || 'N/A',
+          color_calibration_strategy: analysisData.color_calibration_strategy?.substring(0, 50) || 'N/A',
+        });
+        return analysisData;
+      })(),
+      // 【新增】Phase 1 提取数据
+      phase_1_extraction: structured.phase_1_extraction || sections.color?.structured?.phase_1_extraction || {},
+      
       // 【修复】优先使用 simulated_histogram 中的 histogram_data，如果没有则使用默认值
       histogram: (histogramData.r && histogramData.r.length > 0) ? {
         r: histogramData.r || [],
@@ -1378,21 +1807,246 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
         palette_strip_description: simulatedHistogram.palette_strip_description || "",
       } : undefined,
       // 【新增】添加白平衡数据（从 color_scheme 中提取）
-      white_balance: whiteBalance ? {
-        temp: whiteBalance.temp || { value: 0, range: "+0", reason: "" },
+      // 【修复】优先从 basic_panel 中提取 temp 和 tint，因为 Gemini 输出的是 lightroom_workflow.basic_panel.temp/tint
+      // 如果 basic_panel 中没有值，才使用 whiteBalance（从 color_science_scheme 中提取）
+      white_balance: (() => {
+        // 【辅助函数】从参数对象中提取数值
+        const getParamValue = (param: any): number => {
+          if (typeof param === 'number') return param;
+          if (param?.value !== undefined) {
+            const val = param.value;
+            if (typeof val === 'number') return val;
+            // 处理字符串格式（如 "+10"、"-5"）
+            const str = String(val).trim();
+            if (str.startsWith('+')) {
+              return parseFloat(str.substring(1)) || 0;
+            } else if (str.startsWith('-')) {
+              return parseFloat(str) || 0;
+            } else {
+              return parseFloat(str) || 0;
+            }
+          }
+          return 0;
+        };
+        
+        // 【修复】优先从 basic_panel 中提取 temp 和 tint（Gemini 主要输出路径）
+        const tempFromBasic = safeBasicPanel.temp;
+        const tintFromBasic = safeBasicPanel.tint;
+        
+        // 【调试日志】记录 basic_panel 中的 temp 和 tint 数据
+        console.log('[dataAdapter] 🔍 检查 basic_panel 中的 temp 和 tint:', {
+          hasTemp: !!tempFromBasic,
+          hasTint: !!tintFromBasic,
+          tempValue: tempFromBasic?.value,
+          tempRange: tempFromBasic?.range,
+          tempReason: tempFromBasic?.reason,
+          tintValue: tintFromBasic?.value,
+          tintRange: tintFromBasic?.range,
+          tintReason: tintFromBasic?.reason,
+        });
+        
+        // 【修复】由于 safeBasicPanel.temp 和 safeBasicPanel.tint 总是存在（即使值是默认值），
+        // 所以 tempFromBasic 和 tintFromBasic 应该总是存在
+        // 为了确保万无一失，我们总是构建 white_balance 对象
+        console.log('[dataAdapter] 🔍 检查结果:', {
+          hasTemp: !!tempFromBasic,
+          hasTint: !!tintFromBasic,
+          tempFromBasic,
+          tintFromBasic,
+          whiteBalanceExists: !!whiteBalance,
+        });
+        
+        // 【修复】总是构建 white_balance 对象，确保前端UI可以始终显示色温色调面板
+        // 即使 temp 或 tint 是默认值，也应该显示UI
+        if (tempFromBasic || tintFromBasic || true) { // 总是为 true，确保总是构建
+          console.log('[dataAdapter] ✅ 从 basic_panel 中提取 temp 和 tint:', {
+            temp: tempFromBasic,
+            tint: tintFromBasic,
+            tempValue: tempFromBasic?.value,
+            tempRange: tempFromBasic?.range,
+            tintValue: tintFromBasic?.value,
+            tintRange: tintFromBasic?.range,
+          });
+          
+          // 【修复】构建 white_balance 对象
+          // 【重要】getParamValue 函数会从 value 或 range 字段中提取数值
+          // 【修复】使用 wbResult 避免与外层 result 变量冲突
+          const wbResult = {
+            temp: tempFromBasic ? {
+              // 【修复】色温值计算逻辑（与 result.color.white_balance 保持一致）：
+              // 1. 优先使用用户图的实际色温值（从 image_analysis 获取）
+              // 2. 如果没有实际色温值，只保存调整值（range），不计算绝对色温
+              value: (() => {
+                // 【修复】优先从 value 字段提取，如果没有则从 range 字段提取
+                // 如果 value 是数字类型，直接使用；如果是字符串，需要解析
+                let tempValueStr: string | number = tempFromBasic.value;
+                if (tempValueStr === undefined || tempValueStr === null) {
+                  tempValueStr = tempFromBasic.range || "+0";
+                }
+                // 如果 value 是数字类型（如 0），需要转换为字符串格式
+                if (typeof tempValueStr === 'number') {
+                  tempValueStr = tempValueStr >= 0 ? `+${tempValueStr}` : `${tempValueStr}`;
+                }
+                const adjustmentValue = getParamValue({ value: tempValueStr, range: tempValueStr });
+                
+                // 【优先】尝试从 image_analysis 获取用户图的实际色温值
+                const userImageTemp = backendData.meta?.image_analysis?.user?.colors?.color_temperature?.estimated_k;
+                
+                if (userImageTemp && typeof userImageTemp === 'number' && userImageTemp > 1000 && userImageTemp < 20000) {
+                  // 有实际色温值：实际色温 + 调整值 = 最终色温
+                  const finalValue = userImageTemp + adjustmentValue;
+                  console.log('[dataAdapter] ✅ 使用用户图实际色温值 (lightroom):', {
+                    userImageTemp,
+                    adjustmentValue,
+                    finalValue,
+                  });
+                  return finalValue;
+                } else {
+                  // 没有实际色温值：返回 null，前端只显示调整值
+                  console.log('[dataAdapter] ⚠️ 无法获取用户图实际色温值 (lightroom)，只保存调整值:', {
+                    adjustmentValue,
+                    hasImageAnalysis: !!backendData.meta?.image_analysis,
+                  });
+                  return null; // 返回 null，前端将只显示调整值
+                }
+              })(),
+              range: tempFromBasic.range || (typeof tempFromBasic.value === 'string' ? tempFromBasic.value : (tempFromBasic.value >= 0 ? `+${tempFromBasic.value}` : `${tempFromBasic.value}`)) || "+0",
+              // 【新增】调整值（数值格式），便于前端计算和显示
+              adjustment: (() => {
+                let tempValueStr: string | number = tempFromBasic.value;
+                if (tempValueStr === undefined || tempValueStr === null) {
+                  tempValueStr = tempFromBasic.range || "+0";
+                }
+                if (typeof tempValueStr === 'number') {
+                  tempValueStr = tempValueStr >= 0 ? `+${tempValueStr}` : `${tempValueStr}`;
+                }
+                return getParamValue({ value: tempValueStr, range: tempValueStr });
+              })(),
+              reason: tempFromBasic.reason || tempFromBasic.note || "",
+            } : (whiteBalance?.temp || { value: null, range: "+0", adjustment: 0, reason: "" }),
+            tint: tintFromBasic ? {
+              // 【修复】tint 值是相对值，直接使用（如 "+15" 表示 +15 色调单位）
+              value: (() => {
+                // 【修复】优先从 value 字段提取，如果没有则从 range 字段提取
+                // 如果 value 是数字类型，直接使用；如果是字符串，需要解析
+                let tintValueStr: string | number = tintFromBasic.value;
+                if (tintValueStr === undefined || tintValueStr === null) {
+                  tintValueStr = tintFromBasic.range || "+0";
+                }
+                // 如果 value 是数字类型（如 0），需要转换为字符串格式
+                if (typeof tintValueStr === 'number') {
+                  tintValueStr = tintValueStr >= 0 ? `+${tintValueStr}` : `${tintValueStr}`;
+                }
+                const tintValue = getParamValue({ value: tintValueStr, range: tintValueStr });
+                console.log('[dataAdapter] 🔍 色调值提取:', { 
+                  tintFromBasic,
+                  tintValueStr,
+                  tintValue, 
+                  range: tintFromBasic.range,
+                });
+                return tintValue;
+              })(),
+              range: tintFromBasic.range || (typeof tintFromBasic.value === 'string' ? tintFromBasic.value : (tintFromBasic.value >= 0 ? `+${tintFromBasic.value}` : `${tintFromBasic.value}`)) || "+0",
+              reason: tintFromBasic.reason || tintFromBasic.note || "",
+            } : (whiteBalance?.tint || { value: 0, range: "+0", reason: "" }),
+          };
+          
+          console.log('[dataAdapter] ✅ 最终 white_balance 对象:', wbResult);
+          return wbResult;
+        }
+        
+        // 【备用方案1】如果 basic_panel 中没有值，使用 whiteBalance（从 color_science_scheme 中提取）
+        if (whiteBalance) {
+          console.log('[dataAdapter] ⚠️ basic_panel 中没有 temp/tint，使用 whiteBalance:', whiteBalance);
+          return {
+            temp: whiteBalance.temp || { value: 5500, range: "+0", reason: "" },
         tint: whiteBalance.tint || { value: 0, range: "+0", reason: "" },
-      } : undefined,
+          };
+        }
+        
+        // 【备用方案2】如果都没有，返回默认值，确保前端UI始终可以显示色温色调面板
+        // 【重要】即使没有数据，也应该显示UI组件（使用默认值），而不是完全不显示
+        console.log('[dataAdapter] ⚠️ basic_panel 和 whiteBalance 都没有数据，使用默认值');
+        return {
+          temp: { value: 5500, range: "+0", reason: "默认色温" },
+          tint: { value: 0, range: "+0", reason: "默认色调" },
+        };
+      })(),
       // 【新增】添加色彩分级数据（从 color_scheme 中提取）
+      // 【更新】添加 luminance 和 blending 字段
       color_grading: colorGrading ? {
-        highlights: colorGrading.highlights || { hue: 0, saturation: 0, reason: "" },
-        midtones: colorGrading.midtones || { hue: 0, saturation: 0, reason: "" },
-        shadows: colorGrading.shadows || { hue: 0, saturation: 0, reason: "" },
+        highlights: {
+          hue: colorGrading.highlights?.hue || 0, 
+          saturation: colorGrading.highlights?.saturation || 0, 
+          luminance: colorGrading.highlights?.luminance || 0,  // 【新增】明度
+          reason: colorGrading.highlights?.reason || "",
+        },
+        midtones: {
+          hue: colorGrading.midtones?.hue || 0, 
+          saturation: colorGrading.midtones?.saturation || 0, 
+          luminance: colorGrading.midtones?.luminance || 0,  // 【新增】明度
+          reason: colorGrading.midtones?.reason || "",
+        },
+        shadows: {
+          hue: colorGrading.shadows?.hue || 0, 
+          saturation: colorGrading.shadows?.saturation || 0, 
+          luminance: colorGrading.shadows?.luminance || 0,  // 【新增】明度
+          reason: colorGrading.shadows?.reason || "",
+        },
         balance: colorGrading.balance || 0,
+        blending: colorGrading.blending || 50,  // 【新增】混合滑块，默认值 50
+      } : undefined,
+      // 【新增】添加相机校准数据（用于模仿胶片/电影感）
+      calibration: structured.calibration ? {
+        red_primary: {
+          hue: structured.calibration.red_primary?.hue || 0,
+          saturation: structured.calibration.red_primary?.saturation || 0,
+          note: structured.calibration.red_primary?.note || "",
+        },
+        green_primary: {
+          hue: structured.calibration.green_primary?.hue || 0,
+          saturation: structured.calibration.green_primary?.saturation || 0,
+          note: structured.calibration.green_primary?.note || "",
+        },
+        blue_primary: {
+          hue: structured.calibration.blue_primary?.hue || 0,
+          saturation: structured.calibration.blue_primary?.saturation || 0,
+          note: structured.calibration.blue_primary?.note || "",
+        },
+        shadows_tint: structured.calibration.shadows_tint || 0,
       } : undefined,
       // 【新增】添加关键调整策略（用于 Tactical Brief）
       key_adjustment_strategy: keyAdjustmentStrategy,
       basic_panel: safeBasicPanel, // 【修复】使用安全的 basic_panel，确保所有字段都有默认值
-      hsl: result.color_scheme?.hsl || {},
+      hsl: (() => {
+        // 【修复】确保从 result.color.hsl 中提取 HSL 数据
+        const colorHsl = result.color?.hsl;
+        if (colorHsl && Object.keys(colorHsl).length > 0) {
+          console.log('[dataAdapter] ✅ 从 result.color.hsl 提取 HSL 数据:', {
+            colorHslKeys: Object.keys(colorHsl),
+            colorHslSample: Object.keys(colorHsl).slice(0, 3).map(key => ({
+              key,
+              data: colorHsl[key],
+            })),
+          });
+          return colorHsl;
+        } else {
+          console.warn('[dataAdapter] ⚠️ result.color.hsl 为空或不存在，使用空对象');
+          console.warn('[dataAdapter] ⚠️ result.color 状态:', {
+            hasColor: !!result.color,
+            colorKeys: result.color ? Object.keys(result.color) : [],
+            hasColorHsl: !!result.color?.hsl,
+            colorHslType: typeof result.color?.hsl,
+            colorHslKeys: result.color?.hsl ? Object.keys(result.color.hsl) : [],
+            // 【新增】检查 sections.color.structured.hsl 是否直接存在
+            sectionsColorStructuredHsl: sections.color?.structured?.hsl,
+            sectionsColorStructuredHslType: typeof sections.color?.structured?.hsl,
+            sectionsColorStructuredHslIsArray: Array.isArray(sections.color?.structured?.hsl),
+            sectionsColorStructuredHslLength: Array.isArray(sections.color?.structured?.hsl) ? sections.color.structured.hsl.length : 'not array',
+          });
+          return {};
+        }
+      })(),
       curve: {
         // 【修复】确保曲线点格式统一为对象数组格式 {x, y}
         // 优先使用 toneCurves.points_rgb，如果没有则使用 toneCurve/curve 中的数据
@@ -1432,7 +2086,112 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
           reason: structured.colorGrading.balance?.reason || structured.colorGrading.balance_reason || "",
         },
       } : undefined,
+      // 【新增】影调分区分析数据（用于精准仿色）
+      tonal_zone_analysis: structured.tonal_zone_analysis || structured.tonalZoneAnalysis || undefined,
+      // 【新增】局部调整蒙版数据（用于精准仿色）
+      // 【修复】优先从 local_adjustments_masks 提取，如果没有则从 localAdjustments 转换
+      local_adjustments_masks: (() => {
+        // 如果已经有转换好的格式，直接使用
+        if (structured.local_adjustments_masks) {
+          console.log('[dataAdapter] ✅ 使用已转换的 local_adjustments_masks');
+          return structured.local_adjustments_masks;
+        }
+        // 如果没有，尝试从 localAdjustments 转换
+        const localAdj = structured.localAdjustments || structured.localAdjustmentsMasks;
+        if (localAdj && Array.isArray(localAdj) && localAdj.length > 0) {
+          console.log('[dataAdapter] ⚠️ 从 localAdjustments 转换局部调整数据:', localAdj.length);
+          const masks = localAdj.map((item: any, i: number) => ({
+            mask_name: item.name || item.mask_name || `蒙版 ${i + 1}`,
+            mask_type: item.type || item.mask_type || 'gradient',
+            mask_target: item.description || item.mask_target || '',
+            mask_parameters: item.area ? {
+              gradient: item.type === 'gradient' ? {
+                start_y_percent: item.area.y || 0,
+                end_y_percent: (item.area.y || 0) + (item.area.height || 0),
+                angle: 0,
+              } : undefined,
+              radial: item.type === 'radial' ? {
+                center_x_percent: item.area.x || 50,
+                center_y_percent: item.area.y || 50,
+                radius_percent: Math.max(item.area.width || 0, item.area.height || 0) / 2,
+                feather: 50,
+              } : undefined,
+            } : {},
+            adjustments: item.adjustments || {},
+          }));
+          return {
+            masks,
+            note: `共 ${masks.length} 个局部调整蒙版`,
+          };
+        }
+        console.log('[dataAdapter] ⚠️ 未找到局部调整数据');
+        return undefined;
+      })(),
+      // 【修复】添加曲线数据（curve）到 result.lightroom
+      // 从 structured.rgbCurves 或 structured.toneCurves 中提取 RGB 单通道曲线数据
+      curve: {
+        // 【修复】确保曲线点格式统一为对象数组格式 {x, y}
+        // 优先使用 toneCurves.points_rgb，如果没有则使用 toneCurve/curve 中的数据
+        rgb: (structured.toneCurves?.points_rgb || curvePoints || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        // 【修复】从 toneCurves 中提取单通道曲线点，如果没有则从 rgbCurves 中提取
+        // 【重要】后端返回的字段名是 rgbCurves.red、rgbCurves.green、rgbCurves.blue
+        red: (structured.toneCurves?.points_red || structured.rgbCurves?.red || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        green: (structured.toneCurves?.points_green || structured.rgbCurves?.green || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        blue: (structured.toneCurves?.points_blue || structured.rgbCurves?.blue || []).map((p: any) => 
+          Array.isArray(p) ? { x: p[0], y: p[1] } : (p.x !== undefined && p.y !== undefined ? p : { x: 0, y: 0 })
+        ),
+        reason: toneCurvesExplanation, // 【修复】使用 toneCurves.explanation 作为曲线描述
+        analysis: toneCurvesExplanation, // 【新增】同时设置 analysis 字段，用于 AdvancedCurveMonitor 组件
+      },
     };
+    
+    // 【调试日志】在 result.lightroom 构建完成后，立即检查 curve 数据
+    console.log('[dataAdapter] 🔍 result.lightroom.curve 构建后检查:', {
+      hasCurve: !!result.lightroom.curve,
+      curveKeys: result.lightroom.curve ? Object.keys(result.lightroom.curve) : [],
+      hasRed: !!result.lightroom.curve?.red,
+      redLength: result.lightroom.curve?.red?.length || 0,
+      hasGreen: !!result.lightroom.curve?.green,
+      greenLength: result.lightroom.curve?.green?.length || 0,
+      hasBlue: !!result.lightroom.curve?.blue,
+      blueLength: result.lightroom.curve?.blue?.length || 0,
+      structuredRgbCurves: structured.rgbCurves,
+      structuredToneCurves: structured.toneCurves,
+    });
+    
+    // 【调试日志】在 result.lightroom 构建完成后，立即检查 white_balance 的值
+    // 【重要】这个日志用于诊断 white_balance 是否正确构建
+    const wbAfterBuild = result.lightroom.white_balance;
+    console.log('[dataAdapter] 🔍 result.lightroom.white_balance 构建后检查:', {
+      hasWhiteBalance: !!wbAfterBuild,
+      whiteBalanceType: typeof wbAfterBuild,
+      whiteBalanceIsNull: wbAfterBuild === null,
+      whiteBalanceIsUndefined: wbAfterBuild === undefined,
+      whiteBalanceValue: wbAfterBuild,
+      whiteBalanceKeys: wbAfterBuild ? Object.keys(wbAfterBuild) : [],
+      tempValue: wbAfterBuild?.temp?.value,
+      tintValue: wbAfterBuild?.tint?.value,
+      // 【新增】检查 result.lightroom 对象本身
+      hasLightroom: !!result.lightroom,
+      lightroomKeys: result.lightroom ? Object.keys(result.lightroom) : [],
+      whiteBalanceInLightroom: 'white_balance' in (result.lightroom || {}),
+    });
+    
+    // 【修复】如果 white_balance 是 undefined 或 null，强制设置为默认值
+    // 这是一个防御性编程措施，确保前端UI始终可以显示色温色调面板
+    if (!wbAfterBuild || wbAfterBuild === null || wbAfterBuild === undefined) {
+      console.warn('[dataAdapter] ⚠️ white_balance 构建失败，强制设置为默认值');
+      result.lightroom.white_balance = {
+        temp: { value: 5500, range: "+0", reason: "默认色温（强制设置）" },
+        tint: { value: 0, range: "+0", reason: "默认色调（强制设置）" },
+      };
+    }
   }
 
   // 6. Photoshop → results.photoshop
@@ -1494,13 +2253,18 @@ export function adaptBackendToFrontend(backendData: BackendResponse | null | und
     result.preview_image_url = backendData.meta?.preview_image_url || sections.preview_image_url;
   }
 
+  // 8. Image Analysis (OpenCV 图像分析数据)
+  if (backendData.meta?.image_analysis) {
+    result.image_analysis = backendData.meta.image_analysis;
+  }
+
   // 【调试日志】记录数据转换完成（仅在开发环境）
   if (process.env.NODE_ENV === 'development') {
   console.log('[dataAdapter] 数据转换完成:', {
     hasReview: !!result.review,
     hasComposition: !!result.composition,
     hasLighting: !!result.lighting,
-    hasColor: !!result.color_scheme,
+    hasColor: !!result.color,
     hasLightroom: !!result.lightroom,
     hasPhotoshop: !!result.photoshop,
     resultKeys: Object.keys(result),

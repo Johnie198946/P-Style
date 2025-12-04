@@ -24,6 +24,8 @@ class StorageService:
         """初始化存储服务"""
         self.storage_type = getattr(settings, "OSS_STORAGE_TYPE", "local")
         self._client = None
+        # 【修复】确保 bucket_name 在所有情况下都被设置（用于 URL 解析）
+        self.bucket_name = getattr(settings, "OSS_BUCKET_NAME", "photostyle")
         
         if self.storage_type == "minio":
             self._init_minio()
@@ -131,6 +133,8 @@ class StorageService:
         """初始化本地文件系统存储（开发环境备用）"""
         self.storage_path = Path("./storage")
         self.storage_path.mkdir(exist_ok=True)
+        # 【修复】即使使用本地存储，也设置 bucket_name，用于 URL 解析
+        self.bucket_name = getattr(settings, "OSS_BUCKET_NAME", "photostyle")
         logger.info(f"本地文件系统存储初始化: {self.storage_path.absolute()}")
 
     def upload_image(
@@ -281,6 +285,92 @@ class StorageService:
         logger.info(f"图片上传到本地存储成功: {object_key}")
         return url
 
+    def download_image(self, url: str) -> Optional[bytes]:
+        """
+        从对象存储下载图片
+        
+        Args:
+            url: 图片 URL（可以是 MinIO URL、OSS URL 或本地路径）
+        
+        Returns:
+            bytes: 图片的二进制数据，如果下载失败返回 None
+        
+        注意：
+        - 如果对象存储服务未运行（如 MinIO），会记录警告并返回 None
+        - 对于本地文件系统，直接读取文件
+        - 对于 MinIO/OSS，使用客户端下载（支持认证）
+        """
+        try:
+            logger.info(f"【下载图片】开始下载: URL={url[:100]}..., storage_type={self.storage_type}, bucket_name={self.bucket_name}")
+            
+            # 从 URL 中提取 object_key 和存储类型
+            if "/storage/" in url:
+                # 本地文件系统
+                object_key = url.replace("/storage/", "")
+                file_path = self.storage_path / object_key
+                logger.info(f"【下载图片】本地文件系统: object_key={object_key}, file_path={file_path}")
+                if file_path.exists():
+                    with open(file_path, "rb") as f:
+                        image_data = f.read()
+                    logger.info(f"从本地存储下载图片成功: {object_key}, 大小: {len(image_data)} 字节")
+                    return image_data
+                else:
+                    logger.warning(f"本地文件不存在: {object_key}")
+                    return None
+            elif self.bucket_name and self.bucket_name in url and (self.storage_type == "minio" or self.storage_type == "aliyun_oss"):
+                # MinIO 或 OSS
+                object_key = url.split(f"{self.bucket_name}/")[-1]
+                logger.info(f"【下载图片】对象存储: bucket_name={self.bucket_name}, object_key={object_key}")
+                
+                # 使用 MinIO 客户端下载（支持认证）
+                if self.storage_type == "minio":
+                    if not self._client:
+                        logger.warning(f"MinIO 客户端未初始化，无法下载图片: {url}")
+                        return None
+                    try:
+                        from io import BytesIO
+                        import socket
+                        
+                        # 设置超时
+                        original_timeout = socket.getdefaulttimeout()
+                        socket.setdefaulttimeout(30)  # 下载可能需要更长时间
+                        
+                        try:
+                            logger.info(f"【下载图片】调用 MinIO get_object: bucket={self.bucket_name}, object_key={object_key}")
+                            response = self._client.get_object(self.bucket_name, object_key)
+                            image_data = response.read()
+                            response.close()
+                            response.release_conn()
+                            logger.info(f"从 MinIO 下载图片成功: {object_key}, 大小: {len(image_data)} 字节")
+                            return image_data
+                        finally:
+                            socket.setdefaulttimeout(original_timeout)
+                    except Exception as e:
+                        logger.error(f"从 MinIO 下载图片失败: {object_key}, 错误: {type(e).__name__}: {str(e)}", exc_info=True)
+                        return None
+                elif self.storage_type == "aliyun_oss":
+                    if not self._client:
+                        logger.warning(f"阿里云 OSS 客户端未初始化，无法下载图片: {url}")
+                        return None
+                    try:
+                        image_data = self._client.get_object(object_key).read()
+                        logger.info(f"从阿里云 OSS 下载图片成功: {object_key}, 大小: {len(image_data)} 字节")
+                        return image_data
+                    except Exception as e:
+                        logger.error(f"从阿里云 OSS 下载图片失败: {object_key}, 错误: {type(e).__name__}: {str(e)}")
+                        return None
+                else:
+                    logger.warning(f"未知的存储类型: {self.storage_type}，无法下载图片: {url}")
+                    return None
+            else:
+                # 【调试】详细记录 URL 解析失败的原因
+                logger.warning(f"【下载图片】无法识别图片 URL 格式: {url}")
+                logger.warning(f"【下载图片】检查条件: bucket_name={self.bucket_name}, '/storage/' in url={'/storage/' in url}, 'bucket_name in url'={self.bucket_name in url if self.bucket_name else False}")
+                return None
+        except Exception as e:
+            logger.error(f"下载图片失败: {url}, 错误: {type(e).__name__}: {str(e)}", exc_info=True)
+            return None
+    
     def delete_image(self, url: str) -> bool:
         """
         删除对象存储中的图片

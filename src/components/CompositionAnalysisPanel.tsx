@@ -196,8 +196,8 @@ export const CompositionAnalysisPanel: React.FC<CompositionAnalysisPanelProps> =
         {/* =================================================================
            BOTTOM DOCK: 悬浮控制栏（底部四按钮栏）
            ================================================================= */}
-        <div className="h-24 flex items-center justify-center">
-          <div className="flex items-center gap-2 px-3 py-2 bg-[#111]/80 backdrop-blur-xl border border-white/10 rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.5)]">
+        <div className="absolute bottom-8 left-1/2 transform -translate-x-1/2 z-50 w-full max-w-md flex justify-center pointer-events-none">
+          <div className="flex items-center gap-3 px-4 py-3 bg-[#0a0a0a]/90 backdrop-blur-xl border border-white/10 rounded-2xl shadow-[0_20px_50px_-20px_rgba(0,0,0,0.8)] ring-1 ring-white/5 pointer-events-auto">
             
             <DockButton 
               active={activeLayer === 'vector'} 

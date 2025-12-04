@@ -27,7 +27,9 @@ export interface ColorGradingPoint {
 export interface ColorSchemeData {
   style_key_points: string;
   white_balance: {
-    temp: { value: number; range: string; reason: string };
+    // 【修复】value 可以是 number（有实际色温值）或 null（只有调整值）
+    // adjustment 是调整值（相对值），用于在没有实际色温值时显示
+    temp: { value: number | null; range: string; adjustment?: number; reason: string };
     tint: { value: number; range: string; reason: string };
   };
   color_grading: {
@@ -114,6 +116,28 @@ export interface CompositionData {
 }
 
 export interface LightroomData {
+  // 【新增】元数据（包含 OpenCV 图像分析数据）
+  meta?: {
+    image_analysis?: any;
+  };
+  // 【新增】色彩分析数据
+  color?: {
+    scene_type?: string;
+  };
+  // 【新增】Part 2 分析数据
+  analysis?: {
+    scene_type?: string;
+    lighting_strategy?: string;
+    key_colors?: string[];
+    dynamic_range_analysis?: string;
+    color_calibration_strategy?: string;
+  };
+  // 【新增】Phase 1 提取数据
+  phase_1_extraction?: {
+    master_style_recap?: string;
+    style_summary_recap?: string;
+    key_adjustment_strategy?: string;
+  };
   histogram: {
     r: number[];
     g: number[];
@@ -134,6 +158,8 @@ export interface LightroomData {
       b: number[];
       l: number[];
     };
+    palette_strip_description?: string;  // 调色板条描述
+    stats_grid_description?: string;  // 统计网格描述
   };
   basic_panel: {
     temp: { value: number; range: string; reason: string; min?: number; max?: number; target_min?: number; target_max?: number };
@@ -165,6 +191,89 @@ export interface LightroomData {
     midtones: { hue: number; saturation: number; reason: string };
     shadows: { hue: number; saturation: number; reason: string };
     balance: { value: number; min: number; max: number; target_min: number; target_max: number; reason: string };
+  };
+  // 【新增】白平衡数据（用于 COLOR MATCH PROTOCOL 区域）
+  white_balance?: {
+    temp?: { value: number; target_min?: number; target_max?: number; reason?: string };
+    tint?: { value: number; target_min?: number; target_max?: number; reason?: string };
+  };
+  // 【新增】色彩分级数据（用于 COLOR MATCH PROTOCOL 区域）
+  // 【更新】添加 luminance 字段，用于显示明度调整
+  color_grading?: {
+    highlights?: { hue: number; saturation: number; luminance?: number; reason?: string };
+    midtones?: { hue: number; saturation: number; luminance?: number; reason?: string };
+    shadows?: { hue: number; saturation: number; luminance?: number; reason?: string };
+    balance?: number;
+    blending?: number;  // 【新增】混合滑块
+  };
+  // 【新增】相机校准数据（用于模仿胶片/电影感）
+  calibration?: {
+    red_primary?: { hue: number; saturation: number; note?: string };
+    green_primary?: { hue: number; saturation: number; note?: string };
+    blue_primary?: { hue: number; saturation: number; note?: string };
+    shadows_tint?: number;
+  };
+  // 【新增】构图数据（用于构图分析面板）
+  composition?: CompositionData;
+  
+  // 【新增】影调分区分析数据（用于精准仿色）
+  tonal_zone_analysis?: {
+    note?: string;
+    highlights_zone?: {
+      elements: string;
+      color_treatment: string;
+      detail_treatment: string;
+      target_rgb?: { r: number; g: number; b: number };
+      brightness_range?: string;
+    };
+    midtones_zone?: {
+      elements: string;
+      color_treatment: string;
+      detail_treatment: string;
+      target_rgb?: { r: number; g: number; b: number };
+      brightness_range?: string;
+    };
+    shadows_zone?: {
+      elements: string;
+      color_treatment: string;
+      detail_treatment: string;
+      target_rgb?: { r: number; g: number; b: number };
+      brightness_range?: string;
+      black_point_lifted?: boolean;
+    };
+  };
+  
+  // 【新增】局部调整蒙版数据（用于精准仿色）
+  local_adjustments_masks?: {
+    note?: string;
+    masks: Array<{
+      mask_id?: number;
+      mask_name: string;
+      mask_type: string;
+      mask_target: string;
+      mask_parameters?: {
+        luminosity_range?: { min: number; max: number; feather?: number };
+        color_range?: { hue_center: number; hue_range: number; saturation_min?: number };
+        gradient?: { start_y_percent: number; end_y_percent: number; angle?: number };
+        radial?: { center_x_percent: number; center_y_percent: number; radius_percent: number; feather?: number };
+        invert?: boolean;
+      };
+      adjustments: {
+        exposure?: string;
+        contrast?: string;
+        highlights?: string;
+        shadows?: string;
+        whites?: string;
+        blacks?: string;
+        temperature?: string;
+        tint?: string;
+        saturation?: string;
+        clarity?: string;
+        dehaze?: string;
+        sharpness?: string;
+      };
+      reason: string;
+    }>;
   };
 }
 

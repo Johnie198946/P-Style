@@ -241,7 +241,9 @@ class HSLAdjustmentSchema(BaseModel):
 class ColorStructuredSchema(BaseModel):
     """色彩方案结构化数据 Schema（嵌套在 structured 字段中）"""
     styleKey: str = Field(default="", description="风格关键词")
-    whiteBalance: Dict[str, Dict[str, str]] = Field(
+    # 【修复】允许嵌套字典的值为 None（如 note 字段可能为 None）
+    # 原因：Pydantic 验证时，如果 note 字段为 None，会导致验证失败
+    whiteBalance: Dict[str, Dict[str, Optional[str]]] = Field(
         default_factory=lambda: {
             "temp": {"range": "+0"},
             "tint": {"range": "+0"}
@@ -286,7 +288,8 @@ class ColorSchema(BaseModel):
     # 【向后兼容】为了兼容旧代码，也支持顶层字段（但优先使用 structured 中的字段）
     # 注意：这些字段主要用于向后兼容，新代码应该使用 structured 中的字段
     styleKey: Optional[str] = Field(default=None, description="风格关键词（向后兼容，优先使用 structured.styleKey）")
-    whiteBalance: Optional[Dict[str, Dict[str, str]]] = Field(default=None, description="白平衡（向后兼容，优先使用 structured.whiteBalance）")
+    # 【修复】允许嵌套字典的值为 None（如 note 字段可能为 None）
+    whiteBalance: Optional[Dict[str, Dict[str, Optional[str]]]] = Field(default=None, description="白平衡（向后兼容，优先使用 structured.whiteBalance）")
     grading: Optional[ColorGradingSchema] = Field(default=None, description="色彩分级（向后兼容，优先使用 structured.grading）")
     hsl: Optional[List[HSLAdjustmentSchema]] = Field(default=None, description="HSL 调整列表（向后兼容，优先使用 structured.hsl）")
 
@@ -318,6 +321,10 @@ class LightroomPanelSchema(BaseModel):
 class LightroomStructuredSchema(BaseModel):
     """Lightroom 结构化数据 Schema（嵌套在 structured 字段中）"""
     panels: List[LightroomPanelSchema] = Field(default_factory=list, description="面板列表")
+    # 【新增】basic 字段：基础参数字典，供前端直接访问（避免从 panels 中解析）
+    # 格式：{ "temp": { "range": "+0", "note": "...", "reason": "..." }, "tint": {...}, ... }
+    # 【修复】类型改为 Dict[str, Any]，因为校准引擎可能返回包含非字符串值的对象
+    basic: Optional[Dict[str, Any]] = Field(default_factory=dict, description="基础参数字典（包含 temp、tint、exposure、contrast、highlights、shadows、whites、blacks 等）")
     toneCurve: List[List[int]] = Field(
         default_factory=lambda: [[0, 0], [64, 64], [128, 128], [192, 192], [255, 255]],
         description="色调曲线（5个控制点）"
@@ -327,6 +334,18 @@ class LightroomStructuredSchema(BaseModel):
     localAdjustments: List[Dict[str, Any]] = Field(default_factory=list, description="局部调整")
     # 【新增】simulatedHistogram 字段：用于前端显示模拟直方图
     simulatedHistogram: Optional[Dict[str, Any]] = Field(default=None, description="模拟直方图数据（包含 description、rgb_values、histogram_data）")
+    # 【新增】HSL 调整字段（校准引擎会输出）
+    hsl: Optional[Any] = Field(default_factory=list, description="HSL 调整数据（列表或字典格式）")
+    # 【新增】相机校准字段（校准引擎会输出）
+    calibration: Optional[Dict[str, Any]] = Field(default_factory=dict, description="相机校准数据（包含 red_primary、green_primary、blue_primary）")
+    # 【新增】analysis 字段（色彩匹配协议信息）
+    analysis: Optional[Dict[str, Any]] = Field(default_factory=dict, description="色彩匹配协议信息")
+    # 【新增】局部调整蒙版字段
+    local_adjustments_masks: Optional[Dict[str, Any]] = Field(default_factory=dict, description="局部调整蒙版数据（包含 masks 数组和 note 字段）")
+    
+    # 【重要】允许额外字段，避免 Pydantic 验证时丢弃未知字段
+    # 原因：后端可能返回新字段（如校准引擎输出的额外信息），Pydantic 默认会丢弃
+    model_config = {"extra": "allow"}
 
 
 class LightroomNaturalLanguageSchema(BaseModel):
@@ -408,12 +427,22 @@ class AnalysisMetaSchema(BaseModel):
     protocolVersion: str = Field(default="2025-02", description="协议版本")
 
 
+class VisualAnchorsSchema(BaseModel):
+    """视觉锚点与色彩保护 Schema (Part 1 Module 4)"""
+    hero_subject: Optional[str] = Field(default="", description="核心主体描述")
+    hero_colors: List[str] = Field(default_factory=list, description="核心颜色列表")
+    material_conflict: Optional[str] = Field(default="", description="材质冲突分析")
+    protection_strategy: Optional[str] = Field(default="", description="保护策略")
+    hsl_constraints: Dict[str, str] = Field(default_factory=dict, description="HSL 限制条件")
+
+
 class Part1SectionsSchema(BaseModel):
     """Part1 章节 Schema"""
     photoReview: PhotoReviewSchema = Field(default_factory=PhotoReviewSchema)
     composition: CompositionSchema = Field(default_factory=CompositionSchema)
     lighting: LightingSchema = Field(default_factory=LightingSchema)
     color: ColorSchema = Field(default_factory=ColorSchema)
+    visualAnchors: VisualAnchorsSchema = Field(default_factory=VisualAnchorsSchema, description="视觉锚点分析 (Module 4)")
 
 
 class Part2SectionsSchema(BaseModel):
@@ -537,7 +566,7 @@ def validate_part2_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
         # 解决方案：使用 mode='json' 确保正确序列化，但不排除 None 值（因为 None 值在 JSON 中也是有效的）
         result = validated.model_dump(mode='json')
         
-        # 【调试日志】检查 lightroom panels 是否正确保留
+        # 【调试日志】检查 lightroom panels 和 basic 是否正确保留
         if "sections" in result and "lightroom" in result["sections"]:
             lightroom_section = result["sections"]["lightroom"]
             if "structured" in lightroom_section:
@@ -551,10 +580,35 @@ def validate_part2_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
                         logger.debug(f"【validate_part2_response】lightroom 第一个 panel 是否有内容: {has_content}, title = {first_panel.get('title')}, params count = {len(first_panel.get('params', []))}")
                         if not has_content:
                             logger.error(f"【validate_part2_response】❌ lightroom panels 内容为空！第一个 panel: {json.dumps(first_panel, ensure_ascii=False)[:200]}")
+                # 【新增】检查 basic 字段是否正确保留
+                basic = lightroom_structured.get("basic", {})
+                logger.info(f"【validate_part2_response】🔵 lightroom.structured.basic: 存在={bool(basic)}, keys={list(basic.keys()) if isinstance(basic, dict) else 'not dict'}")
+                if basic:
+                    logger.info(f"【validate_part2_response】🔵 basic.exposure: {basic.get('exposure', 'N/A')}")
+        
+        # 【新增】检查 color section 的 HSL 数据是否正确保留
+        if "sections" in result and "color" in result["sections"]:
+            color_section = result["sections"]["color"]
+            if "structured" in color_section:
+                color_structured = color_section["structured"]
+                hsl_data = color_structured.get("hsl", [])
+                logger.info(f"【validate_part2_response】🔴 color.structured.hsl 数据检查: 长度={len(hsl_data) if isinstance(hsl_data, list) else 'not list'}")
+                if isinstance(hsl_data, list) and len(hsl_data) > 0:
+                    logger.info(f"【validate_part2_response】✅ HSL 数据存在: 第一项={json.dumps(hsl_data[0], ensure_ascii=False)[:100]}")
+                else:
+                    logger.warning(f"【validate_part2_response】⚠️ HSL 数据为空数组！")
+                    # 【调试】检查原始数据中是否有 HSL 数据
+                    if "sections" in raw_data and "color" in raw_data["sections"]:
+                        raw_color = raw_data["sections"]["color"]
+                        raw_structured = raw_color.get("structured", {}) if isinstance(raw_color, dict) else {}
+                        raw_hsl = raw_structured.get("hsl", [])
+                        logger.info(f"【validate_part2_response】🔍 原始数据 HSL 检查: 长度={len(raw_hsl) if isinstance(raw_hsl, list) else 'not list'}")
         
         return result
     except Exception as e:
-        logger.error(f"Part2 Schema 验证失败: {e}", exc_info=True)
+        # 【修复】避免 f-string 格式化错误（当错误信息包含花括号时）
+        error_msg = str(e).replace('{', '{{').replace('}', '}}')
+        logger.error(f"Part2 Schema 验证失败: {error_msg}", exc_info=True)
         # 返回默认结构
         return Part2ResponseSchema().model_dump(exclude_none=True)
 
@@ -625,6 +679,23 @@ class DiagnosisRequestSchema(BaseModel):
     histogramData: Dict[str, Any] = Field(description="直方图统计数据")
     dominantColors: List[Dict[str, Any]] = Field(default_factory=list, description="主色调列表")
     taskId: Optional[str] = Field(default=None, description="可选，关联已有分析任务")
+
+
+class IterationRequestSchema(BaseModel):
+    """
+    迭代调色反馈请求 Schema
+    用于用户在 LR 面板中提交反馈后，重新生成调色方案
+    
+    Args:
+        taskId: 任务 ID（关联的分析任务，必填）
+        userFeedback: 用户反馈文本（必填，如"阴影里的青色太多了"）
+        previewImageData: 预览图 Base64 数据（可选，用户当前调整结果的截图）
+        colorPalette: 从参考图提取的色卡（可选，5色 Hex 值列表）
+    """
+    taskId: str = Field(..., description="任务 ID（关联的分析任务，必填）")
+    userFeedback: str = Field(..., min_length=1, max_length=1000, description="用户反馈文本（必填，1-1000字符）")
+    previewImageData: Optional[str] = Field(None, description="预览图 Base64 数据（可选）")
+    colorPalette: Optional[List[str]] = Field(None, description="从参考图提取的色卡（可选，5色 Hex 值列表）")
 
 
 def validate_diagnosis_response(data: Union[str, Dict[str, Any]]) -> Dict[str, Any]:

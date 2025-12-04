@@ -1,0 +1,55 @@
+# ===============================================
+# RawTherapee CLI 高保真渲染引擎 Docker 镜像
+# 使用 Debian 包管理器安装
+# ===============================================
+
+FROM debian:bookworm-slim
+
+LABEL maintainer="P-Style Dev Team"
+LABEL description="RawTherapee CLI for high-fidelity image rendering"
+LABEL version="5.9"
+
+# 设置环境变量
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LC_ALL=C.UTF-8
+ENV LANG=C.UTF-8
+ENV PATH="/usr/bin:$PATH"
+
+# 配置 Debian 镜像源（使用清华大学镜像）
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates && \
+    sed -i 's|http://deb.debian.org|https://mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    (echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+     echo "deb https://mirrors.tuna.tsinghua.edu.cn/debian-security/ bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list) && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# 安装 RawTherapee 及运行时依赖
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    rawtherapee \
+    # 图像处理工具
+    imagemagick \
+    exiftool \
+    python3 \
+    # 基础工具
+    bash \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# 创建工作目录
+WORKDIR /app
+RUN mkdir -p /app/input /app/output /app/pp3 /app/cache /app/profiles
+
+# 创建 RawTherapee 配置目录
+RUN mkdir -p /root/.config/RawTherapee && \
+    echo '[General]' > /root/.config/RawTherapee/options
+
+# 验证 RawTherapee 安装（忽略退出码，因为 --version 可能返回非零）
+RUN rawtherapee-cli --version || true
+
+# 健康检查（使用 -h 参数检查帮助信息）
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+    CMD rawtherapee-cli -h 2>&1 | grep -q "RawTherapee" || exit 1
+
+# 默认入口（保持容器运行）
+CMD ["/bin/bash", "-c", "tail -f /dev/null"]
+

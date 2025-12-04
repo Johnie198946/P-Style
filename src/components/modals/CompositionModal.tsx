@@ -1,11 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { BaseModal } from './BaseModal';
-import { Target, GitGraph, Layers, Percent, Maximize, Layout, Activity, ArrowRight } from "lucide-react";
+import { Target, GitGraph, Layers, Percent, Maximize, Layout, Activity, ArrowRight, X } from "lucide-react";
 import { useLanguage } from '../../src/contexts/LanguageContext';
+import { VisualVectorsOverlay } from '../VisualVectorsOverlay';
+import { DirectorViewfinder } from '../DirectorViewfinder';
 
 export const CompositionModal = ({ data, images, onClose }: any) => {
   const { t } = useLanguage();
   const [overlayMode, setOverlayMode] = useState<'lines' | 'grid' | 'mask' | null>(null);
+  const [showClinic, setShowClinic] = useState(false); // 【新增】诊疗室模式状态
   const imgRef = useRef<HTMLImageElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [imageBounds, setImageBounds] = useState<{x: number, y: number, width: number, height: number} | null>(null);
@@ -132,105 +135,138 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
     };
   }, [images.source]);
 
-  const renderOverlay = () => {
-    // 【优化】向量路径：确保坐标在图片范围内，并根据图片实际尺寸进行叠加
-    if (overlayMode === 'lines' && comp.lines?.vectors?.path && comp.lines.vectors.path.length > 0) {
-         const points = comp.lines.vectors.path;
-         
-         // 如果没有图片边界信息，使用默认的百分比坐标
-         if (!imageBounds) {
-           return (
-             <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
-               <defs>
-                   <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                       <polygon points="0 0, 10 3.5, 0 7" fill="#EAB308" />
-                   </marker>
-               </defs>
-               <polyline 
-                   points={points.map((p: number[]) => {
-                     // 确保坐标在 0-1 范围内
-                     const x = Math.max(0, Math.min(1, p[0]));
-                     const y = Math.max(0, Math.min(1, p[1]));
-                     return `${x*100},${y*100}`;
-                   }).join(' ')} 
-                   fill="none" 
-                   stroke="#EAB308" 
-                   strokeWidth="0.5" 
-                   strokeDasharray="2 2"
-                   markerEnd="url(#arrowhead)"
-               />
-               {points.map((p: number[], i: number) => {
-                 const x = Math.max(0, Math.min(1, p[0]));
-                 const y = Math.max(0, Math.min(1, p[1]));
-                 return (
-                   <g key={i}>
-                      <circle cx={x*100} cy={y*100} r="1.0" fill="#EAB308" className="animate-pulse" />
-                      <text x={x*100 + 2} y={y*100 - 2} fontSize="3" fill="white" fontFamily="monospace" opacity="0.8">
-                          {i === 0 ? "ENTRY" : i === points.length - 1 ? "EXIT" : "FOCAL"}
-                      </text>
-                   </g>
-                 );
-               })}
-             </svg>
-           );
-         }
-         
-         // 根据图片实际尺寸计算坐标
-         const containerWidth = containerRef.current?.clientWidth || 100;
-         const containerHeight = containerRef.current?.clientHeight || 100;
-         
-         return (
-           <svg 
-             className="absolute inset-0 w-full h-full pointer-events-none z-10" 
-             style={{ 
-               left: 0, 
-               top: 0, 
-               width: '100%', 
-               height: '100%' 
-             }}
-           >
-             <defs>
-                 <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-                     <polygon points="0 0, 10 3.5, 0 7" fill="#EAB308" />
-                 </marker>
-             </defs>
-             <g transform={`translate(${imageBounds.x}, ${imageBounds.y})`}>
-               <polyline 
-                   points={points.map((p: number[]) => {
-                     // 确保坐标在 0-1 范围内，然后转换为图片内的像素坐标
-                     const x = Math.max(0, Math.min(1, p[0])) * imageBounds.width;
-                     const y = Math.max(0, Math.min(1, p[1])) * imageBounds.height;
-                     return `${x},${y}`;
-                   }).join(' ')} 
-                   fill="none" 
-                   stroke="#EAB308" 
-                   strokeWidth="2" 
-                   strokeDasharray="4 4"
-                   markerEnd="url(#arrowhead)"
-               />
-               {points.map((p: number[], i: number) => {
-                 const x = Math.max(0, Math.min(1, p[0])) * imageBounds.width;
-                 const y = Math.max(0, Math.min(1, p[1])) * imageBounds.height;
-                 return (
-                   <g key={i}>
-                      <circle cx={x} cy={y} r="3" fill="#EAB308" className="animate-pulse" />
-                      <text x={x + 5} y={y - 5} fontSize="10" fill="white" fontFamily="monospace" opacity="0.9" fontWeight="bold">
-                          {i === 0 ? "ENTRY" : i === points.length - 1 ? "EXIT" : "FOCAL"}
-                      </text>
-                   </g>
-                 );
-               })}
-             </g>
-           </svg>
-         );
-    }
+  // 【修复】从 data 中提取 visual_flow 数据（用于 VisualVectorsOverlay 组件）
+  // 数据路径：data.visual_flow 或 data.lines?.vectors
+  const visualFlowData = data?.visual_flow || data?.lines?.vectors || null;
+  
+  // 【修复】从 data 中提取 composition_clinic 数据（用于诊疗室模式）
+  const clinicData = data?.composition_clinic || data?.module_2_composition?.composition_clinic || null;
+  
+  // 【调试日志】记录数据提取结果
+  if (process.env.NODE_ENV === 'development') {
+    console.log('[CompositionModal] 📊 数据提取:', {
+      hasVisualFlow: !!visualFlowData,
+      visualFlowKeys: visualFlowData ? Object.keys(visualFlowData) : [],
+      hasVectors: !!visualFlowData?.vectors,
+      vectorsLength: visualFlowData?.vectors?.length || 0,
+      hasClinicData: !!clinicData,
+      clinicDataKeys: clinicData ? Object.keys(clinicData) : [],
+      // 【调试】打印完整的 data 结构
+      dataKeys: data ? Object.keys(data) : [],
+      linesKeys: data?.lines ? Object.keys(data.lines) : [],
+    });
+  }
 
-    // 【修复】visual_data 已在组件主体中定义，这里直接使用
-    // 【修复】添加安全检查，防止 visual_data 未定义
+  const renderOverlay = () => {
+    // 【修复】向量路径：使用 VisualVectorsOverlay 组件渲染
+    // 优先使用 visualFlowData（从 data.visual_flow 或 data.lines.vectors 提取）
     if (overlayMode === 'lines') {
-         return (
+      // 检查是否有向量数据
+      if (visualFlowData?.vectors && visualFlowData.vectors.length > 0) {
+        // 使用 VisualVectorsOverlay 组件渲染向量
+        return (
+          <VisualVectorsOverlay 
+            data={visualFlowData} 
+            width={100} 
+            height={100} 
+          />
+        );
+      }
+      
+      // 【后备】如果没有新格式的向量数据，尝试使用旧格式（comp.lines.vectors.path）
+      if (comp.lines?.vectors?.path && comp.lines.vectors.path.length > 0) {
+        const points = comp.lines.vectors.path;
+        
+        // 如果没有图片边界信息，使用默认的百分比坐标
+        if (!imageBounds) {
+          return (
+            <svg className="absolute inset-0 w-full h-full pointer-events-none z-10" viewBox="0 0 100 100" preserveAspectRatio="none">
+              <defs>
+                  <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                      <polygon points="0 0, 10 3.5, 0 7" fill="#EAB308" />
+                  </marker>
+              </defs>
+              <polyline 
+                  points={points.map((p: number[]) => {
+                    // 确保坐标在 0-1 范围内
+                    const x = Math.max(0, Math.min(1, p[0]));
+                    const y = Math.max(0, Math.min(1, p[1]));
+                    return `${x*100},${y*100}`;
+                  }).join(' ')} 
+                  fill="none" 
+                  stroke="#EAB308" 
+                  strokeWidth="0.5" 
+                  strokeDasharray="2 2"
+                  markerEnd="url(#arrowhead)"
+              />
+              {points.map((p: number[], i: number) => {
+                const x = Math.max(0, Math.min(1, p[0]));
+                const y = Math.max(0, Math.min(1, p[1]));
+                return (
+                  <g key={i}>
+                     <circle cx={x*100} cy={y*100} r="1.0" fill="#EAB308" className="animate-pulse" />
+                     <text x={x*100 + 2} y={y*100 - 2} fontSize="3" fill="white" fontFamily="monospace" opacity="0.8">
+                         {i === 0 ? "ENTRY" : i === points.length - 1 ? "EXIT" : "FOCAL"}
+                     </text>
+                  </g>
+                );
+              })}
+            </svg>
+          );
+        }
+        
+        // 根据图片实际尺寸计算坐标
+        return (
+          <svg 
+            className="absolute inset-0 w-full h-full pointer-events-none z-10" 
+            style={{ 
+              left: 0, 
+              top: 0, 
+              width: '100%', 
+              height: '100%' 
+            }}
+          >
+            <defs>
+                <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                    <polygon points="0 0, 10 3.5, 0 7" fill="#EAB308" />
+                </marker>
+            </defs>
+            <g transform={`translate(${imageBounds.x}, ${imageBounds.y})`}>
+              <polyline 
+                  points={points.map((p: number[]) => {
+                    // 确保坐标在 0-1 范围内，然后转换为图片内的像素坐标
+                    const x = Math.max(0, Math.min(1, p[0])) * imageBounds.width;
+                    const y = Math.max(0, Math.min(1, p[1])) * imageBounds.height;
+                    return `${x},${y}`;
+                  }).join(' ')} 
+                  fill="none" 
+                  stroke="#EAB308" 
+                  strokeWidth="2" 
+                  strokeDasharray="4 4"
+                  markerEnd="url(#arrowhead)"
+              />
+              {points.map((p: number[], i: number) => {
+                const x = Math.max(0, Math.min(1, p[0])) * imageBounds.width;
+                const y = Math.max(0, Math.min(1, p[1])) * imageBounds.height;
+                return (
+                  <g key={i}>
+                     <circle cx={x} cy={y} r="3" fill="#EAB308" className="animate-pulse" />
+                     <text x={x + 5} y={y - 5} fontSize="10" fill="white" fontFamily="monospace" opacity="0.9" fontWeight="bold">
+                         {i === 0 ? "ENTRY" : i === points.length - 1 ? "EXIT" : "FOCAL"}
+                     </text>
+                  </g>
+                );
+              })}
+            </g>
+          </svg>
+        );
+      }
+      
+      // 【后备】如果既没有新格式也没有旧格式的向量数据，显示 visual_data.lines
+      if (visual_data?.lines && visual_data.lines.length > 0) {
+        return (
           <svg className="absolute inset-0 w-full h-full pointer-events-none" viewBox="0 0 100 100" preserveAspectRatio="none">
-            {visual_data?.lines && visual_data.lines.map((line: any, i: number) => (
+            {visual_data.lines.map((line: any, i: number) => (
               <g key={i} className="animate-fade-in-scale">
                 <line x1={line.x1} y1={line.y1} x2={line.x2} y2={line.y2} stroke="#fff" strokeWidth="0.2" strokeDasharray="1 1" />
                 <circle cx={line.x2} cy={line.y2} r="0.5" fill="#fff" />
@@ -239,6 +275,16 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
             ))}
           </svg>
         );
+      }
+      
+      // 【最终后备】如果都没有数据，显示提示信息
+      return (
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-10">
+          <div className="text-white/50 text-xs font-mono bg-black/50 px-3 py-2 rounded">
+            {t('modal.composition.no_vector_data') || '暂无向量数据'}
+          </div>
+        </div>
+      );
     }
     if (overlayMode === 'mask') {
         // 【新增】Visual Mass 功能：支持显著性遮罩图（优先）或多边形方案（后备）
@@ -437,6 +483,28 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
     return null;
   };
 
+  // 【新增】诊疗室模式：全屏显示 DirectorViewfinder
+  if (showClinic) {
+    return (
+      <BaseModal title={t('modal.composition.clinic_title') || '构图诊疗室'} onClose={onClose}>
+        <div className="fixed inset-0 z-50 bg-black animate-in slide-in-from-right">
+          <button 
+            onClick={() => setShowClinic(false)}
+            className="absolute top-6 right-6 z-50 bg-white/10 text-white px-4 py-2 rounded hover:bg-white/20 flex items-center gap-2 backdrop-blur-md border border-white/20"
+          >
+            <X size={16} />
+            {t('modal.composition.clinic_close') || '关闭诊疗室'}
+          </button>
+          {/* 使用 DirectorViewfinder 组件，传入用户图和诊疗数据 */}
+          <DirectorViewfinder 
+            data={{ compositionClinic: clinicData }} 
+            userImageUrl={images.target} 
+          />
+        </div>
+      </BaseModal>
+    );
+  }
+
   return (
     <BaseModal title={t('modal.composition.title')} onClose={onClose}>
       <div className="flex h-full bg-[#050505]">
@@ -503,6 +571,19 @@ export const CompositionModal = ({ data, images, onClose }: any) => {
                     {t(m.labelKey)}
                   </button>
               ))}
+              
+              {/* 【新增】诊疗室按钮 - 分隔线 + 特殊按钮 */}
+              <div className="w-px h-6 bg-white/20 mx-2 self-center"></div>
+              <button 
+                onClick={() => setShowClinic(true)}
+                className="group relative px-4 py-1.5 rounded-sm text-[10px] font-mono uppercase tracking-widest transition-all border backdrop-blur-md bg-gradient-to-r from-blue-500/20 to-purple-500/20 border-blue-500/30 text-blue-300 hover:border-blue-400/50 hover:text-white hover:shadow-[0_0_15px_rgba(59,130,246,0.3)]"
+              >
+                <Activity className="w-3 h-3 inline-block mr-1.5 -mt-0.5" />
+                {t('modal.composition.enter_clinic') || '诊疗室'}
+                {/* 呼吸灯效果 */}
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-400 rounded-full animate-ping" />
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-red-400 rounded-full" />
+              </button>
            </div>
         </div>
 

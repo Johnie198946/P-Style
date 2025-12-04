@@ -198,7 +198,7 @@ const AppContent = () => {
         const uploadRes = await api.photos.upload(formData);
         setUploadId(uploadRes.uploadId);
         console.log('[App] 图片上传完成，uploadId:', uploadRes.uploadId);
-        
+
         // 【新增】存储用户图的 EXIF 数据（ISO、光圈等拍摄参数），用于 LightroomPanel 显示
         // EXIF 数据来自后端从图片中提取的元数据
         const targetExif = uploadRes.target_exif || {};
@@ -217,6 +217,12 @@ const AppContent = () => {
         console.log(`[App] Part1 分析完成，耗时: ${duration} 秒`);
         
         setTaskId(analyzeRes.taskId);
+        
+        // 【新增】将 taskId 存储到 sessionStorage，供 LightroomPanel 迭代反馈功能使用
+        if (analyzeRes.taskId) {
+          sessionStorage.setItem('current_task_id', analyzeRes.taskId);
+          console.log('[App] taskId 已存储到 sessionStorage:', analyzeRes.taskId);
+        }
         
         // 【重要】使用数据适配器转换后端数据格式
         // 后端返回的数据结构：{ taskId, stage, status, structuredAnalysis, naturalLanguage, protocolVersion }
@@ -248,9 +254,12 @@ const AppContent = () => {
         setShowTransition(true);
         
         // 转场动画组件会在动画完成后调用 handleTransitionComplete
-    } catch (e) {
+    } catch (e: any) {
         console.error('[App] Part1 分析失败:', e);
-        toast.error("Analysis failed. Please try again.");
+        // 【中英文支持】根据后端返回的错误消息显示，如果后端返回中文，前端直接显示
+        // 如果后端返回错误码，前端可以根据错误码显示对应的翻译消息
+        const errorMessage = e?.message || (e?.code === 'TIMEOUT_ERROR' ? t('auth.timeout_error') : t('analysis.part1_failed') || 'Part1 分析失败，请稍后重试');
+        toast.error(errorMessage);
         setIsAnalyzing(false);
         setShowTransition(false);
     }

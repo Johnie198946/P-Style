@@ -197,6 +197,24 @@ class TaskService:
                         # 【日志记录】记录合并后的 sections 状态
                         after_merge_keys = list(task.structured_result["sections"].keys())
                         logger.info(f"【update_task_part2】合并 sections 后: {after_merge_keys}, taskId={task_id}")
+                    elif key == "meta":
+                        # 【修复】合并 meta 字段，而不是直接覆盖（保留 Part1 的 meta 数据，添加 Part2 的 meta 数据）
+                        if "meta" not in task.structured_result:
+                            task.structured_result["meta"] = {}
+                        
+                        # 合并 meta 字段（使用深拷贝）
+                        merged_meta = copy.deepcopy(task.structured_result["meta"])
+                        if isinstance(value, dict):
+                            merged_meta.update(value)
+                        else:
+                            merged_meta = value
+                        task.structured_result["meta"] = merged_meta
+                        
+                        # 【关键修复】标记 JSON 字段已修改
+                        flag_modified(task, "structured_result")
+                        
+                        # 【日志记录】记录合并后的 meta 状态
+                        logger.info(f"【update_task_part2】合并 meta 后: keys={list(task.structured_result['meta'].keys())}, has calibration={bool(task.structured_result['meta'].get('calibration'))}, taskId={task_id}")
                         
                         # 【详细日志】检查 lightroom 和 photoshop 是否存在
                         if "lightroom" in task.structured_result["sections"]:

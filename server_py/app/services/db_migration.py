@@ -85,18 +85,47 @@ def check_and_add_column(
         return False
 
 
+def check_and_create_table(db: Session, table_name: str, create_sql: str) -> bool:
+    """
+    检查表是否存在，如果不存在则创建
+    
+    Args:
+        db: 数据库会话
+        table_name: 表名
+        create_sql: 创建表的 SQL 语句
+    
+    Returns:
+        bool: 如果表已存在返回 False，如果成功创建返回 True
+    """
+    inspector = inspect(engine)
+    
+    if table_name in inspector.get_table_names():
+        logger.debug(f"【数据库迁移】表 {table_name} 已存在，跳过创建")
+        return False
+    
+    try:
+        db.execute(text(create_sql))
+        db.commit()
+        logger.info(f"【数据库迁移】✅ 成功创建表: {table_name}")
+        return True
+    except Exception as e:
+        db.rollback()
+        logger.error(f"【数据库迁移】❌ 创建表失败: {table_name}, 错误: {type(e).__name__}: {str(e)}")
+        return False
+
+
 def migrate_database():
     """
-    执行数据库迁移，添加缺失的字段
+    执行数据库迁移，添加缺失的字段和表
     
-    此函数在应用启动时调用，自动检查并添加缺失的字段
+    此函数在应用启动时调用，自动检查并添加缺失的字段和表
     仅用于开发环境，生产环境应使用 Alembic 迁移
     
     Note:
-        - 此函数会检查所有需要迁移的字段
-        - 如果字段已存在，会跳过
-        - 如果字段不存在，会尝试添加
-        - 如果添加失败，会记录错误但不中断应用启动
+        - 此函数会检查所有需要迁移的字段和表
+        - 如果字段/表已存在，会跳过
+        - 如果字段/表不存在，会尝试添加/创建
+        - 如果操作失败，会记录错误但不中断应用启动
     """
     from ..db import SessionLocal
     
@@ -112,6 +141,35 @@ def migrate_database():
             column_name="status_reason",
             column_type="TEXT",
             nullable=True,
+        )
+        
+        # 【新增】创建 color_grading_iterations 表
+        # 用于存储迭代调色反馈历史记录
+        create_iterations_table_sql = """
+        CREATE TABLE IF NOT EXISTS color_grading_iterations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_id VARCHAR(36) NOT NULL,
+            user_id INTEGER NOT NULL,
+            iteration_number INTEGER NOT NULL,
+            user_feedback TEXT NOT NULL,
+            preview_image_data TEXT,
+            gemini_analysis TEXT,
+            gemini_suggestions JSON,
+            new_parameters JSON,
+            parameter_changes JSON,
+            status VARCHAR(32) DEFAULT 'pending' NOT NULL,
+            status_reason TEXT,
+            processing_time DECIMAL(6, 2),
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL,
+            FOREIGN KEY (task_id) REFERENCES analysis_tasks(id),
+            FOREIGN KEY (user_id) REFERENCES users(id)
+        )
+        """
+        check_and_create_table(
+            db=db,
+            table_name="color_grading_iterations",
+            create_sql=create_iterations_table_sql,
         )
         
         logger.info("【数据库迁移】数据库表结构检查完成")

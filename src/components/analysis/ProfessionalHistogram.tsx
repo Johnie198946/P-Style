@@ -13,210 +13,283 @@ interface HistogramProps {
  * 【专业直方图组件】
  * 功能：显示 RGB 和亮度通道的直方图分布
  * 
- * 【修复】支持任意长度的 histogram_data 数组：
- * - 后端已进行插值扩展，但前端也需要容错处理
- * - 如果数据长度不是256，进行前端插值扩展
- * - 确保数据归一化到 0-100 范围
+ * 【设计原则】：
+ * 1. 平滑曲线：使用高斯平滑 + 贝塞尔曲线，避免"刺猬"效果
+ * 2. 专业外观：参考 Lightroom/Premiere 的直方图设计
+ * 3. 性能优化：使用 useMemo 缓存计算结果
  */
 export const ProfessionalHistogram: React.FC<HistogramProps> = ({ r, g, b, l, className }) => {
-    // 【调试日志】记录接收到的数据
-    if (process.env.NODE_ENV === 'development') {
-        console.log('[ProfessionalHistogram] 📈 接收到的数据:', {
-            rLength: r?.length || 0,
-            gLength: g?.length || 0,
-            bLength: b?.length || 0,
-            lLength: l?.length || 0,
-            rSample: r?.slice(0, 5) || [],
-            gSample: g?.slice(0, 5) || [],
-            bSample: b?.slice(0, 5) || [],
-            lSample: l?.slice(0, 5) || [],
-        });
-    }
     
     /**
-     * 【修复】前端插值函数：将任意长度的直方图数据插值扩展到256个值
-     * 如果后端已经做了插值（256个值），则直接使用；否则进行前端插值
+     * 【高斯平滑函数】对直方图数据进行平滑处理
+     * 使用滑动窗口平均，消除噪点和锯齿
+     * @param data 原始数据
+     * @param windowSize 平滑窗口大小（越大越平滑）
      */
-    const interpolateHistogram = (data: number[] = [], targetLength: number = 256): number[] => {
+    const gaussianSmooth = (data: number[], windowSize: number = 5): number[] => {
         if (!data || data.length === 0) return [];
         
-        // 如果已经是目标长度，直接返回
-        if (data.length === targetLength) return data;
-        
-        // 如果数据长度大于目标长度，进行降采样
-        if (data.length > targetLength) {
-            const step = data.length / targetLength;
-            return Array.from({ length: targetLength }, (_, i) => {
-                const sourceIndex = Math.floor(i * step);
-                return data[sourceIndex] || 0;
-            });
-        }
-        
-        // 如果数据长度小于目标长度，进行线性插值
         const result: number[] = [];
-        const sourceLength = data.length;
+        const halfWindow = Math.floor(windowSize / 2);
         
-        for (let i = 0; i < targetLength; i++) {
-            // 计算在源数组中的位置（浮点数）
-            const sourcePos = (i / (targetLength - 1)) * (sourceLength - 1);
-            // 获取相邻两个点的索引
-            const idxLow = Math.floor(sourcePos);
-            const idxHigh = Math.min(idxLow + 1, sourceLength - 1);
-            // 计算插值权重
-            const weight = sourcePos - idxLow;
-            // 线性插值
-            const interpolatedValue = data[idxLow] * (1 - weight) + data[idxHigh] * weight;
-            result.push(interpolatedValue);
+        for (let i = 0; i < data.length; i++) {
+            let sum = 0;
+            let count = 0;
+        
+            // 高斯权重（简化版：距离越近权重越大）
+            for (let j = -halfWindow; j <= halfWindow; j++) {
+                const idx = i + j;
+                if (idx >= 0 && idx < data.length) {
+                    // 高斯权重：中心点权重最大
+                    const weight = 1 - Math.abs(j) / (halfWindow + 1);
+                    sum += data[idx] * weight;
+                    count += weight;
+                }
+            }
+            
+            result.push(count > 0 ? sum / count : 0);
         }
         
         return result;
     };
     
     /**
-     * 【修复】归一化函数：确保数据在 0-100 范围内
-     * 如果数据已经归一化，则直接使用；否则进行归一化
+     * 【重采样函数】将数据重采样到指定数量的点
+     * 用于减少数据点数量，提高渲染性能
+     */
+    const resample = (data: number[], targetPoints: number = 64): number[] => {
+        if (!data || data.length === 0) return [];
+        if (data.length <= targetPoints) return data;
+        
+        const result: number[] = [];
+        const step = data.length / targetPoints;
+        
+        for (let i = 0; i < targetPoints; i++) {
+            const startIdx = Math.floor(i * step);
+            const endIdx = Math.floor((i + 1) * step);
+            
+            // 取区间内的最大值（保留峰值特征）
+            let maxVal = 0;
+            for (let j = startIdx; j < endIdx && j < data.length; j++) {
+                maxVal = Math.max(maxVal, data[j]);
+            }
+            result.push(maxVal);
+        }
+        
+        return result;
+    };
+    
+    /**
+     * 【归一化函数】确保数据在 0-100 范围内
      */
     const normalizeData = (data: number[]): number[] => {
         if (!data || data.length === 0) return [];
         
-        // 找到最大值
         const max = Math.max(...data);
+        if (max === 0) return data.map(() => 0);
         
-        // 如果最大值已经小于等于100，假设已经归一化
-        if (max <= 100) return data;
-        
-        // 否则进行归一化
+        // 归一化到 0-100
         return data.map(val => (val / max) * 100);
     };
     
-    // 【修复】处理每个通道的数据：先插值到256，再归一化
-    const processedR = useMemo(() => {
-        const result = normalizeData(interpolateHistogram(r || []));
-        if (process.env.NODE_ENV === 'development' && result.length > 0) {
-            console.log('[ProfessionalHistogram] ✅ R 通道处理完成:', { 
-                originalLength: r?.length || 0, 
-                processedLength: result.length,
-                maxValue: Math.max(...result),
-                sample: result.slice(0, 5)
-            });
-        }
-        return result;
-    }, [r]);
-    const processedG = useMemo(() => {
-        const result = normalizeData(interpolateHistogram(g || []));
-        if (process.env.NODE_ENV === 'development' && result.length > 0) {
-            console.log('[ProfessionalHistogram] ✅ G 通道处理完成:', { 
-                originalLength: g?.length || 0, 
-                processedLength: result.length,
-                maxValue: Math.max(...result),
-                sample: result.slice(0, 5)
-            });
-        }
-        return result;
-    }, [g]);
-    const processedB = useMemo(() => {
-        const result = normalizeData(interpolateHistogram(b || []));
-        if (process.env.NODE_ENV === 'development' && result.length > 0) {
-            console.log('[ProfessionalHistogram] ✅ B 通道处理完成:', { 
-                originalLength: b?.length || 0, 
-                processedLength: result.length,
-                maxValue: Math.max(...result),
-                sample: result.slice(0, 5)
-            });
-        }
-        return result;
-    }, [b]);
-    const processedL = useMemo(() => {
-        const result = normalizeData(interpolateHistogram(l || []));
-        if (process.env.NODE_ENV === 'development' && result.length > 0) {
-            console.log('[ProfessionalHistogram] ✅ L 通道处理完成:', { 
-                originalLength: l?.length || 0, 
-                processedLength: result.length,
-                maxValue: Math.max(...result),
-                sample: result.slice(0, 5)
-            });
-        }
-        return result;
-    }, [l]);
+    /**
+     * 【数据处理管道】
+     * 1. 重采样到 64 个点
+     * 2. 高斯平滑（窗口大小 7）
+     * 3. 再次平滑（窗口大小 5）
+     * 4. 归一化到 0-100
+     */
+    const processData = (data: number[] | undefined): number[] => {
+        if (!data || data.length === 0) return [];
+        
+        // 步骤1：重采样到 64 个点
+        let processed = resample(data, 64);
+        
+        // 步骤2：第一次高斯平滑（去除大噪点）
+        processed = gaussianSmooth(processed, 7);
+        
+        // 步骤3：第二次高斯平滑（进一步平滑）
+        processed = gaussianSmooth(processed, 5);
+        
+        // 步骤4：归一化
+        processed = normalizeData(processed);
+        
+        return processed;
+    };
+    
+    // 处理每个通道的数据
+    const processedR = useMemo(() => processData(r), [r]);
+    const processedG = useMemo(() => processData(g), [g]);
+    const processedB = useMemo(() => processData(b), [b]);
+    const processedL = useMemo(() => processData(l), [l]);
     
     /**
-     * 【修复】生成平滑的 SVG 路径
-     * 使用线性插值连接数据点，形成平滑的直方图形状
+     * 【生成平滑 SVG 路径】使用 Catmull-Rom 样条转贝塞尔曲线
+     * 生成专业级平滑曲线，类似 Lightroom 直方图
      */
-    const generatePath = (data: number[], height: number, width: number) => {
-        if (!data || data.length === 0) return "";
+    const generateSmoothPath = (data: number[], height: number, width: number): string => {
+        if (!data || data.length < 2) return "";
         
-        // 确保数据长度为256（标准直方图格式）
-        const normalizedData = data.length === 256 ? data : interpolateHistogram(data, 256);
+        const points: { x: number; y: number }[] = data.map((val, i) => ({
+            x: (i / (data.length - 1)) * width,
+            y: height - (val / 100) * height * 0.95 // 留 5% 顶部空间
+        }));
         
-        const stepX = width / (normalizedData.length - 1);
+        // 起始点（左下角）
+        let d = `M 0 ${height}`;
         
-        let d = `M 0 ${height}`; // Start bottom left
+        // 移动到第一个数据点
+        d += ` L ${points[0].x} ${points[0].y}`;
         
-        normalizedData.forEach((val, i) => {
-            const x = i * stepX;
-            // 数据已归一化到 0-100，直接使用
-            const y = height - (val / 100) * height; // Invert Y
-            if (i === 0) {
-                d += ` L ${x} ${y}`;
-            } else {
-                // 使用直线连接，形成平滑的直方图形状
-                d += ` L ${x} ${y}`;
+        // 使用 Catmull-Rom 样条生成平滑曲线
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[Math.max(0, i - 1)];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[Math.min(points.length - 1, i + 2)];
+            
+            // Catmull-Rom 转贝塞尔控制点
+            const tension = 0.3; // 张力系数，越小越平滑
+            
+            const cp1x = p1.x + (p2.x - p0.x) * tension;
+            const cp1y = p1.y + (p2.y - p0.y) * tension;
+            const cp2x = p2.x - (p3.x - p1.x) * tension;
+            const cp2y = p2.y - (p3.y - p1.y) * tension;
+            
+            d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
             }
-        });
         
-        d += ` L ${width} ${height} Z`; // Close path
+        // 闭合路径（右下角 → 左下角）
+        d += ` L ${width} ${height} Z`;
+        
+        return d;
+    };
+    
+    /**
+     * 【生成描边路径】只绘制曲线，不填充
+     */
+    const generateStrokePath = (data: number[], height: number, width: number): string => {
+        if (!data || data.length < 2) return "";
+        
+        const points: { x: number; y: number }[] = data.map((val, i) => ({
+            x: (i / (data.length - 1)) * width,
+            y: height - (val / 100) * height * 0.95
+        }));
+        
+        let d = `M ${points[0].x} ${points[0].y}`;
+        
+        for (let i = 0; i < points.length - 1; i++) {
+            const p0 = points[Math.max(0, i - 1)];
+            const p1 = points[i];
+            const p2 = points[i + 1];
+            const p3 = points[Math.min(points.length - 1, i + 2)];
+            
+            const tension = 0.3;
+            
+            const cp1x = p1.x + (p2.x - p0.x) * tension;
+            const cp1y = p1.y + (p2.y - p0.y) * tension;
+            const cp2x = p2.x - (p3.x - p1.x) * tension;
+            const cp2y = p2.y - (p3.y - p1.y) * tension;
+            
+            d += ` C ${cp1x} ${cp1y}, ${cp2x} ${cp2y}, ${p2.x} ${p2.y}`;
+        }
+        
         return d;
     };
 
-    // 【修复】检查是否有有效数据
+    // 检查是否有有效数据
     const hasData = processedR.length > 0 || processedG.length > 0 || processedB.length > 0 || processedL.length > 0;
-    
-    // 【调试日志】记录最终渲染状态
-    if (process.env.NODE_ENV === 'development') {
-        console.log('[ProfessionalHistogram] 🎨 最终渲染状态:', {
-            hasData,
-            processedRLength: processedR.length,
-            processedGLength: processedG.length,
-            processedBLength: processedB.length,
-            processedLLength: processedL.length,
-            willRenderR: processedR.length > 0,
-            willRenderG: processedG.length > 0,
-            willRenderB: processedB.length > 0,
-            willRenderL: processedL.length > 0,
-        });
-    }
 
     return (
         <div className={cn("relative w-full h-32 bg-[#050505] border border-white/10 rounded overflow-hidden select-none", className)}>
-            {/* Grid System */}
-            <div className="absolute inset-0 grid grid-cols-4 pointer-events-none opacity-20">
-                <div className="border-r border-white/30 h-full"></div>
-                <div className="border-r border-white/30 h-full"></div>
-                <div className="border-r border-white/30 h-full"></div>
+            {/* 背景网格 */}
+            <div className="absolute inset-0 pointer-events-none">
+                {/* 垂直网格线 */}
+                <div className="absolute inset-0 flex justify-between px-0">
+                    {[0, 1, 2, 3, 4].map(i => (
+                        <div key={i} className="w-px h-full bg-white/10" />
+                    ))}
+                </div>
+                {/* 水平网格线 */}
+                <div className="absolute inset-0 flex flex-col justify-between py-0">
+                    {[0, 1, 2, 3].map(i => (
+                        <div key={i} className="w-full h-px bg-white/10" />
+                    ))}
             </div>
-            <div className="absolute inset-0 grid grid-rows-4 pointer-events-none opacity-20">
-                <div className="border-b border-white/30 w-full"></div>
-                <div className="border-b border-white/30 w-full"></div>
-                <div className="border-b border-white/30 w-full"></div>
             </div>
 
-            {/* 【修复】Channels Layered with Screen Blend Mode - 使用处理后的数据 */}
+            {/* 直方图曲线 */}
             {hasData ? (
-                <div className="absolute inset-0 mix-blend-screen opacity-90 pt-2 px-1">
-                    <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 100">
-                        {/* Red Channel */}
-                        {processedR.length > 0 && <path d={generatePath(processedR, 100, 100)} fill="#ff0000" fillOpacity="0.6" className="mix-blend-screen" />}
-                        {/* Green Channel */}
-                        {processedG.length > 0 && <path d={generatePath(processedG, 100, 100)} fill="#00ff00" fillOpacity="0.6" className="mix-blend-screen" />}
-                        {/* Blue Channel */}
-                        {processedB.length > 0 && <path d={generatePath(processedB, 100, 100)} fill="#0000ff" fillOpacity="0.6" className="mix-blend-screen" />}
-                        {/* White/Luma Channel (Optional overlay) */}
-                        {processedL.length > 0 && <path d={generatePath(processedL, 100, 100)} fill="white" fillOpacity="0.1" stroke="white" strokeWidth="0.5" fill="none" />}
-                    </svg>
-                </div>
+                <div className="absolute inset-0 pt-3 pb-4 px-1">
+                    <svg 
+                        className="w-full h-full" 
+                        preserveAspectRatio="none" 
+                        viewBox="0 0 100 100"
+                        style={{ overflow: 'visible' }}
+                    >
+                        <defs>
+                            {/* 红色渐变 */}
+                            <linearGradient id="redGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#ff0000" stopOpacity="0.8" />
+                                <stop offset="100%" stopColor="#ff0000" stopOpacity="0.2" />
+                            </linearGradient>
+                            {/* 绿色渐变 */}
+                            <linearGradient id="greenGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#00ff00" stopOpacity="0.8" />
+                                <stop offset="100%" stopColor="#00ff00" stopOpacity="0.2" />
+                            </linearGradient>
+                            {/* 蓝色渐变 */}
+                            <linearGradient id="blueGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#0066ff" stopOpacity="0.8" />
+                                <stop offset="100%" stopColor="#0066ff" stopOpacity="0.2" />
+                            </linearGradient>
+                            {/* 亮度渐变 */}
+                            <linearGradient id="lumaGradient" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" stopColor="#ffffff" stopOpacity="0.5" />
+                                <stop offset="100%" stopColor="#ffffff" stopOpacity="0.1" />
+                            </linearGradient>
+                        </defs>
+                        
+                        {/* 蓝色通道（最底层） */}
+                        {processedB.length > 0 && (
+                            <path 
+                                d={generateSmoothPath(processedB, 100, 100)} 
+                                fill="url(#blueGradient)" 
+                                className="mix-blend-screen"
+                            />
+                        )}
+                        
+                        {/* 绿色通道 */}
+                        {processedG.length > 0 && (
+                            <path 
+                                d={generateSmoothPath(processedG, 100, 100)} 
+                                fill="url(#greenGradient)" 
+                                className="mix-blend-screen"
+                            />
+                        )}
+                        
+                        {/* 红色通道 */}
+                        {processedR.length > 0 && (
+                            <path 
+                                d={generateSmoothPath(processedR, 100, 100)} 
+                                fill="url(#redGradient)" 
+                                className="mix-blend-screen"
+                            />
+                        )}
+                        
+                        {/* 亮度通道（描边） */}
+                        {processedL.length > 0 && (
+                            <path 
+                                d={generateStrokePath(processedL, 100, 100)} 
+                                fill="none"
+                                stroke="rgba(255,255,255,0.6)"
+                                strokeWidth="0.8"
+                            />
+                        )}
+                </svg>
+            </div>
             ) : (
-                // 【新增】无数据时的占位提示
+                // 无数据时的占位提示
                 <div className="absolute inset-0 flex items-center justify-center">
                     <div className="text-center">
                         <div className="text-[9px] font-mono text-white/30 mb-1">NO DATA</div>
@@ -225,18 +298,16 @@ export const ProfessionalHistogram: React.FC<HistogramProps> = ({ r, g, b, l, cl
                 </div>
             )}
 
-            {/* Metadata Overlay */}
+            {/* 顶部标签 */}
             <div className="absolute top-1 left-1 text-[8px] font-mono text-white/40 tracking-tighter">
                 RGB_PARADE // 8-BIT
             </div>
             
-            {/* Zone Markers */}
-            <div className="absolute bottom-0 w-full flex justify-between px-2 text-[7px] font-mono text-white/20">
-                <span>BLACKS</span>
-                <span>SHADOWS</span>
-                <span>EXP</span>
-                <span>HILIGHT</span>
-                <span>WHITES</span>
+            {/* 底部刻度 */}
+            <div className="absolute bottom-0 w-full flex justify-between px-1 text-[7px] font-mono text-white/30">
+                <span>0</span>
+                <span>128</span>
+                <span>255</span>
             </div>
         </div>
     );

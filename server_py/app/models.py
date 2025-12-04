@@ -177,3 +177,34 @@ class Payment(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 更新时间
 
 
+class ColorGradingIteration(Base):
+    """
+    调色迭代记录模型
+    存储用户与 Gemini 的迭代调色对话历史，支持可追溯的调色优化过程
+    每次迭代包含：用户反馈、预览图、Gemini 新方案、参数变化
+    """
+    __tablename__ = "color_grading_iterations"
+
+    id = Column(Integer, primary_key=True, index=True)  # 迭代 ID（主键）
+    task_id = Column(String(36), ForeignKey("analysis_tasks.id"), nullable=False, index=True)  # 关联的分析任务 ID（外键）
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False)  # 用户 ID（外键）
+    iteration_number = Column(Integer, nullable=False)  # 迭代序号（从 1 开始）
+    
+    # 用户输入
+    user_feedback = Column(Text, nullable=False)  # 用户反馈文本（如"阴影里的青色太多了"）
+    preview_image_data = Column(Text, nullable=True)  # 预览图 Base64（用户当前调整结果的截图）
+    
+    # Gemini 输出
+    gemini_analysis = Column(Text, nullable=True)  # Gemini 对比分析结果（自然语言）
+    gemini_suggestions = Column(JSON, nullable=True)  # Gemini 修正建议列表（如["减少颜色分级阴影的饱和度"]）
+    new_parameters = Column(JSON, nullable=True)  # Gemini 生成的新 LR 参数（完整的调色方案）
+    parameter_changes = Column(JSON, nullable=True)  # 参数变化摘要（与上一次的差异）
+    
+    # 元数据
+    status = Column(String(32), default="pending", nullable=False)  # 状态（pending/processing/completed/failed）
+    status_reason = Column(Text, nullable=True)  # 状态原因（失败时记录错误信息）
+    processing_time = Column(DECIMAL(6, 2), nullable=True)  # 处理时间（秒）
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 创建时间
+    updated_at = Column(DateTime, default=datetime.utcnow, nullable=False)  # 更新时间
+
+

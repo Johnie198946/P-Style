@@ -8,7 +8,7 @@ import { PhotoshopModal } from './modals/PhotoshopModal';
 import { BaseModal } from './modals/BaseModal';
 import { api } from '../src/lib/api';
 import { adaptBackendToFrontend } from '../src/lib/dataAdapter';
-import { toast } from 'sonner@2.0.3';
+import { toast } from 'sonner';
 import { Lock, Unlock, Cpu, Zap, Eye, Layers, Aperture, Activity, Hexagon, Terminal, Scan } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useLanguage } from '../src/contexts/LanguageContext';
@@ -302,6 +302,152 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
     }
   }, [data]);
 
+  // 【新增】组件挂载时检查任务状态，如果 Part2 已完成，自动加载数据
+  useEffect(() => {
+    const checkPart2Status = async () => {
+      if (!taskId) return;
+      
+      try {
+        console.log('[ThemeCardsGrid] 🔍 检查 Part2 状态...', { taskId });
+        const res = await api.analyze.getTask(taskId);
+        console.log('[ThemeCardsGrid] 🔍 初始 API 响应:', {
+          resType: typeof res,
+          resKeys: res ? Object.keys(res) : [],
+          fullRes: res,
+        });
+        
+        const responseData = (res as any)?.data || res;
+        const taskStatus = responseData?.task?.status || (res as any)?.task?.status || (res as any)?.status;
+        const structuredResult = responseData?.structuredResult || responseData?.structured_result || (res as any)?.structuredResult || (res as any)?.structured_result || (res as any);
+        
+        console.log('[ThemeCardsGrid] 🔍 初始状态检查:', {
+          taskStatus,
+          hasResponseData: !!responseData,
+          responseDataKeys: responseData ? Object.keys(responseData) : [],
+          hasStructuredResult: !!structuredResult,
+          structuredResultType: typeof structuredResult,
+          structuredResultKeys: structuredResult ? Object.keys(structuredResult) : [],
+          hasSections: !!structuredResult?.sections,
+          sectionsKeys: structuredResult?.sections ? Object.keys(structuredResult.sections) : [],
+          // 【新增】打印完整的 structuredResult 结构（前 2000 字符）
+          structuredResultPreview: structuredResult ? JSON.stringify(structuredResult).substring(0, 2000) : 'null',
+        });
+        
+        // 如果 Part2 已完成，检查是否有 Part2 数据
+        if (taskStatus === 'completed') {
+          // 【修复】使用与轮询逻辑相同的数据解析方式
+          let sections: any = {};
+          if (structuredResult?.sections) {
+            sections = structuredResult.sections;
+          } else if (structuredResult && typeof structuredResult === 'object') {
+            // 如果 structuredResult 本身包含 color/lightroom/photoshop，说明它就是 sections
+            if (structuredResult.color || structuredResult.lightroom || structuredResult.photoshop) {
+              sections = structuredResult;
+            } else {
+              sections = structuredResult;
+            }
+          }
+          
+          const hasColor = !!(sections.color);
+          const hasLightroom = !!(sections.lightroom);
+          const hasPhotoshop = !!(sections.photoshop);
+          const hasPart2Data = hasColor || hasLightroom || hasPhotoshop;
+          
+          console.log('[ThemeCardsGrid] 🔍 Part2 数据检查（修复后）:', {
+            hasPart2Data,
+            hasColor,
+            hasLightroom,
+            hasPhotoshop,
+            sectionsType: typeof sections,
+            sectionsKeys: sections ? Object.keys(sections) : [],
+            colorKeys: sections.color ? Object.keys(sections.color) : [],
+            lightroomKeys: sections.lightroom ? Object.keys(sections.lightroom) : [],
+            photoshopKeys: sections.photoshop ? Object.keys(sections.photoshop) : [],
+            // 【新增】打印 sections 预览
+            sectionsPreview: sections ? JSON.stringify(sections).substring(0, 500) : 'null',
+          });
+          
+          if (hasPart2Data) {
+            console.log('[ThemeCardsGrid] ✅ Part2 已完成，自动加载数据');
+            // 转换并加载数据
+            let dataToAdapt: any;
+            if (structuredResult?.sections) {
+              dataToAdapt = structuredResult;
+              console.log('[ThemeCardsGrid] ✅ 使用标准结构（structuredResult.sections）');
+            } else if (sections && (sections.color || sections.lightroom || sections.photoshop)) {
+              dataToAdapt = { sections: sections };
+              console.log('[ThemeCardsGrid] ✅ 使用 sections 包装结构');
+            } else {
+              dataToAdapt = { sections: structuredResult || {} };
+              console.log('[ThemeCardsGrid] ⚠️ 使用默认包装结构');
+            }
+            
+            console.log('[ThemeCardsGrid] 📦 数据适配前:', {
+              dataToAdaptKeys: dataToAdapt ? Object.keys(dataToAdapt) : [],
+              hasSections: !!dataToAdapt?.sections,
+              sectionsKeys: dataToAdapt?.sections ? Object.keys(dataToAdapt.sections) : [],
+            });
+            
+            const adaptedData = adaptBackendToFrontend(dataToAdapt);
+            
+            console.log('[ThemeCardsGrid] ✅ 数据适配后:', {
+              adaptedDataKeys: Object.keys(adaptedData),
+              hasColor: !!adaptedData.color,
+              hasLightroom: !!adaptedData.lightroom,
+              hasPhotoshop: !!adaptedData.photoshop,
+            });
+            
+            // 【修复】检查适配后的数据是否包含 Part2 内容
+            const hasAdaptedPart2Data = adaptedData.color || adaptedData.lightroom || adaptedData.photoshop;
+            
+            if (hasAdaptedPart2Data) {
+              setResults((prev: any) => {
+                const merged = { ...prev, ...adaptedData };
+                console.log('[ThemeCardsGrid] ✅ 数据合并成功:', {
+                  prevKeys: Object.keys(prev),
+                  mergedKeys: Object.keys(merged),
+                  hasColor: !!merged.color,
+                  hasLightroom: !!merged.lightroom,
+                  hasPhotoshop: !!merged.photoshop,
+                });
+                return merged;
+              });
+              setWorkflowStage('synthesis');
+              console.log('[ThemeCardsGrid] ✅ workflowStage 已切换到 synthesis');
+            } else {
+              console.error('[ThemeCardsGrid] ❌ 数据适配后仍然没有 Part2 数据！', {
+                adaptedDataKeys: Object.keys(adaptedData),
+                adaptedData,
+              });
+              // 【修复】即使适配失败，也强制切换到 synthesis 阶段
+              setWorkflowStage('synthesis');
+              toast.warning("Part2 数据格式异常，界面已显示但可能缺少部分数据");
+            }
+          } else {
+            console.warn('[ThemeCardsGrid] ⚠️ Part2 已完成但数据缺失:', {
+              taskStatus,
+              hasStructuredResult: !!structuredResult,
+              structuredResultType: typeof structuredResult,
+              structuredResultKeys: structuredResult ? Object.keys(structuredResult) : [],
+              sectionsKeys: sections ? Object.keys(sections) : [],
+              // 【新增】打印完整 structuredResult 预览
+              structuredResultPreview: structuredResult ? JSON.stringify(structuredResult).substring(0, 1000) : 'null',
+            });
+            // 【修复】即使数据缺失，也强制切换到 synthesis 阶段，让用户看到界面
+            setWorkflowStage('synthesis');
+            toast.warning("Part2 数据缺失，界面已显示但可能缺少部分数据");
+          }
+        } else {
+          console.log('[ThemeCardsGrid] ℹ️ Part2 未完成，状态:', taskStatus);
+        }
+      } catch (error) {
+        console.error('[ThemeCardsGrid] ❌ 检查 Part2 状态失败:', error);
+      }
+    };
+    
+    checkPart2Status();
+  }, [taskId]);
+
   // Unlock Animation Sequence
   const handleUnlock = async () => {
     setWorkflowStage('decrypting');
@@ -317,59 +463,302 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
       
       // 2. 启动轮询机制（每3秒轮询一次，直到 status === 'completed'）
       const pollInterval = 3000; // 3秒
-      const maxAttempts = 30; // 最多轮询30次（90秒）
+      const maxAttempts = 120; // 最多轮询120次（6分钟），因为 Part2 分析可能需要更长时间
       let attempts = 0;
       
+      /**
+       * 【Part2 轮询函数】
+       * 功能：轮询后端任务状态，检测 Part2 分析是否完成，并加载 Part2 数据
+       * 
+       * 数据流：
+       * 1. 后端 getTask 返回：{ code: 0, data: { task: {...}, structuredResult: {...} } }
+       * 2. apiClient 自动解包 data 字段，返回：{ task: {...}, structuredResult: {...} }
+       * 3. structuredResult 结构：{ sections: { color: {...}, lightroom: {...}, photoshop: {...} } }
+       * 4. 使用 adaptBackendToFrontend 转换数据格式
+       * 5. 更新 results 状态并切换到 synthesis 阶段
+       * 
+       * @returns {Promise<boolean>} true 表示停止轮询，false 表示继续轮询
+       */
       const pollPart2Result = async () => {
         try {
           const res = await api.analyze.getTask(taskId!);
           
-          // 检查状态
-          if (res.status === 'completed') {
-            // 验证数据完整性：检查 sections 中是否有 Part2 数据
-            const structuredResult = res.structured_result || res;
-            const sections = structuredResult.sections || structuredResult;
+          // 【数据解析】apiClient 已经解包了 data 字段，所以 res 直接是 { task: {...}, structuredResult: {...} }
+          // 但为了兼容性，也支持从 res.data 中提取（如果 apiClient 没有解包）
+          console.log('[Part2 Poll] 🔍 原始 API 响应:', {
+            resType: typeof res,
+            resKeys: res ? Object.keys(res) : [],
+            resIsArray: Array.isArray(res),
+            fullRes: res,
+          });
+          
+          const responseData = (res as any)?.data || res; // apiClient 可能已经解包了 data
+          const taskStatus = responseData?.task?.status || (res as any)?.task?.status || (res as any)?.status || 'unknown';
+          const structuredResult = responseData?.structuredResult || (res as any)?.structuredResult || (res as any)?.structured_result || (res as any);
+          
+          // 【调试日志】记录轮询结果（详细）
+          console.log('[Part2 Poll] 🔍 轮询结果（详细）:', {
+            taskStatus,
+            responseDataKeys: responseData ? Object.keys(responseData) : [],
+            resKeys: res ? Object.keys(res) : [],
+            hasTask: !!responseData?.task,
+            hasStructuredResult: !!structuredResult,
+            structuredResultType: typeof structuredResult,
+            structuredResultKeys: structuredResult ? Object.keys(structuredResult) : [],
+            hasSections: !!structuredResult?.sections,
+            sectionsKeys: structuredResult?.sections ? Object.keys(structuredResult.sections) : [],
+            // 【关键】检查 Part2 数据是否存在
+            hasColorSection: !!structuredResult?.sections?.color,
+            hasLightroomSection: !!structuredResult?.sections?.lightroom,
+            hasPhotoshopSection: !!structuredResult?.sections?.photoshop,
+            // 打印 sections 的完整结构（仅前 500 字符，避免日志过长）
+            sectionsPreview: structuredResult?.sections ? JSON.stringify(structuredResult.sections).substring(0, 500) : 'null',
+          });
+          
+          // 【修复】只检查 completed 状态，不检查 part1_completed（因为 part1_completed 表示 Part1 完成，Part2 可能还在处理中）
+          if (taskStatus === 'completed') {
+            // 【修复】验证数据完整性：检查 sections 中是否有 Part2 数据
+            // 根据后端代码，structured_result 的结构应该是：
+            // { sections: { color: {...}, lightroom: {...}, photoshop: {...} } }
+            // 【关键修复】如果 structuredResult 本身就是 sections（没有嵌套），直接使用
+            let sections: any = {};
+            if (structuredResult?.sections) {
+              sections = structuredResult.sections;
+            } else if (structuredResult && typeof structuredResult === 'object') {
+              // 如果 structuredResult 本身包含 color/lightroom/photoshop，说明它就是 sections
+              if (structuredResult.color || structuredResult.lightroom || structuredResult.photoshop) {
+                sections = structuredResult;
+              } else {
+                // 否则尝试将其作为 sections 使用
+                sections = structuredResult;
+              }
+            }
             
-            const hasPart2Data = sections.color || sections.lightroom || sections.photoshop;
+            // 【关键修复】检查 Part2 数据的标准结构
+            // Part2 数据应该包含 color、lightroom、photoshop 三个 section
+            const hasColor = !!(sections.color);
+            const hasLightroom = !!(sections.lightroom);
+            const hasPhotoshop = !!(sections.photoshop);
+            const hasPart2Data = hasColor || hasLightroom || hasPhotoshop;
+            
+            // 【新增】详细日志，用于排查问题
+            console.log('[Part2 Poll] 🔍 数据检查（修复后）:', {
+              taskStatus,
+              hasStructuredResult: !!structuredResult,
+              structuredResultType: typeof structuredResult,
+              structuredResultKeys: structuredResult ? Object.keys(structuredResult) : [],
+              hasSections: !!structuredResult?.sections,
+              sectionsType: typeof sections,
+              sectionsKeys: sections ? Object.keys(sections) : [],
+              hasColor,
+              hasLightroom,
+              hasPhotoshop,
+              hasPart2Data,
+              // 【新增】打印 sections 的完整结构（仅前 1000 字符）
+              sectionsPreview: sections ? JSON.stringify(sections).substring(0, 1000) : 'null',
+            });
+            
+            // 【详细日志】记录数据检查结果
+            console.log('[Part2 Poll] 📊 数据检查（详细）:', {
+              hasPart2Data,
+              hasColor,
+              hasLightroom,
+              hasPhotoshop,
+              // 检查每个 section 是否有 structured 字段
+              colorHasStructured: !!(sections.color?.structured),
+              lightroomHasStructured: !!(sections.lightroom?.structured),
+              photoshopHasStructured: !!(sections.photoshop?.structured),
+              // 检查 sections 的键
+              sectionsKeys: Object.keys(sections),
+              // 打印每个 section 的键（如果存在）
+              colorKeys: sections.color ? Object.keys(sections.color) : [],
+              lightroomKeys: sections.lightroom ? Object.keys(sections.lightroom) : [],
+              photoshopKeys: sections.photoshop ? Object.keys(sections.photoshop) : [],
+            });
             
             if (hasPart2Data) {
-              // 使用数据适配器转换数据
-              const adaptedData = adaptBackendToFrontend(structuredResult);
+              // 【修复】使用数据适配器转换数据
+              // 根据后端代码，structuredResult 的结构应该是：
+              // { sections: { color: {...}, lightroom: {...}, photoshop: {...} } }
+              // 所以直接传入 structuredResult 即可
+              let dataToAdapt: any;
+              if (structuredResult?.sections) {
+                // 标准结构：structuredResult 包含 sections
+                dataToAdapt = structuredResult;
+                console.log('[Part2 Poll] ✅ 使用标准结构（structuredResult.sections）');
+              } else if (sections && (sections.color || sections.lightroom || sections.photoshop)) {
+                // 【修复】如果 sections 本身包含 Part2 数据，直接包装
+                dataToAdapt = { sections: sections };
+                console.log('[Part2 Poll] ✅ 使用 sections 包装结构');
+              } else if (structuredResult && typeof structuredResult === 'object') {
+                // 如果 structuredResult 本身看起来像是 sections（有 color/lightroom/photoshop 等字段）
+                if (structuredResult.color || structuredResult.lightroom || structuredResult.photoshop) {
+                  dataToAdapt = { sections: structuredResult };
+                  console.log('[Part2 Poll] ⚠️ 使用包装结构（将 structuredResult 包装为 sections）');
+                } else {
+                  // 否则，尝试将其作为 sections 包装
+                  dataToAdapt = { sections: structuredResult };
+                  console.log('[Part2 Poll] ⚠️ 使用默认包装结构');
+                }
+              } else {
+                dataToAdapt = { sections: structuredResult || {} };
+                console.log('[Part2 Poll] ⚠️ 使用空结构');
+              }
               
+              console.log('[Part2 Poll] 📦 数据适配前:', {
+                dataToAdaptKeys: dataToAdapt ? Object.keys(dataToAdapt) : [],
+                hasSections: !!dataToAdapt?.sections,
+                sectionsKeys: dataToAdapt?.sections ? Object.keys(dataToAdapt.sections) : [],
+              });
+              
+              const adaptedData = adaptBackendToFrontend(dataToAdapt);
+              
+              console.log('[Part2 Poll] ✅ 数据适配后:', {
+                adaptedDataKeys: Object.keys(adaptedData),
+                hasColor: !!adaptedData.color,
+                hasLightroom: !!adaptedData.lightroom,
+                hasPhotoshop: !!adaptedData.photoshop,
+                // 打印每个 section 的键（如果存在）
+                colorKeys: adaptedData.color ? Object.keys(adaptedData.color) : [],
+                lightroomKeys: adaptedData.lightroom ? Object.keys(adaptedData.lightroom) : [],
+                photoshopKeys: adaptedData.photoshop ? Object.keys(adaptedData.photoshop) : [],
+              });
+              
+              // 【修复】检查适配后的数据是否包含 Part2 内容
+              const hasAdaptedPart2Data = adaptedData.color || adaptedData.lightroom || adaptedData.photoshop;
+              
+              if (hasAdaptedPart2Data) {
               // 合并数据到现有结果
-              setResults((prev: any) => ({ ...prev, ...adaptedData }));
+                setResults((prev: any) => {
+                  const merged = { ...prev, ...adaptedData };
+                  console.log('[Part2 Poll] ✅ 数据合并成功:', {
+                    prevKeys: Object.keys(prev),
+                    mergedKeys: Object.keys(merged),
+                    hasColor: !!merged.color,
+                    hasLightroom: !!merged.lightroom,
+                    hasPhotoshop: !!merged.photoshop,
+                  });
+                  return merged;
+                });
               
               // 切换到 synthesis 阶段
               setWorkflowStage('synthesis');
               toast.success("EXECUTION VECTORS DECRYPTED");
               return true; // 停止轮询
             } else {
-              // 数据未准备好，继续轮询
-              console.log("Part2 data not ready yet, continuing to poll...");
+                console.error('[Part2 Poll] ❌ 数据适配后仍然没有 Part2 数据！', {
+                  adaptedDataKeys: Object.keys(adaptedData),
+                  adaptedData,
+                  // 【新增】打印原始数据，帮助排查问题
+                  originalStructuredResult: structuredResult,
+                  originalSections: sections,
+                });
+                
+                // 【修复】即使适配失败，也尝试强制切换到 synthesis 阶段
+                // 因为可能是数据格式问题，但至少让用户看到界面
+                console.warn('[Part2 Poll] ⚠️ 数据适配失败，但强制切换到 synthesis 阶段');
+                setWorkflowStage('synthesis');
+                toast.warning("Part2 数据格式异常，界面已显示但可能缺少部分数据");
+                return true; // 停止轮询，避免无限循环
             }
-          } else if (res.status === 'failed' || res.status === 'error') {
-            toast.error("Part2 analysis failed");
+            } else {
+              // 【错误处理】任务已完成但 Part2 数据缺失
+              // 可能的原因：
+              // 1. Part2 分析失败（但状态没有更新为 failed）
+              // 2. 数据格式不正确
+              // 3. 数据还在保存中（但状态已经更新为 completed）
+              console.error('[Part2 Poll] ❌ 任务已完成但 Part2 数据缺失！', {
+                taskStatus,
+                hasStructuredResult: !!structuredResult,
+                structuredResultType: typeof structuredResult,
+                structuredResultKeys: structuredResult ? Object.keys(structuredResult) : [],
+                hasSections: !!structuredResult?.sections,
+                sectionsKeys: structuredResult?.sections ? Object.keys(structuredResult.sections) : [],
+                // 【新增】检查 structuredResult 的值类型
+                structuredResultValueType: structuredResult ? (Array.isArray(structuredResult) ? 'array' : typeof structuredResult) : 'null',
+                // 打印完整的 structuredResult（仅前 2000 字符，避免日志过长）
+                structuredResultPreview: structuredResult ? JSON.stringify(structuredResult).substring(0, 2000) : 'null',
+                fullRes: res,
+                // 【新增】打印 responseData 的完整结构
+                responseDataKeys: responseData ? Object.keys(responseData) : [],
+                responseDataPreview: responseData ? JSON.stringify(responseData).substring(0, 2000) : 'null',
+              });
+              
+              // 检查是否有 status_reason（失败原因）
+              const statusReason = responseData?.task?.status_reason || (res as any)?.task?.status_reason;
+              if (statusReason) {
+                console.error('[Part2 Poll] ❌ 任务失败原因:', statusReason);
+            toast.error(`Part2 分析失败: ${statusReason}`);
             setWorkflowStage('diagnosis');
             return true; // 停止轮询
+              }
+              
+              // 【修复】如果状态是 completed 但没有数据，可能是：
+              // 1. 后端数据保存延迟（继续轮询）
+              // 2. Part2 分析失败但没有更新状态（检查是否有错误信息）
+              // 3. 数据格式问题（输出详细错误信息）
+              if (taskStatus === 'completed') {
+                console.warn('[Part2 Poll] ⚠️ 状态为 completed 但无 Part2 数据，可能原因：');
+                console.warn('  1. 后端数据保存延迟（继续等待）');
+                console.warn('  2. Part2 分析失败但没有更新状态');
+                console.warn('  3. 数据格式问题');
+                console.warn(`  当前轮询次数: ${attempts}/${maxAttempts}`);
+                
+                // 如果已经轮询了很多次仍然没有数据，可能是真的失败了
+                if (attempts >= maxAttempts * 0.8) {
+                  console.error('[Part2 Poll] ❌ 轮询次数过多，可能 Part2 分析失败');
+                  toast.error("Part2 分析可能失败，请检查后端日志");
+                  setWorkflowStage('diagnosis');
+                  return true; // 停止轮询
+                }
+                
+                // 继续轮询
+              }
+            }
+          } else if (taskStatus === 'failed' || taskStatus === 'error') {
+            // 【增强】显示失败原因（如果有）
+            // 【修复】从 responseData 中提取 status_reason（后端返回格式：{ data: { task: { status_reason: ... } } }）
+            const failReason = responseData?.task?.status_reason || (res as any)?.task?.status_reason || 'Unknown error';
+            console.error('[Part2 Poll] ❌ 任务失败:', {
+              taskStatus,
+              failReason,
+              responseDataKeys: responseData ? Object.keys(responseData) : [],
+              hasTask: !!responseData?.task,
+              taskKeys: responseData?.task ? Object.keys(responseData.task) : [],
+            });
+            
+            // 【国际化】支持中英文错误提示
+            const errorMessage = failReason.includes('无法解析') || failReason.includes('JSON') 
+              ? `Part2 分析失败: ${failReason}` 
+              : `Part2 analysis failed: ${failReason}`;
+            toast.error(errorMessage);
+            setWorkflowStage('diagnosis');
+            return true; // 停止轮询
+          } else if (taskStatus === 'processing') {
+            console.log('[Part2 Poll] 任务处理中，继续等待...');
+          } else {
+            console.log(`[Part2 Poll] 未知状态: ${taskStatus}，继续轮询...`);
           }
           
           // 检查是否超过最大尝试次数
           attempts++;
           if (attempts >= maxAttempts) {
+            console.error(`[Part2 Poll] 超过最大尝试次数 (${maxAttempts})，停止轮询`);
             toast.error("Part2 analysis timeout");
             setWorkflowStage('diagnosis');
             return true; // 停止轮询
           }
           
           return false; // 继续轮询
-        } catch (error) {
-          console.error("Polling error:", error);
+        } catch (error: any) {
+          console.error("[Part2 Poll] 轮询错误:", error);
           attempts++;
           if (attempts >= maxAttempts) {
             toast.error("Part2 analysis timeout");
             setWorkflowStage('diagnosis');
             return true;
           }
+          // 发生错误时也继续轮询（可能是网络临时问题）
           return false;
         }
       };
@@ -385,9 +774,45 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
         }
       }, 2000);
       
-    } catch (error) {
+    } catch (error: any) {
+      // 【修复】增强错误处理，显示更详细的错误信息
       console.error("Part2 trigger error:", error);
-      toast.error("Failed to trigger Part2 analysis");
+      
+      // 【修复】根据错误类型显示不同的错误消息
+      let errorMessage = "Part2 分析触发失败";
+      if (error?.message) {
+        errorMessage = error.message;
+      } else if (error?.name === 'ApiError') {
+        errorMessage = error.message || "API 请求失败";
+      }
+      
+      // 【修复】区分不同类型的错误，提供更准确的错误提示
+      // 1. 超时错误：可能是后端服务异常或网络问题
+      if (error?.code === 'TIMEOUT_ERROR' || errorMessage.includes('超时') || errorMessage.includes('timeout')) {
+        errorMessage = errorMessage.includes('Part2') 
+          ? errorMessage 
+          : "Part2 分析请求超时，请检查后端服务是否正常运行";
+        toast.error(errorMessage);
+      } 
+      // 2. 认证错误：跳转到登录页
+      else if (error?.code === 'AUTH_TOKEN_MISSING' || error?.code === 'AUTH_TOKEN_INVALID' || error?.code === 'UNAUTHORIZED' || error?.code === 'FORBIDDEN') {
+        errorMessage = "认证失败，请重新登录";
+        toast.error(errorMessage);
+        // 延迟跳转，让用户看到错误提示
+        setTimeout(() => {
+          window.location.href = '/login';
+        }, 2000);
+      } 
+      // 3. 网络错误：提示检查网络连接
+      else if (error?.code === 'NETWORK_ERROR' || errorMessage.includes('网络') || errorMessage.includes('network')) {
+        toast.error(errorMessage || "网络连接失败，请检查您的网络设置或后端服务是否运行");
+      }
+      // 4. 其他错误：显示原始错误消息
+      else {
+        toast.error(errorMessage);
+      }
+      
+      // 【修复】无论什么错误，都重置到 diagnosis 阶段，让用户可以重试
       setWorkflowStage('diagnosis');
     }
   };
@@ -648,7 +1073,7 @@ export const ThemeCardsGrid = ({ data, images, taskId, onSimulate }: ThemeCardsG
       {activeModal === 'composition' && <CompositionModal data={results.composition} images={images} onClose={() => setActiveModal(null)} />}
       {activeModal === 'lighting' && <LightingModal data={results.lighting} onClose={() => setActiveModal(null)} />}
       {activeModal === 'color' && <ColorModal data={results.color} onClose={() => setActiveModal(null)} />}
-      {activeModal === 'lightroom' && <LightroomModal data={results.lightroom} onClose={() => setActiveModal(null)} />}
+      {activeModal === 'lightroom' && <LightroomModal data={results.lightroom} imageAnalysis={results.image_analysis} userImageUrl={images.target} refImageUrl={images.source} taskId={taskId} onClose={() => setActiveModal(null)} />}
       {activeModal === 'photoshop' && <PhotoshopModal data={results.photoshop} onClose={() => setActiveModal(null)} />}
     </div>
   );

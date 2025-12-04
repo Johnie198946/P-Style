@@ -14,20 +14,51 @@ const HolographicChannel = ({ name, code, data, onHover }: { name: string, code:
     const totalBlocks = 20; 
     const normalizedVal = Math.round(data.saturation / 10); 
     
-    // Helper to generate a synthetic reason
+    // 【修复】生成完整的通道调整说明文本
+    // 优先使用后端返回的 reason 字段，如果没有则根据 HSL 值生成详细说明
     const getChannelReason = (name: string, data: any) => {
-        if (data.reason) return data.reason;
+        // 【优先】如果后端提供了 reason 字段，直接使用
+        if (data.reason && data.reason.trim()) {
+            return data.reason;
+        }
         
+        // 【生成】根据 HSL 值生成详细的调整说明
         const changes = [];
-        if (Math.abs(data.hue) > 5) changes.push(`${t('hsl.reason.hue')} ${data.hue > 0 ? '+' : ''}${data.hue}`);
-        if (Math.abs(data.saturation) > 5) changes.push(`${t('hsl.reason.sat')} ${data.saturation > 0 ? '+' : ''}${data.saturation}`);
-        if (Math.abs(data.luminance) > 5) changes.push(`${t('hsl.reason.lum')} ${data.luminance > 0 ? '+' : ''}${data.luminance}`);
         
-        if (changes.length === 0) return t('hsl.reason.no_dev');
+        // 色相调整（即使值较小也显示，因为色相调整很重要）
+        if (data.hue !== 0 && Math.abs(data.hue) > 0) {
+            const hueDesc = data.hue > 0 
+                ? t('hsl.reason.hue_plus').replace('{value}', Math.abs(data.hue).toString())
+                : t('hsl.reason.hue_minus').replace('{value}', Math.abs(data.hue).toString());
+            changes.push(hueDesc);
+        }
         
-        return t('hsl.reason.adjust')
+        // 饱和度调整
+        if (data.saturation !== 0 && Math.abs(data.saturation) > 0) {
+            const satDesc = data.saturation > 0 
+                ? t('hsl.reason.sat_plus').replace('{value}', Math.abs(data.saturation).toString())
+                : t('hsl.reason.sat_minus').replace('{value}', Math.abs(data.saturation).toString());
+            changes.push(satDesc);
+        }
+        
+        // 明度调整
+        if (data.luminance !== 0 && Math.abs(data.luminance) > 0) {
+            const lumDesc = data.luminance > 0 
+                ? t('hsl.reason.lum_plus').replace('{value}', Math.abs(data.luminance).toString())
+                : t('hsl.reason.lum_minus').replace('{value}', Math.abs(data.luminance).toString());
+            changes.push(lumDesc);
+        }
+        
+        // 如果没有任何调整，返回默认说明
+        if (changes.length === 0) {
+            return t('hsl.reason.no_adjust').replace('{name}', name);
+        }
+        
+        // 组合完整的说明文本
+        const changesText = changes.join('，');
+        return t('hsl.reason.full')
             .replace('{name}', name)
-            .replace('{changes}', changes.join(', ')) + ' ' + t('hsl.reason.match');
+            .replace('{changes}', changesText);
     };
 
     return (

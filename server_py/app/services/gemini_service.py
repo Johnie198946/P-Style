@@ -223,7 +223,14 @@ class GeminiService:
 
             except FutureTimeoutError:
                 elapsed = time.time() - start_time
-                logger.error(f"Gemini {stage} 调用超时，耗时: {elapsed:.2f}s，超时设置: {self.timeout_seconds:.1f}秒")
+                logger.error(f"【Gemini {stage}】❌ 调用超时，耗时: {elapsed:.2f}s，超时设置: {self.timeout_seconds:.1f}秒")
+                logger.error(f"【Gemini {stage}】超时详情: 模型={self.model}, stage={stage}, 已重试次数={attempt}")
+                # 【性能诊断】记录可能导致超时的因素
+                if contents and len(contents) > 0 and isinstance(contents[0], dict):
+                    parts = contents[0].get('parts', [])
+                    parts_count = len(parts)
+                    image_count = sum(1 for part in parts if isinstance(part, dict) and 'inline_data' in part)
+                    logger.error(f"【Gemini {stage}】请求详情: parts数量={parts_count}, 图片数量={image_count}")
                 # 超时错误不重试，直接抛出
                 raise TimeoutError(f"Gemini API 调用超时（超过 {self.timeout_seconds:.1f} 秒）")
             
@@ -233,6 +240,7 @@ class GeminiService:
                 error_detail = str(e)
                 
                 # 【判断是否可重试的错误】网络连接错误可以重试，业务错误不重试
+                # 注意：503 服务过载错误也应该重试（指数退避）
                 is_retryable = (
                     "Server disconnected" in error_detail or
                     "Connection" in error_type or
@@ -240,7 +248,10 @@ class GeminiService:
                     "ConnectionError" in error_type or
                     "UNEXPECTED_EOF" in error_detail or
                     "Broken pipe" in error_detail or
-                    "Connection reset" in error_detail
+                    "Connection reset" in error_detail or
+                    "503" in error_detail or
+                    "UNAVAILABLE" in error_detail or
+                    "overloaded" in error_detail.lower()
                 )
                 
                 # 如果是最后一次尝试，或者不是可重试的错误，直接抛出

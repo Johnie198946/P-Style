@@ -141,4 +141,21 @@ async def simulate_style(
         error_type = type(e).__name__
         error_message = str(e)
         logger.error(f"【Part3 风格模拟接口】❌ 风格模拟失败: taskId={taskId}, 错误类型: {error_type}, 错误消息: {error_message}", exc_info=True)
-        raise error_response(ErrorCode.INTERNAL_ERROR, f"风格模拟失败: {error_type}: {error_message}")
+        
+        # 【503 服务过载错误特殊处理】检测 Gemini API 服务过载错误
+        if "503" in error_message or "UNAVAILABLE" in error_message or "overloaded" in error_message.lower():
+            user_friendly_message = "AI 服务暂时过载，请稍后重试。如果问题持续，请联系管理员。"
+        else:
+            # 【通用错误处理】提取错误消息，避免包含特殊字符导致解析错误
+            user_friendly_message = error_message
+            if "message" in error_message.lower() and ("'" in error_message or '"' in error_message):
+                # 尝试从错误详情中提取消息（避免直接使用包含字典的字符串）
+                try:
+                    import re
+                    message_match = re.search(r"['\"]message['\"]:\s*['\"]([^'\"]+)['\"]", error_message)
+                    if message_match:
+                        user_friendly_message = message_match.group(1)
+                except Exception:
+                    pass  # 如果提取失败，使用原始错误消息
+        
+        raise error_response(ErrorCode.INTERNAL_ERROR, f"风格模拟失败: {user_friendly_message}")

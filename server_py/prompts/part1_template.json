@@ -62,9 +62,24 @@
       },
       "visual_guidance": { "analysis": "STRING", "path": "STRING" },
       "visual_flow": {
-        "entry_point": { "label": "STRING", "coordinates": [0, 0] },
-        "focal_point": { "label": "STRING", "coordinates": [0, 0] },
-        "exit_point": { "label": "STRING", "coordinates": [0, 0] },
+        "description": "STRING: 描述视觉流向的整体路径和引导逻辑",
+        "vanishing_point": { 
+          "x": 50, 
+          "y": 50, 
+          "note": "消失点坐标（百分比 0-100），如果没有明显消失点可设为图像中心" 
+        },
+        "vectors": [
+          {
+            "start": { "x": 0, "y": 0 },
+            "end": { "x": 0, "y": 0 },
+            "type": "leading",
+            "strength": 80,
+            "note": "type 可选值: leading(主引导线-金色), perspective(透视线-青色), horizon(地平线-白色虚线), distraction(干扰线-红色)"
+          }
+        ],
+        "entry_point": { "label": "STRING: 视觉入口点描述", "coordinates": [0, 0] },
+        "focal_point": { "label": "STRING: 焦点描述", "coordinates": [0, 0] },
+        "exit_point": { "label": "STRING: 视觉出口点描述", "coordinates": [0, 0] },
         "path_vector": []
       },
       "spatial_depth": {
